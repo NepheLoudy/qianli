@@ -153,7 +153,7 @@ class PrinterClient {
     try {
       const mqttClient = this.client.getMqttClient();
       mqttClient.dataUpdateTopic = `device/${this.config.serial}/request`;
-      console.log(`[打印机] ${this.config.name}（${model}）命令通道切 request topic（新固件口径）`);
+      console.log(`[打印机] ${this.config.name}（${this.config.model}）命令通道切 request topic（新固件口径）`);
     } catch (err) {
       console.warn(`[打印机] ${this.config.name} 命令 topic 修正失败:`, err.message);
     }
@@ -540,6 +540,9 @@ class PrinterClient {
             url: `ftp:///${fileName}`,
             subtask_name: subtaskName || fileName,
             use_ams: useAms,
+            // 老世代同样吃 ams_mapping（0 基全局槽号；Bambu Studio P1/A1 帧口径）——
+            // 只给 use_ams 不给映射时多料件可能按 AMS0 槽 0 乱取料（2026-10-18 审查）
+            ams_mapping: legacyMap,
             md5: '',
           },
         };

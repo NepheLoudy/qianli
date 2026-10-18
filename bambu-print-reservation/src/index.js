@@ -6,7 +6,7 @@ const { WebSocketServer } = require('ws');
 // 会让 .env 的存储路径静默失效、退回项目根默认（2026-10-12 审查发现，账号库
 // 实际落在了项目根而非 bambu-data 数据目录）
 const config = require('./config');
-const { requireApiToken, requireUser, parseCookies } = require('./auth');
+const { requireApiToken, requireUser, parseCookies, safeEqual } = require('./auth');
 const authStore = require('./services/authStore');
 const cors = require('cors');
 const path = require('path');
@@ -170,11 +170,12 @@ app.get('/api/auth/me', (req, res) => {
 
 // 修改密码（登录态 + 旧密码验证；api-token 通道无改密语义，明确拒绝）
 app.post('/api/auth/change-password', (req, res) => {
-  const user = authStore.resolveSession(parseCookies(req).bambu_session);
+  const token = parseCookies(req).bambu_session;
+  const user = authStore.resolveSession(token);
   if (!user || user.id === 'api-token') return res.status(401).json({ error: '未登录' });
   try {
     const { oldPassword, newPassword } = req.body || {};
-    authStore.changePassword(user.id, oldPassword, newPassword);
+    authStore.changePassword(user.id, oldPassword, newPassword, token);
     res.json({ success: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -597,8 +598,9 @@ app.get('/api/training/samples', requireUser(), (req, res) => {
   res.json({ samples: store.list(), stats: store.stats() });
 });
 
-// 打印结果回填（学习信号奖励通道）
-app.post('/api/training/samples/:id/outcome', requireUser(), (req, res) => {
+// 打印结果回填（学习信号奖励通道）：审阅者及以上——outcome 是训练权重来源，
+// 普通成员随手改会让学习信号失真（2026-10-18 审查；录入/浏览仍对全体登录用户开放）
+app.post('/api/training/samples/:id/outcome', requireUser('reviewer', 'admin'), (req, res) => {
   try {
     res.json(require('./services/trainingStore').setOutcome(req.params.id, {
       ...(req.body || {}),
@@ -685,12 +687,14 @@ app.get('/api/reservations/:id', requireUser(), async (req, res) => {
 const slicePreviewCache = new Map();
 function readGcodeFromRecord(rec) {
   const buf = fs.readFileSync(rec.filePath);
-  if (/\.gcode$/i.test(rec.fileName || '')) return buf.toString('utf8');
+  // 解压炸弹/超大文件护栏：单层预览不需要整份 GB 级 gcode 进内存
+  if (/\.gcode$/i.test(rec.fileName || '')) return buf.length <= 128 * 1024 * 1024 ? buf.toString('utf8') : null;
   if (/\.3mf$/i.test(rec.fileName || '')) {
     const AdmZipMod = require('adm-zip');
     const zip = new AdmZipMod(buf);
     const entry = zip.getEntry('Metadata/plate_1.gcode');
-    return entry ? entry.getData().toString('utf8') : null;
+    if (!entry || Number((entry.header && entry.header.size) || 0) > 128 * 1024 * 1024) return null;
+    return entry.getData().toString('utf8');
   }
   return null;
 }
@@ -701,7 +705,8 @@ function getSliceLayers(rec) {
   if (slicePreviewCache.has(key)) return slicePreviewCache.get(key);
   const text = readGcodeFromRecord(rec);
   if (!text) return null;
-  const layers = require('./services/gcodeLayers').parseGcodeLayers(text);
+  const { parseGcodeLayers, compactLayers } = require('./services/gcodeLayers');
+  const layers = compactLayers(parseGcodeLayers(text));
   while (slicePreviewCache.size >= 6) slicePreviewCache.delete(slicePreviewCache.keys().next().value);
   slicePreviewCache.set(key, layers);
   return layers;
@@ -805,10 +810,82 @@ app.get('/api/reservations/:id/fit', requireUser('reviewer'), async (req, res) =
   }
 });
 
-// 提交预约（登录用户）：**双通道分流（2026-10-05 曼波定）**——
-//   .stl/.step/.stp = 需求链路：标签勾选 → 规则引擎定档切片参数（未来接服务端切片）；
-//   .3mf = 审批直通：切片参数/AMS 映射已内嵌文件，引擎不定档不越俎代庖，审批后直接分发；
-// 发起人取登录身份；硬冲突仅需求链路拦截（3mf 无标签冲突概念）
+// 审批前自动切片预览（reviewer+，2026-10-18 曼波令「step 上传要自动切好给我审批」）：
+// 未切片模型单按「目标机 × 份数 × 审批快照参数（processParams）」现场切片——不下载发、
+// 不上传打印机，仅产出层截面/缩略图/回读拟合，审批人看到的就是将要实际打印的切片。
+// 结果缓存在内存（最多 4 单），按 id 提供单层路段查询；重启即失效（重新生成即可）。
+const sliceRunCache = new Map();
+app.post('/api/reservations/:id/slice-preview', requireUser('reviewer', 'admin'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    if (!/\.(stl|step|stp|obj)$/i.test(rec.fileName || '')) {
+      return res.status(400).json({ error: '仅未切片模型单需要自动切片预览（已切片单请用切片回读校验）' });
+    }
+    if (rec.fileCleaned || !rec.filePath) return res.status(410).json({ error: '源文件不可用' });
+    const cfg = require('./config');
+    const { capabilitiesFor } = require('./printer/capabilities');
+    const want = String((req.body && req.body.printerName) || rec.assignedPrinter || '').trim();
+    let target = want ? cfg.printers.find((p) => p.name === want) : null;
+    if (want && !target) return res.status(400).json({ error: `指定打印机「${want}」未登记` });
+    if (!target) target = cfg.printers.find((p) => capabilitiesFor(p.model).brand === 'bambu');
+    if (!target) return res.status(400).json({ error: '机队无拓竹机型，无法自动切片（闪铸需预先切好 gcode）' });
+    const autoSlice = require('./services/autoSlice');
+    const r = await autoSlice.sliceModel({
+      sourcePath: rec.filePath,
+      fileName: rec.fileName,
+      model: target.model,
+      materialType: rec.materialType,
+      selection: rec.selection || {},
+      params: rec.processParams || undefined, // 审批快照参数优先（规则库演进不改变已审批口径）
+      quantity: rec.quantity || 1,
+      outDir: path.join(autoSlice.SLICE_DIR, 'preview'),
+    });
+    const AdmZipMod = require('adm-zip');
+    const buf = fs.readFileSync(r.outPath);
+    const zip = new AdmZipMod(buf);
+    const entrySize = (e) => Number((e && e.header && e.header.size) || 0);
+    const gcode = zip.getEntry('Metadata/plate_1.gcode');
+    const notes = ((r.profiles && r.profiles.notes) || []).slice();
+    const tooBigGcode = gcode && entrySize(gcode) > 128 * 1024 * 1024;
+    if (tooBigGcode) notes.push('gcode 超过 128MB，层截面预览已省略（缩略图仍可看）');
+    const { parseGcodeLayers, compactLayers } = require('./services/gcodeLayers');
+    const layers = gcode && !tooBigGcode ? compactLayers(parseGcodeLayers(gcode.getData().toString('utf8'))) : [];
+    const bounds = layers.reduce((acc, l) => {
+      const [a, b, c, d] = l.bounds;
+      return [Math.min(acc[0], a), Math.min(acc[1], b), Math.max(acc[2], c), Math.max(acc[3], d)];
+    }, [Infinity, Infinity, -Infinity, -Infinity]);
+    const png = zip.getEntry('Metadata/plate_1.png') || zip.getEntry('Metadata/plate_1_small.png');
+    const thumbOk = png && entrySize(png) <= 8 * 1024 * 1024;
+    sliceRunCache.set(rec.id, { layers, machine: target.model, at: Date.now() });
+    while (sliceRunCache.size > 4) sliceRunCache.delete(sliceRunCache.keys().next().value);
+    try { fs.unlinkSync(r.outPath); } catch { /* 已不存在 */ }
+    res.json({
+      machine: target.name,
+      model: target.model,
+      copies: r.copies,
+      objects: r.objects,
+      fit: r.fit,
+      layers: layers.map((l) => ({ i: l.i, z: l.z, count: l.segs.length })),
+      bounds: layers.length ? bounds : null,
+      thumbnail: thumbOk ? `data:image/png;base64,${png.getData().toString('base64')}` : null,
+      notes,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+app.get('/api/reservations/:id/slice-preview/layer', requireUser('reviewer', 'admin'), (req, res) => {
+  const hit = sliceRunCache.get(req.params.id);
+  if (!hit) return res.status(409).json({ error: '自动切片预览已失效——请在审批台重新生成' });
+  if (Date.now() - hit.at > 30 * 60 * 1000) { // 30 分钟 TTL：层数据可能较大，不做长期驻留
+    sliceRunCache.delete(req.params.id);
+    return res.status(409).json({ error: '自动切片预览已过期（超过 30 分钟）——请重新生成' });
+  }
+  const layer = hit.layers[Number(req.query.i)];
+  if (!layer) return res.status(404).json({ error: '层序号越界' });
+  res.json({ i: layer.i, z: layer.z, bounds: layer.bounds, segments: layer.segs });
+});
 app.post('/api/reservations', requireUser(), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '缺少文件（multipart 字段名 file）' });
@@ -830,10 +907,12 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
         body.spatial ? JSON.parse(body.spatial) : []
       );
     } catch {
+      try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: 'selection/spatial 不是合法 JSON' });
     }
     // 使用场景必填（2026-10-18 曼波令；标注/预约台双入口同口径，服务端兜底）
     if (!require('./services/taxonomy').isSceneSelected(selection)) {
+      try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: '请勾选「使用场景」（必填）', details: ['使用场景是必填项——在需求标签区顶部勾选至少一项'] });
     }
     // 放置平面四元数（2026-10-16）：3D 工坊 Place on Face 的累计旋转随单存档——
@@ -1588,6 +1667,14 @@ const wssCamera = new WebSocketServer({ noServer: true });
 const CAMERA_MAX_PER_PRINTER = 3;
 const cameraRelays = new Map(); // printerId → [{ ws, upstream, createdAt }]（新→旧序无关，按 createdAt 踢）
 function handleCameraUpgrade(req, socket, head) {
+  // upgrade 回调抛异常 = 进程级 uncaught（不受 express 错误中间件保护）——整段兜底
+  try { handleCameraUpgradeInner(req, socket, head); }
+  catch (err) {
+    console.error('[画面] upgrade 处理异常:', err.message);
+    try { socket.destroy(); } catch { /* 已关 */ }
+  }
+}
+function handleCameraUpgradeInner(req, socket, head) {
   const m = /^\/api\/printers\/(\d+)\/camera\/h264(\?.*)?$/.exec(req.url || '');
   if (!m) { socket.destroy(); return; }
   const user = authStore.resolveSession(parseCookies(req).bambu_session); // 传 token 字符串，传对象恒 401（v55 修复）
@@ -1644,7 +1731,19 @@ function handleCameraUpgrade(req, socket, head) {
 // /api/feishu/event 端点已随 2026-10-05 路线 A 退役（审批实例/任务/表格事件不再消费）；
 // url_verification 握手随事件订阅一并成为历史。
 
-app.post('/api/chat/command', async (req, res) => {
+// 指令端点只应被本机 hub 转发调用（对话铁律：指令唯一入口 = POST /api/chat/command）。
+// 2026-10-18 审查：此前无鉴权，内网任意主机可直接驱动打印指令链——改为「本机回环」默认门，
+// 跨机调用须带 X-API-Token（与 approval-bot 的 requireApiToken 口径一致，hub 本机调用零改动）
+function chatCommandGuard(req, res, next) {
+  const ip = String((req.socket && req.socket.remoteAddress) || '');
+  const loopback = ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  const apiToken = process.env.API_TOKEN;
+  const tokenOk = Boolean(apiToken) && safeEqual(req.get('X-API-Token') || '', apiToken);
+  if (loopback || tokenOk) return next();
+  res.status(403).json({ error: '指令端点仅限本机 hub 转发（跨机调用须带 X-API-Token）' });
+}
+
+app.post('/api/chat/command', chatCommandGuard, async (req, res) => {
   try {
     const { command, args } = req.body;
 

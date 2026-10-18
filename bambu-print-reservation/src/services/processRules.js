@@ -203,7 +203,15 @@ function loadRulesFromFile() {
     if (!Array.isArray(data.rules)) throw new Error('rules 不是数组');
     return { rules: data.rules, removed: Array.isArray(data.removedBuiltins) ? data.removedBuiltins : [] };
   } catch (err) {
-    console.warn('[规则库] 规则文件加载失败，回退出厂种子:', err.message);
+    // 损坏隔离（对齐 reservationStore/authStore 口径）：留档后再按出厂种子启动，
+    // 否则下一条规则保存会把人工调过的规则集整体覆盖（无备份可救）
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    try {
+      fs.renameSync(RULES_FILE, `${RULES_FILE}.corrupt-${stamp}`);
+      console.error(`[规则库] 规则文件损坏已隔离到 ${RULES_FILE}.corrupt-${stamp}，回退出厂种子（${err.message}）`);
+    } catch {
+      console.warn('[规则库] 规则文件加载失败且隔离失败，回退出厂种子:', err.message);
+    }
     return null;
   }
 }

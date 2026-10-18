@@ -150,6 +150,14 @@ check('buildLocalTask 字段完整（fileSource=local/filePath 记录）', () =>
   assert.equal(t.applicant.name, '测试员');
 });
 
+check('份数护栏：非正/小数/非数字/超限收敛为 1..99 整数', () => {
+  assert.equal(submit({ quantity: 0 }).quantity, 1);
+  assert.equal(submit({ quantity: -5 }).quantity, 1);
+  assert.equal(submit({ quantity: 2.9 }).quantity, 2);
+  assert.equal(submit({ quantity: 'abc' }).quantity, 1);
+  assert.equal(submit({ quantity: 1e9 }).quantity, 99);
+});
+
 check('集成：审批通过 → 入队 + store 排队中（快照一致）', async () => {
   const r = submit();
   const after = await reservationService.approveReservation(r.id, '测试审批人', 'OK');

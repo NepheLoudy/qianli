@@ -100,8 +100,12 @@ const trainingStore = {
     const samples = load();
     const now = new Date().toISOString();
     const dateTag = now.slice(0, 10).replace(/-/g, '');
-    const seq = samples.filter((s) => (s.id || '').startsWith(`T${dateTag}`)).length + 1;
-    const id = `T${dateTag}-${String(seq).padStart(3, '0')}`;
+    // 序号取当日**最大号+1**（原 count+1 在删除过样本后会重号，覆盖历史 id 引用）
+    const maxSeq = samples.reduce((max, s) => {
+      const m = new RegExp(`^T${dateTag}-(\\d+)$`).exec(String(s.id || ''));
+      return m ? Math.max(max, Number(m[1])) : max;
+    }, 0);
+    const id = `T${dateTag}-${String(maxSeq + 1).padStart(3, '0')}`;
 
     // 文件归档（模型必存，切片可选存；超 80MB 只记元数据）
     const MAX_ARCHIVE = 80 * 1024 * 1024;

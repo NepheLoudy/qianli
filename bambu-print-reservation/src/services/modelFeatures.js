@@ -221,7 +221,7 @@ function parse3mfModel(buffer) {
   const objEntries = zip.getEntries().filter((e) => /^3D\/Objects\/.*\.model$/i.test(e.entryName));
   for (const e of objEntries) {
     const name = e.entryName.replace(/^3D\/Objects\//i, '').replace(/\.model$/i, '');
-    if (e.header.compressedSize > MAX_BYTES) { skipped.push({ name, reason: '对象过大' }); continue; }
+    if (e.header.size > MAX_BYTES) { skipped.push({ name, reason: '对象过大' }); continue; }
     let xmlText;
     try { xmlText = e.getData().toString('utf8'); } catch (err) { skipped.push({ name, reason: `解压失败: ${err.message}` }); continue; }
     pushParsed(name, xmlText);
@@ -232,7 +232,7 @@ function parse3mfModel(buffer) {
     // 逐 <object> 分块解析保持各件局部坐标（components 装配/build 变换暂不施加，后续按需烘焙）
     const spec = zip.getEntry('3D/3dmodel.model');
     if (!spec) return { error: '3mf 内无几何（既无 3D/Objects/*.model 也无 3D/3dmodel.model）', skipped };
-    if (spec.header.compressedSize > MAX_BYTES) return { error: '3dmodel.model 过大', skipped };
+    if (spec.header.size > MAX_BYTES) return { error: '3dmodel.model 过大', skipped };
     let xmlText;
     try { xmlText = spec.getData().toString('utf8'); } catch (err) { return { error: `3dmodel.model 解压失败: ${err.message}`, skipped }; }
     const blocks = xmlText.match(/<object\b[\s\S]*?<\/object>/gi) || [];
@@ -279,9 +279,10 @@ function estimateFromSliced3mf(buffer) {
   const raw = {};
   try {
     const ps = zip.getEntry('Metadata/project_settings.config');
-    if (ps) { const j = JSON.parse(ps.getData().toString('utf8')); for (const [k, v] of Object.entries(j)) raw[k] = String(v); }
+    if (ps && ps.header.size <= 8 * 1024 * 1024) { const j = JSON.parse(ps.getData().toString('utf8')); for (const [k, v] of Object.entries(j)) raw[k] = String(v); }
   } catch { /* 容忍 */ }
   if (!gcode) return { ok: false, skipped: true, reason: '无可估计的 gcode（既无网格也无 plate_1.gcode）' };
+  if (gcode.header.size > 128 * 1024 * 1024) return { ok: false, skipped: true, reason: 'gcode 解压后超过 128MB，跳过估计' };
   let text;
   try { text = gcode.getData().toString('utf8'); } catch (err) { return { ok: false, skipped: true, reason: `gcode 解压失败: ${err.message}` }; }
   // 头部注释：最大高度/层数（Orca/Bambu 均有）；移动坐标：X/Y 范围

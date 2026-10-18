@@ -78,6 +78,7 @@ function buildLocalTask(reservation) {
     machineModel: (reservation.embeddedParams && reservation.embeddedParams.machineModel) || null, // 内嵌目标机型（品牌路由权威，2026-10-16）
     materialType: reservation.materialType,
     selection: reservation.selection || {}, // 模型单自动切片用（勾选 → 引擎参数）
+    processParams: reservation.processParams || null, // 审批快照（自动切片口径锁定，规则库演进不影响已审批单）
     color: reservation.color,
     assignedPrinter: reservation.assignedPrinter,
     isUrgent: reservation.isUrgent,
@@ -597,7 +598,7 @@ class Dispatcher {
     if (this.reconcileLostAck()) dispatched = true;
     while (this.queue.length > 0) {
       // 分发中的打印机对自动匹配不可见（分钟级 await 链里 printing 登记在链尾才发生）
-      const available = printerManager.getAvailablePrinters().filter((p) => !this.dispatching.has(p.id));
+      const available = printerManager.getAvailablePrinters().filter((p) => !this.dispatching.has(p.id) && !this.printing.has(p.id));
       if (available.length === 0) break;
 
       this.sortQueue();
@@ -647,12 +648,14 @@ class Dispatcher {
     let healed = false;
     for (const task of [...this.queue]) {
       const want = String(task.fileName || '').trim();
-      if (!want) continue;
+      if (!want || task.cancelled) continue;
       const hit = actives.find((p) => {
+        if (this.printing.has(p.id)) return false; // 该机已有在册任务：不能把队列任务顶替进去
         const sub = String(p.subtaskName || '').trim();
         return sub && (sub === want || sub.includes(want) || want.includes(sub));
       });
       if (!hit) continue;
+      if (this.printing.has(hit.id)) continue; // 双保险（find 与 set 之间无 await，此处仅防御性）
       console.warn(`[分发] ${task.applicationNo || task.recordId} 回执丢失自愈：${hit.name} 正在打印同一文件「${hit.subtaskName}」——按已分发补记（打印中，移出队列）`);
       this.queue = this.queue.filter((t) => t.recordId !== task.recordId);
       task.startedAt = task.startedAt || Date.now();
@@ -815,7 +818,7 @@ class Dispatcher {
    * check+add 同步完成（单线程事件循环无插入窗口）；finally 保证失败/重试路径也释放。
    */
   async dispatch(task, printer) {
-    if (this.dispatching.has(printer.id)) {
+    if (this.dispatching.has(printer.id) || this.printing.has(printer.id)) {
       throw new Error(`打印机 ${printer.name} 正在有任务分发中，请稍候再试`);
     }
     this.dispatching.add(printer.id);
@@ -890,7 +893,8 @@ class Dispatcher {
       if (isUnslicedFileName(task.fileName || '') && isLocalTask(task)) {
         autoSliced = await autoSlice.ensureSliced(task, printer);
         buffer = autoSliced.buffer;
-        task.remaining = 0;
+        // 注意：remaining 清零必须等「开打成功」之后（见下发段）——提前清零会让
+        // 上传/下发失败后的重试按 1 件重切（4 份单静默缩水成 1 份）
         const fitNote = autoSliced.fit ? `，回读拟合 ${autoSliced.fit.weightedScore}%（${autoSliced.fit.verdict}）` : '';
         console.log(`[分发] ${task.recordId} 模型单自动切片：${autoSliced.copies} 件/盘（${autoSliced.objects} object${fitNote}）`);
       }
@@ -940,6 +944,8 @@ class Dispatcher {
       );
 
       task.startedAt = Date.now();
+      // 盘内多件已一次成型：开打成功后关闭续件（失败路径保持原 remaining，重试仍按原份数切片）
+      if (autoSliced) task.remaining = 0;
       this.printing.set(printer.id, task);
       // 重试计数口径（2026-10-16 热修4）：**成功分发不清零**——此前每次开打成功即清零，
       // 「开打→快速失败→重排」循环永远停在计数 1、够不到上限 3，配合残留放行（方案B）

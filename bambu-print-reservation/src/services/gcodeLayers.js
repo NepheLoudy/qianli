@@ -72,4 +72,14 @@ function parseGcodeLayers(gcodeText) {
   });
 }
 
-module.exports = { parseGcodeLayers, MAX_LAYERS, MAX_SEGMENTS_PER_LAYER };
+module.exports = { parseGcodeLayers, compactLayers, MAX_LAYERS, MAX_SEGMENTS_PER_LAYER };
+
+// 全层总段数护栏（2026-10-18 审查）：单层 2 万段 × 600 层 = 1200 万段的极端文件
+// 进内存缓存会拖垮进程；超过预算按固定步长抽稀（截面形状保真，密度略降）
+const MAX_TOTAL_SEGMENTS = 300000;
+function compactLayers(layers, maxTotal = MAX_TOTAL_SEGMENTS) {
+  const total = layers.reduce((n, l) => n + l.segs.length, 0);
+  if (total <= maxTotal) return layers;
+  const stride = Math.ceil(total / maxTotal);
+  return layers.map((l) => ({ ...l, segs: l.segs.filter((_, i) => i % stride === 0) }));
+}

@@ -253,6 +253,27 @@ async function jget(url) {
   }
 }
 
+/** 拟合行表格（引擎 vs 切片回读/专家，含容差与结论） */
+function fitRowsHtml(fit) {
+  return fit.rows.map((r) => `<tr>
+      <td>${esc(PARAM_LABELS[r.key] || r.key)}</td>
+      <td class="detail">${esc(r.engine == null ? '（无规则）' : r.engine)}</td>
+      <td class="detail">${esc(r.expert == null ? '—' : r.expert)}</td>
+      <td class="detail">${r.tol ? '±' + r.tol : '精确'}</td>
+      <td>${r.match ? '<span style="color:var(--ok)">✅</span>' : r.nearMiss ? '<span style="color:var(--warn)">≈ 接近</span>' : '<span style="color:var(--bad)">❌</span>'}</td>
+    </tr>`).join('');
+}
+
+async function jpost(url, body) {
+  try {
+    const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+    const d = await r.json().catch(() => ({}));
+    return { ok: r.ok, data: d };
+  } catch (e) {
+    return { ok: false, data: { error: e.message } };
+  }
+}
+
 async function openPreview(id) {
   const dlg = document.createElement('dialog');
   dlg.style.cssText = 'width:min(920px,94vw);max-width:94vw;max-height:92vh;overflow:auto';
@@ -273,13 +294,7 @@ async function openPreview(id) {
   const fit = fitInfo && fitInfo.fit ? fitInfo.fit : null;
   const verdictMap = { pass: ['✅ 通过', 'var(--ok)'], warn: ['⚠️ 接近', 'var(--warn)'], fail: ['❌ 差异大', 'var(--bad)'] };
   const vd = fit ? (verdictMap[fit.verdict] || ['—', 'var(--muted)']) : null;
-  const fitRows = fit ? fit.rows.map((r) => `<tr>
-      <td>${esc(PARAM_LABELS[r.key] || r.key)}</td>
-      <td class="detail">${esc(r.engine == null ? '（无规则）' : r.engine)}</td>
-      <td class="detail">${esc(r.expert == null ? '—' : r.expert)}</td>
-      <td class="detail">${r.tol ? '±' + r.tol : '精确'}</td>
-      <td>${r.match ? '<span style="color:var(--ok)">✅</span>' : r.nearMiss ? '<span style="color:var(--warn)">≈ 接近</span>' : '<span style="color:var(--bad)">❌</span>'}</td>
-    </tr>`).join('') : '';
+  const fitRows = fit ? fitRowsHtml(fit) : '';
   const engineList = fitInfo && fitInfo.engineParams
     ? Object.entries(fitInfo.engineParams).filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null)
         .map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ')
@@ -309,6 +324,7 @@ async function openPreview(id) {
     </div>
     <div class="detail">真实切片刀轨截面（每层挤出路徑，来自切片产物内嵌 gcode）——拖动层滑块切换 Z 层。${sliceMeta.thumbnail ? '左侧为切片器渲染的整盘缩略图。' : ''}</div>
     ` : `<div class="detail" style="color:var(--warn);padding:14px 0">📷 ${esc(meshErr)}；该文件也无内嵌 gcode（非切片产物）</div>`)}
+    <div id="autoSliceBox" style="margin-top:12px"></div>
     <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
       <h3 style="font-size:14px;margin-bottom:6px">📐 切片回读校验（专家切片参数 ↔ 规则引擎）</h3>
       ${fit
@@ -355,16 +371,49 @@ async function openPreview(id) {
       if (cv) cv.insertAdjacentHTML('afterend', `<div class="detail" style="color:var(--bad)">3D 渲染失败：${esc(e.message)}</div>`);
     }
   } else if (sliceMeta) {
-    initSliceViewer(dlg, id, sliceMeta);
+    initSliceViewer(dlg, (i) => `/api/reservations/${id}/slice-layer?i=${i}`, sliceMeta);
+  }
+  // 未切片模型：审批前自动切片预览（2026-10-18 曼波令「step 上传要自动切好给我审批」）——
+  // 按目标机 × 份数 × 审批快照参数现场切片，审批人先看层截面与回读拟合
+  const unsliced = !/\.(3mf|gcode|gx|g)$/i.test((rec && rec.fileName) || '');
+  const autoBox = dlg.querySelector('#autoSliceBox');
+  if (unsliced && recR.ok && autoBox) {
+    autoBox.innerHTML = '<div style="border-top:1px solid var(--line);padding-top:10px" class="detail">⏳ 正在按「目标机 × 份数 × 审批快照参数」自动切片预览（仅预览，不下发）…</div>';
+    const pr = await jpost(`/api/reservations/${id}/slice-preview`, { printerName: (rec && rec.assignedPrinter) || '' });
+    if (!pr.ok) {
+      autoBox.innerHTML = `<div style="border-top:1px solid var(--line);padding-top:10px;color:var(--warn)" class="detail">🧪 自动切片预览失败：${esc(pr.data.error || '未知错误')}</div>`;
+    } else {
+      const as = pr.data;
+      const vdMap = { pass: ['✅ 通过', 'var(--ok)'], warn: ['⚠️ 接近', 'var(--warn)'], fail: ['❌ 差异大', 'var(--bad)'] };
+      const vdAs = as.fit ? (vdMap[as.fit.verdict] || ['—', 'var(--muted)']) : null;
+      autoBox.innerHTML = `<div style="border-top:1px solid var(--line);padding-top:10px">
+        <h3 style="font-size:14px;margin-bottom:6px">🧪 自动切片预览（${esc(as.machine)} × ${as.copies} 件/盘，未下发）</h3>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+          ${as.thumbnail ? `<img src="${as.thumbnail}" alt="切片缩略图" style="width:200px;height:200px;object-fit:contain;background:#0c1016;border:1px solid var(--line2);border-radius:4px">` : ''}
+          <canvas id="asCanvas" style="flex:1;min-width:280px;height:320px;display:block;background:#0c1016;border:1px solid var(--line2);border-radius:4px"></canvas>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+          <span class="detail" style="white-space:nowrap">层</span>
+          <input type="range" id="asLayer" min="0" max="${Math.max(0, (as.layers || []).length - 1)}" value="0" style="flex:1">
+          <span class="detail" id="asLabel" style="white-space:nowrap;font-family:var(--mono)"></span>
+        </div>
+        <div class="detail">这就是审批通过后将实际打印的切片（${as.copies} 件/盘一次成型）——拖层滑块看 Z 层截面。${(as.notes || []).length ? ' ｜ ' + esc(as.notes.join('；')) : ''}</div>
+        ${as.fit ? `<div style="margin-top:6px">回读拟合 <b style="color:${vdAs[1]}">${as.fit.weightedScore}%（${vdAs[0]}）</b></div>
+          <table style="margin-top:4px"><thead><tr><th>参数</th><th>引擎</th><th>切片回读</th><th>容差</th><th>结论</th></tr></thead><tbody>${fitRowsHtml(as.fit)}</tbody></table>` : ''}
+      </div>`;
+      if (as.layers && as.layers.length) {
+        initSliceViewer(dlg, (i) => `/api/reservations/${id}/slice-preview/layer?i=${i}`, { ...as, count: as.layers.length }, 'as');
+      }
+    }
   }
 }
 
 /** 切片层截面渲染（2026-10-18 P0）：meta.bounds 全层包围盒定标，按需拉取单层段，
  *  gcode 坐标 Y 向上 → canvas Y 翻转；10mm 参考网格 + 青色刀轨。 */
-function initSliceViewer(dlg, id, meta) {
-  const canvas = dlg.querySelector('#slCanvas');
-  const slider = dlg.querySelector('#slLayer');
-  const label = dlg.querySelector('#slLabel');
+function initSliceViewer(dlg, layerUrlFn, meta, prefix = 'sl') {
+  const canvas = dlg.querySelector('#' + prefix + 'Canvas');
+  const slider = dlg.querySelector('#' + prefix + 'Layer');
+  const label = dlg.querySelector('#' + prefix + 'Label');
   if (!canvas || !slider || !label) return;
   const cache = new Map();
   const [minX, minY, maxX, maxY] = meta.bounds || [0, 0, 1, 1];
@@ -403,7 +452,7 @@ function initSliceViewer(dlg, id, meta) {
   const load = async (i) => {
     let layer = cache.get(i);
     if (!layer) {
-      const r = await jget(`/api/reservations/${id}/slice-layer?i=${i}`);
+      const r = await jget(layerUrlFn(i));
       if (!r.ok) { label.textContent = '层加载失败：' + (r.data.error || ''); return; }
       layer = r.data;
       cache.set(i, layer);

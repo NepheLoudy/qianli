@@ -3,7 +3,7 @@
  * 用法：node test/gcode-layers-test.js
  */
 const assert = require('assert');
-const { parseGcodeLayers } = require('../src/services/gcodeLayers');
+const { parseGcodeLayers, compactLayers } = require('../src/services/gcodeLayers');
 
 let pass = 0;
 let failures = 0;
@@ -73,6 +73,17 @@ check('回抽（负 E）与纯空驶不产生段', () => {
   const gcode = ['; CHANGE_LAYER', '; Z_HEIGHT: 0.2', 'G1 X0 Y0 E1', 'G1 X0 Y0 E-1', 'G1 X9 Y9'].join('\n');
   const layers = parseGcodeLayers(gcode);
   assert.strictEqual(layers.length, 0, '只有到点无挤出 → 空层');
+});
+
+check('compactLayers：总段数超预算按固定步长抽稀，层数/元数据保留', () => {
+  const mk = (i) => ({ i, z: i * 0.2, segs: Array.from({ length: 100 }, (_, k) => [k, k, k + 1, k + 1]), bounds: [0, 0, 99, 99] });
+  const layers = [mk(0), mk(1)];
+  const out = compactLayers(layers, 10);
+  assert.strictEqual(out.length, 2);
+  assert.strictEqual(out.reduce((n, l) => n + l.segs.length, 0), 10, '抽稀后总段数不超过预算');
+  assert.strictEqual(out[0].z, 0);
+  assert.deepStrictEqual(out[1].bounds, [0, 0, 99, 99]);
+  assert.strictEqual(compactLayers(layers, 1000), layers, '预算内原样返回');
 });
 
 console.log(`\n切片分层解析单测: ${pass} 通过 / ${failures} 失败`);

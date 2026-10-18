@@ -53,6 +53,22 @@ check('未知/空状态保守拒绝', () => {
   assert.strictEqual(manager.canJogMachine('SOME_NEW_STATE'), false);
 });
 
+// ---------- 命令 topic：新老世代分路 ----------
+check('命令 topic 修正：新世代切 request、老世代不动（回归：model 未定义曾致静默不切换）', () => {
+  const topicFor = (model) => {
+    const c = Object.create(PrinterClient.prototype);
+    c.config = { name: 'T', model, serial: 'SN1' };
+    const fake = { dataUpdateTopic: 'device/SN1/report' };
+    c.client = { getMqttClient: () => fake };
+    c._patchCommandTopic();
+    return fake.dataUpdateTopic;
+  };
+  assert.equal(topicFor('X1C'), 'device/SN1/request');
+  assert.equal(topicFor('H2D'), 'device/SN1/request');
+  assert.equal(topicFor('P1S'), 'device/SN1/report');
+  assert.equal(topicFor('A1 mini'), 'device/SN1/report');
+});
+
 // ---------- cameraKind：画面通道分型 ----------
 check('机型画面通道分型', () => {
   assert.strictEqual(manager.cameraKind({ model: 'H2D' }), 'rtsp');

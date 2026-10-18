@@ -133,7 +133,7 @@ const reservationStore = {
       color: String(input.color || '').trim(),
       assignedPrinter: String(input.assignedPrinter || '').trim(),
       isUrgent: Boolean(input.isUrgent),
-      quantity: Number(input.quantity) > 0 ? Number(input.quantity) : 1,
+      quantity: Math.max(1, Math.min(99, Math.floor(Number(input.quantity) || 1))), // 份数护栏：正整数 1..99（防 1e9/NaN/小数进队列与切片）
       estMinutes: Number(input.estMinutes) > 0 ? Number(input.estMinutes) : null, // 3mf 内嵌预估时长（队列 ETA）
       selection,
       processParams: input.processParams || null,   // applyRules 快照（需求链路单；3mf 直通为 null）

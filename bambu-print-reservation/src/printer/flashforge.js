@@ -130,6 +130,15 @@ class FlashforgeClient {
   // ---------- 轮询与状态归一 ----------
 
   async pollOnce() {
+    // 重叠护栏（2026-10-18 审查）：/detail 慢于轮询间隔时 setInterval 会叠加请求，
+    // N 个慢请求并发排队 → 状态延迟雪崩；一轮未完就跳过本轮
+    if (this.pollInFlight) return;
+    this.pollInFlight = true;
+    try { await this.pollOnceInner(); }
+    finally { this.pollInFlight = false; }
+  }
+
+  async pollOnceInner() {
     let data = null;
     try {
       data = await this.postJson('/detail', this.auth);

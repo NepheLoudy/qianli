@@ -125,6 +125,9 @@
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// 内联事件处理器里的字符串参数：JSON 编码后再 HTML 转义——单引号/双引号/反斜杠都
+// 不会逃出 JS 字符串（esc 单独用会把 &#39; 解码回 ' 导致注入，2026-10-18 审查）
+const jsq = (v) => esc(JSON.stringify(String(v ?? '')));
 let ME = null;
 let IS_REVIEWER = false; // reviewer 及以上：低危指令（暂停/恢复/灯/速度/风扇）
 let IS_ADMIN = false;    // admin：危险指令（停止/gcode/动机械）
@@ -391,20 +394,20 @@ function controlPanelHtml(p) {
   const idle = machineIdle(p) && !p.stateStale;
   const lockNote = !idle ? '<span class="detail" style="color:var(--warn)">（非空闲/失联，已锁定）</span>' : '';
   const lampPair = (lamp, label) => `
-    <button onclick="cmdPost(${p.id},'light',{on:true,lamp:'${lamp}'},'打开 ${esc(p.name)} ${label}？')">💡${label}开</button>
-    <button onclick="cmdPost(${p.id},'light',{on:false,lamp:'${lamp}'},'关闭${label}？')">🔅${label}关</button>`;
+    <button onclick="cmdPost(${p.id},'light',{on:true,lamp:'${lamp}'},${jsq(`打开 ${p.name} ${label}？`)})">💡${label}开</button>
+    <button onclick="cmdPost(${p.id},'light',{on:false,lamp:'${lamp}'},${jsq(`关闭${label}？`)})">🔅${label}关</button>`;
   const quickBar = `<div class="cmds">
       ${p.status === '打印中' ? `<button onclick="cmdPost(${p.id},'pause',null,'暂停打印？')">⏸ 暂停</button>` : ''}
       ${p.status === '暂停' ? `<button class="ok" onclick="cmdPost(${p.id},'resume',null,'恢复打印？')">▶ 恢复</button>` : ''}
       ${lampPair('chamber', '腔灯')}
       ${bambu ? lampPair('work', '工作灯') : ''}
-      ${IS_ADMIN && ['打印中', '暂停', '准备中'].includes(p.status) ? `<button class="bad" onclick="stopPrinter(${p.id},'${esc(p.name)}')">⏹ 停止</button>` : ''}
+      ${IS_ADMIN && ['打印中', '暂停', '准备中'].includes(p.status) ? `<button class="bad" onclick="stopPrinter(${p.id},${jsq(p.name)})">⏹ 停止</button>` : ''}
     </div>`;
   if (!bambu) {
     // 闪铸控制面（2026-10-16 修复批：指令信封修正后 暂停/恢复/灯/停止真正可用；
     // 打印完成后的屏幕弹窗会挡住这些控制——给一个清屏按钮，等价屏幕上点掉弹窗）
     const ffClear = IS_ADMIN && ['已完成', '故障'].includes(p.status)
-      ? `<div class="cmds"><button onclick="clearResidue(${p.id},'${esc(p.name)}')">🧹 清屏弹窗（解锁控制；打印完成后屏幕弹窗会挡住灯/暂停）</button></div>`
+      ? `<div class="cmds"><button onclick="clearResidue(${p.id},${jsq(p.name)})">🧹 清屏弹窗（解锁控制；打印完成后屏幕弹窗会挡住灯/暂停）</button></div>`
       : '';
     return quickBar + ffClear
       + '<div class="meta">闪铸机型：暂停/恢复/灯/停止；若点了没反应，先点清屏弹窗（或到打印机屏幕上点掉弹窗）</div>';
@@ -526,8 +529,8 @@ function renderFiles(p, files) {
   return files.map((f) => `<div class="fileRow">
     <span class="fname" title="${esc(f.name)}">${esc(f.name)}</span>
     <span class="detail">${(f.size / 1048576).toFixed(1)}MB</span>
-    <button class="mini" ${machineIdle(p) ? '' : 'disabled'} onclick="printSdcardFile(${p.id},'${esc(f.name).replace(/'/g, '\\&#39;')}')">▶ 开打</button>
-    <button class="mini bad" onclick="delSdcardFile(${p.id},'${esc(f.name).replace(/'/g, '\\&#39;')}')">删</button>
+    <button class="mini" ${machineIdle(p) ? '' : 'disabled'} onclick="printSdcardFile(${p.id},${jsq(f.name)})">▶ 开打</button>
+    <button class="mini bad" onclick="delSdcardFile(${p.id},${jsq(f.name)})">删</button>
   </div>`).join('');
 }
 
@@ -612,7 +615,7 @@ function errorSection(p) {
     hot.push(`<div class="residueBox">🔸 <b>任务残留状态</b>：上次打印已终止（${codeLine}）机器已停止但固件仍标记故障——`
       + `屏幕首页无报错属正常现象；<b>分发器已放行「静止残留」派单——新任务开打会自动顶掉它</b>。`
       + `也可点下方按钮尝试立即清除（指令无效时重启打印机电源）。`
-      + (IS_ADMIN ? `<div style="margin-top:5px"><button class="mini" onclick="clearResidue(${p.id},'${esc(p.name)}')">🧹 清除任务残留（让机器回空闲）</button></div>` : '')
+      + (IS_ADMIN ? `<div style="margin-top:5px"><button class="mini" onclick="clearResidue(${p.id},${jsq(p.name)})">🧹 清除任务残留（让机器回空闲）</button></div>` : '')
       + `</div>`);
   }
   const now = Date.now();

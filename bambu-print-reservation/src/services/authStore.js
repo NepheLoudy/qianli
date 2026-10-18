@@ -166,8 +166,8 @@ const authStore = {
     }
   },
 
-  /** 修改密码（需登录 + 旧密码验证） */
-  changePassword(userId, oldPassword, newPassword) {
+  /** 修改密码（需登录 + 旧密码验证）；keepToken = 当前会话保留，其余会话全摘（改密即踢掉旧登录） */
+  changePassword(userId, oldPassword, newPassword, keepToken = '') {
     const data = load();
     const user = data.users.find((u) => u.id === userId);
     if (!user) throw new Error('用户不存在');
@@ -176,6 +176,9 @@ const authStore = {
     const salt = crypto.randomBytes(16).toString('hex');
     user.salt = salt;
     user.passHash = hashPassword(newPassword, salt);
+    for (const [t, sess] of Object.entries(data.sessions)) {
+      if (sess.userId === userId && t !== keepToken) delete data.sessions[t];
+    }
     save(data);
     return true;
   },
@@ -196,12 +199,15 @@ const authStore = {
     return { username: user.username, tempPassword };
   },
 
-  /** 角色变更（admin 操作）：member/reviewer/admin */
+  /** 角色变更（admin 操作）：member/reviewer/admin；最后一个 admin 不可降权（防永久锁死管理面） */
   setRole(userId, role) {
     if (!ROLES.includes(role)) throw new Error(`非法角色: ${role}`);
     const data = load();
     const user = data.users.find((u) => u.id === userId);
     if (!user) throw new Error('用户不存在');
+    if (user.role === 'admin' && role !== 'admin' && data.users.filter((u) => u.role === 'admin').length <= 1) {
+      throw new Error('这是最后一个管理员账号，不能降权（否则无人能管理系统）——请先提升另一名管理员');
+    }
     user.role = role;
     save(data);
     return authStore.safeUser(user);

@@ -92,6 +92,17 @@ check('setRole 升降 reviewer/admin，非法角色被拒', () => {
   authStore.setRole(u.id, 'member');
 });
 
+check('最后一个 admin 不可降权（防管理面永久锁死）', () => {
+  const boss = authStore.listUsers().find((u) => u.username === 'boss');
+  assert.throws(() => authStore.setRole(boss.id, 'member'), /最后一个管理员/);
+});
+
+check('parseCookies 畸形百分号编码不抛错（回落原文）', () => {
+  const c = parseCookies({ headers: { cookie: 'bambu_session=%E0%A4%A; other=ok' } });
+  assert.equal(c.other, 'ok');
+  assert.ok(c.bambu_session.includes('%E0%A4%A'), '畸形编码应保留原文而非崩溃');
+});
+
 // ---------- 中间件（双通道） ----------
 
 function mockReq(headers) { return { headers, get: (k) => headers[k.toLowerCase()] }; }

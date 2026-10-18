@@ -78,6 +78,11 @@ function parseEstimatedMinutes(headText, raw) {
   return Number.isFinite(tc) && tc > 0 ? Math.round(tc / 60) : null;
 }
 
+// 解压炸弹护栏（2026-10-18 审查）：只读头部却 getData() 会整份解压——先按未压缩大小设限
+const MAX_CONFIG_BYTES = 8 * 1024 * 1024;
+const MAX_GCODE_READ_BYTES = 64 * 1024 * 1024;
+const entrySize = (e) => Number((e && e.header && e.header.size) || 0);
+
 /** 从解包后的文件内容提取键值对（JSON 优先，gcode 头部注释兜底） */
 function extractRawParams(files) {
   const raw = {};
@@ -86,7 +91,7 @@ function extractRawParams(files) {
 
   // ① project_settings.config（JSON）
   const ps = files.find((f) => /metadata\/project_settings\.config$/i.test(f.entryName));
-  if (ps) {
+  if (ps && entrySize(ps) <= MAX_CONFIG_BYTES) {
     try {
       const obj = JSON.parse(ps.getData().toString('utf8'));
       for (const [k, v] of Object.entries(obj)) raw[k] = String(v);
@@ -97,7 +102,7 @@ function extractRawParams(files) {
   // ② plate_*.gcode 头部注释键值（读前 96KB 足够覆盖头部参数块）
   if (source === 'none') {
     const gcode = files.find((f) => /metadata\/plate_\d+.*\.gcode$/i.test(f.entryName));
-    if (gcode) {
+    if (gcode && entrySize(gcode) <= MAX_GCODE_READ_BYTES) {
       headText = gcode.getData().subarray(0, 96 * 1024).toString('utf8');
       for (const m of headText.matchAll(/^;\s*([a-z_][a-z0-9_]*)\s*=\s*(\S+)\s*$/gim)) {
         if (!(m[1] in raw)) raw[m[1]] = m[2];
@@ -117,7 +122,7 @@ function parseFilaments(zip) {
   const out = [];
   try {
     const e = zip.getEntry('Metadata/slice_info.config');
-    if (!e) return out;
+    if (!e || entrySize(e) > MAX_CONFIG_BYTES) return out;
     const xml = e.getData().toString('utf8');
     for (const m of xml.matchAll(/<filament\s([^>]*?)\/?>/g)) {
       const attrs = {};

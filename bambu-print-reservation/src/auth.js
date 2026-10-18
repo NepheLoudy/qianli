@@ -39,7 +39,13 @@ function parseCookies(req) {
   const out = {};
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
-    if (idx > 0) out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    if (idx > 0) {
+      const key = part.slice(0, idx).trim();
+      const raw = part.slice(idx + 1).trim();
+      // 畸形百分号编码（如 "%E0%A4%A"）会让 decodeURIComponent 抛 URIError：
+      // 普通请求变 500，WS upgrade 回调里则直接炸到进程级——一律按原文兜底
+      try { out[key] = decodeURIComponent(raw); } catch { out[key] = raw; }
+    }
   }
   return out;
 }
@@ -67,4 +73,4 @@ function requireUser(...allowedRoles) {
   };
 }
 
-module.exports = { requireApiToken, requireUser, parseCookies };
+module.exports = { requireApiToken, requireUser, parseCookies, safeEqual };

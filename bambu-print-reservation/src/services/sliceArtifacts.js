@@ -11,6 +11,12 @@
 const AdmZip = require('adm-zip');
 const { parseGcodeLayers } = require('./gcodeLayers');
 
+// 解压炸弹护栏（2026-10-18 审查）：3mf 上传上限 200MB，但 zip 压缩比可做出
+// GB 级解压；getData() 整份进内存前先看 header.size（未压缩大小）
+const MAX_PNG_BYTES = 8 * 1024 * 1024;
+const MAX_GCODE_BYTES = 128 * 1024 * 1024;
+const entrySize = (e) => Number((e && e.header && e.header.size) || 0);
+
 /**
  * @param {Buffer} buffer 3mf 文件内容
  * @returns {{sliced:true, message:string, thumbnail?:string, layers?:{count,zMin,zMax}} | null}
@@ -23,8 +29,8 @@ function extractSlicedArtifacts(buffer) {
     const gcode = zip.getEntry('Metadata/plate_1.gcode');
     if (!png && !gcode) return null;
     const out = { sliced: true, message: '已切片产物（内嵌 gcode，不含模型网格）——3D 标注不可用' };
-    if (png) out.thumbnail = `data:image/png;base64,${png.getData().toString('base64')}`;
-    if (gcode) {
+    if (png && entrySize(png) <= MAX_PNG_BYTES) out.thumbnail = `data:image/png;base64,${png.getData().toString('base64')}`;
+    if (gcode && entrySize(gcode) <= MAX_GCODE_BYTES) {
       const layers = parseGcodeLayers(gcode.getData().toString('utf8'));
       if (layers.length) {
         const zs = layers.map((l) => l.z).filter((z) => Number.isFinite(z));

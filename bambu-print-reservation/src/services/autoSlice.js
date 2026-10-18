@@ -14,6 +14,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { spawn } = require('child_process');
 const processRules = require('./processRules');
 const paramFit = require('./paramFit');
@@ -154,21 +155,45 @@ async function sliceModel({ sourcePath, fileName, model, materialType, selection
     throw new Error(`自动切片失败（桥退出 ${r.status}）：${log.split('\n').slice(-3).join(' | ') || '无输出'}`);
   }
   const { objects, extraction } = inspectOutput(outPath);
+  // 件数核对（2026-10-18 审查）：产物 object 数必须等于请求份数——排布失败时
+  // Orca 可能只打 1 件，静默放行会让「4 份单」实际只出 1 件。读不出 object 数
+  // （老切片器/异常产物）才降级放行，由回读拟合与人工预览兜底
+  if (objects > 0 && objects !== copies) {
+    throw new Error(`自动切片排布核对失败：请求 ${copies} 件/盘，产物只有 ${objects} 件（切片器未正确复制排盘）——请人工切片后上传 gcode.3mf`);
+  }
   const fit = extraction && extraction.params ? paramFit.compare(applied.params || {}, extraction.params) : null;
   return { ok: true, outPath, copies, objects, fit, profiles, log };
 }
 
-/** 分发链入口：按任务份数切片（盘内多件），产物缓存（同单同份数同源文件复用，重试不重切） */
+/** 分发链入口：按任务份数切片（盘内多件），产物缓存（同单同份数同源文件同参数复用，重试不重切） */
 async function ensureSliced(task, printer) {
   const copies = clampCopies((Number(task.remaining) || 0) + 1);
+  // 审批快照优先（2026-10-18 审查）：规则库演进不应改变已审批单的切片口径；
+  // 老单无快照才现算规则。快照参数同时进缓存签名——参数一变缓存自然失效
+  let params = task.processParams || null;
+  if (!params) {
+    const applied = processRules.applyRules(task.selection || {}, { material: task.materialType || '' });
+    if (applied.blocked) throw new Error(`勾选存在硬冲突，无法自动切片：${(applied.errors || []).join('；')}`);
+    params = applied.params;
+  }
+  const signature = crypto.createHash('md5')
+    .update(JSON.stringify({
+      model: printer.model,
+      material: task.materialType || '',
+      selection: task.selection || {},
+      params: params || {},
+    }))
+    .digest('hex')
+    .slice(0, 10);
   fs.mkdirSync(SLICE_DIR, { recursive: true });
-  const cachePath = path.join(SLICE_DIR, `${task.recordId}-x${copies}.gcode.3mf`);
+  const cachePath = path.join(SLICE_DIR, `${task.recordId}-x${copies}-${signature}.gcode.3mf`);
   const metaPath = cachePath + '.meta.json';
   const stat = fs.statSync(task.filePath);
   if (fs.existsSync(cachePath) && fs.existsSync(metaPath)) {
     try {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
-      if (meta.sourceMtimeMs === stat.mtimeMs && meta.sourceSize === stat.size) {
+      if (meta.sourceMtimeMs === stat.mtimeMs && meta.sourceSize === stat.size
+        && meta.copies === copies && meta.signature === signature) {
         console.log(`[自动切片] ${task.recordId} 复用缓存（${meta.copies} 件/盘，${meta.objects} object）`);
         return { buffer: fs.readFileSync(cachePath), copies: meta.copies, objects: meta.objects, fit: meta.fit };
       }
@@ -180,6 +205,7 @@ async function ensureSliced(task, printer) {
     model: printer.model,
     materialType: task.materialType,
     selection: task.selection || {},
+    params,
     quantity: copies,
     outDir: SLICE_DIR,
   });
@@ -189,6 +215,9 @@ async function ensureSliced(task, printer) {
     copies: result.copies,
     objects: result.objects,
     fit: result.fit,
+    signature,
+    machine: printer.model,
+    materialType: task.materialType || '',
     sourceMtimeMs: stat.mtimeMs,
     sourceSize: stat.size,
   }, null, 2));
