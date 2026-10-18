@@ -358,7 +358,7 @@ function renderIdentity() {
   $('authCard').style.display = 'none';
   $('appBody').style.display = 'block';
   box.innerHTML = `你好，<b>${esc(ME.displayName)}</b><span class="role r-${ME.role}">${ME.role}</span>
-    ${isReviewer() ? '<a href="/train.html" style="font-size:12px;margin-right:4px">🎓 训练录入台</a>' : ''}
+    ${isReviewer() ? '<a href="/train.html" style="font-size:12px;margin-right:4px">🎓 训练录入台</a><a href="/approve.html" style="font-size:12px;margin-right:4px">📋 审批台</a>' : ''}
     <button onclick="changePassword()">改密码</button>
     <button onclick="logout()">退出</button>`;
   $('adminCard').style.display = isAdmin() ? 'block' : 'none';
@@ -965,9 +965,18 @@ async function loadColors() {
 
 function preflight() {
   const hint = $('conflictHint');
-  if (isSlicedFile()) { hint.textContent = ''; $('submitBtn').disabled = false; return []; } // 3mf 直通:无标签冲突
-  const material = $('materialType').value.trim();
   const sel = collectSelection();
+  // 使用场景必填（2026-10-18 曼波令）：置顶组未勾选即禁提交（3mf 直通单同样要求——
+  // 直通单勾选作样本底料，场景是整单上下文）
+  const sceneMissing = !Array.isArray(sel.scene_usage) || sel.scene_usage.length === 0;
+  const sceneHint = sceneMissing ? '请先勾选「使用场景」（必填——需求标签区最上方）' : '';
+  if (isSlicedFile()) { // 3mf 直通:无标签冲突，但场景仍必填
+    hint.className = 'hint ' + (sceneMissing ? 'bad' : '');
+    hint.textContent = sceneHint;
+    $('submitBtn').disabled = sceneMissing;
+    return sceneMissing ? [sceneHint] : [];
+  }
+  const material = $('materialType').value.trim();
   const hits = [];
   for (const c of (TAXONOMY?.conflicts || [])) {
     if (c.level !== 'block') continue;
@@ -986,16 +995,17 @@ function preflight() {
     if (c.materialMatch && (!material || !(new RegExp(c.materialMatch, 'i')).test(material))) continue;
     hits.push(c.message);
   }
-  hint.className = 'hint ' + (hits.length ? 'bad' : '');
-  hint.textContent = hits.join('；');
-  $('submitBtn').disabled = hits.length > 0;
-  return hits;
+  hint.className = 'hint ' + ((hits.length || sceneMissing) ? 'bad' : '');
+  hint.textContent = [sceneHint, ...hits].filter(Boolean).join('；');
+  $('submitBtn').disabled = hits.length > 0 || sceneMissing;
+  return sceneMissing ? [sceneHint, ...hits] : hits;
 }
 
 function submitReservation() {
   const file = $('file').files[0];
   if (!file) return toast('请选择模型/切片文件');
-  if (preflight().length) return toast('存在硬冲突，请先调整勾选');
+  const gate = preflight();
+  if (gate.length) return toast(gate.join('；'));
 
   const fd = new FormData();
   fd.append('file', file);
@@ -1076,12 +1086,8 @@ async function loadList() {
     const livePrinter = ['打印中', '暂停'].includes(r.status) ? printers.find(p => p.name === r.printer) : null;
     const liveProg = livePrinter && livePrinter.progress
       ? `<div class="pbar"><div style="width:${Math.min(100, livePrinter.progress)}%"></div></div><span class="detail">${livePrinter.progress}%${livePrinter.remainingMinutes ? '，剩余 ' + livePrinter.remainingMinutes + ' 分钟' : ''}</span>` : '';
-    const pending = r.status === '待审批';
-    const unsliced = pending && !/\.(3mf|gcode|gx|g)$/i.test(r.fileName || '');
-    const reviewBtns = pending && isReviewer() ? `<div class="revbox">
-          <button class="ok" ${unsliced ? 'disabled title="未切片模型：请先切片（拓竹 3mf / 闪铸 gcode）后重新提交"' : ''} onclick="review('${r.id}','approve')">通过</button>
-          <button class="bad" onclick="review('${r.id}','reject')">驳回</button>
-        </div>${unsliced ? '<div class="detail" style="color:var(--warn)">⚠️ 未切片模型——切片后重新提交才能分发（3mf / gcode）</div>' : ''}` : '';
+    // 审批操作已迁至独立审批台 /approve.html（2026-10-18 曼波令：本列表只给用户看状态，
+    // reviewer/admin 在审批台完成通过/驳回与分发决策）
     const cancelBtn = !['已完成', '已取消', '已驳回'].includes(r.status) && (mine || isReviewer())
       ? `<button class="mini" onclick="cancelReservation('${r.id}')">取消</button>` : '';
     // 复刻：源文件仍在保留期的终态单一键带参重提（2026-10-18 放宽到已取消——
@@ -1094,7 +1100,7 @@ async function loadList() {
       <td data-label="发起人">${esc(r.applicant || '?')}${mine ? '<br><span class="detail">(我)</span>' : ''}<br><span class="detail">${esc(r.fileName || '')}</span></td>
       <td data-label="需求">${esc(r.materialType || '?')}${r.color ? '×' + esc(r.color) : ''}${r.isUrgent ? ' ⚡' : ''}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
       <td data-label="参数与轨迹" class="detail">${srcTag}${params ? '<b>参数</b> ' + params + '<br>' : ''}${rules ? '<b>依据</b> ' + rules + '<br>' : ''}${hist}</td>
-      <td data-label="操作">${reviewBtns}${cancelBtn}${reprintBtn}</td>
+      <td data-label="操作">${cancelBtn}${reprintBtn}</td>
     </tr>`;
   }).join('');
   box.innerHTML = `<table>
@@ -1108,140 +1114,7 @@ const expandedParams = new Set();
 function toggleHist(id) { expandedHist.has(id) ? expandedHist.delete(id) : expandedHist.add(id); loadList(); }
 function toggleParam(id) { expandedParams.has(id) ? expandedParams.delete(id) : expandedParams.add(id); loadList(); }
 
-/** 审批操作：通过走「通过并分发」对话框（选打印机/AMS 槽位/喷嘴——都可留自动），驳回保持 prompt */
-function review(id, action) {
-  if (!isReviewer()) return toast('仅审批人可操作');
-  if (action === 'approve') return openApproveDialog(id);
-  doReview(id, 'reject', prompt('驳回理由：') || '');
-}
-
-async function doReview(id, action, comment, dispatch, sampleEntry) {
-  const res = await fetch(`/api/reservations/${id}/${action}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ comment, ...(dispatch ? { dispatch } : {}), ...(sampleEntry ? { sampleEntry: true } : {}) }),
-  });
-  const data = await res.json();
-  if (res.status === 401) { ME = null; renderIdentity(); return toast('登录已过期'); }
-  if (!res.ok) return toast('❌ ' + data.error);
-  toast(`✅ ${id} ${action === 'approve' ? '已通过并入队' : '已驳回'}`);
-  loadList();
-}
-
-/** 通过并分发对话框（2026-10-16）：审批人指定目标机/AMS 槽位/喷嘴——留空即自动匹配；
- *  入库训练样本勾选按源单底料可用性把关（2026-10-16 曼波定：切片参数由工况×几何共同决定，
- *  无工况勾选的纯 3mf 入库无意义——不可勾选的单给出原因，不落空决策） */
-async function openApproveDialog(id) {
-  const dlg = document.createElement('dialog');
-  const printers = (window.__printers || []);
-  let rec = null;
-  try {
-    const r = await fetch(`/api/reservations/${id}`);
-    if (r.ok) rec = await r.json();
-  } catch { /* 取不到按不可入库处理（宁严勿空） */ }
-  const canSample = !!(rec && rec.selection && Object.keys(rec.selection).length > 0);
-  // 品牌判定（2026-10-16 曼波真机反馈批）：**切片文件内嵌机型优先**——「拿闪铸机子切的
-  // .gcode.3mf」扩展名是 .3mf（像拓竹），但内嵌机型是闪铸；有内嵌机型以它定品牌，否则退回扩展名
-  const mm = (rec && rec.embeddedParams && rec.embeddedParams.machineModel) || '';
-  const fileIsFf = mm ? /flashforge|ad5|5m|creator/i.test(mm) : /\.(gcode|gx|g)$/i.test((rec && rec.fileName) || '');
-  const usable = printers.filter((p) => Boolean(p.brand === 'flashforge') === fileIsFf);
-  // 「直通单机型直接给好定死」：内嵌机型 + 同品牌唯一机 → 预选定好；多机时留给审批人确认
-  const preselect = mm && usable.length === 1 ? usable[0].name : '';
-  const modelNote = mm
-    ? `<div class="detail" style="margin-bottom:6px">📦 文件内嵌机型：<b>${esc(mm)}</b>${preselect ? '——已为你锁定匹配机型' : '（请在同品牌机型中确认目标机）'}</div>`
-    : '';
-  const brandHint = usable.length && usable.length < printers.length
-    ? `<div class="detail" style="margin-bottom:6px;color:var(--warn)">🔒 该文件目标品牌为${fileIsFf ? '闪铸' : '拓竹'}，只列同品牌机型（跨品牌切片格式互不兼容）</div>`
-    : '';
-  const opts = (usable.length ? usable : printers).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.status)}${p.stateStale ? '/失联' : ''}）</option>`).join('');
-  // 多耗材（2026-10-16 曼波令「文件里有几个耗材审批界面就要有对应的选择栏位」）：3mf 内嵌
-  // 用料逐条一栏（料名+色块 → 槽位下拉，可留自动=分发时按该条类型/颜色匹配）；无内嵌用料的
-  // 文件保持单栏旧路径（tray）
-  const fil = (rec && rec.embeddedParams && Array.isArray(rec.embeddedParams.filaments)) ? rec.embeddedParams.filaments : [];
-  const filRows = fil.length
-    ? fil.map((f, i) => {
-        const sw = f.colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(String(f.colorHex).replace(/^#/, ''))};margin-left:6px;vertical-align:middle;border:1px solid #55555a"></span>` : '';
-        return `<label>用料 ${i + 1}：${esc(f.type || '未知')}${sw}</label><select class="apTraySel" data-idx="${i}" disabled><option value="">自动匹配（按该料类型/颜色）</option></select>`;
-      }).join('')
-    : `<label>AMS 槽位（用料）</label><select id="apTray" disabled><option value="">自动匹配（按材料/颜色）</option></select>`;
-  const filNote = fil.length > 1
-    ? `<div class="detail" style="margin-bottom:6px">🧵 文件含 <b>${fil.length}</b> 种用料——逐条指定槽位，留自动的按该条用料类型/颜色匹配</div>`
-    : '';
-  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">✅ 通过并分发（${esc(id)}）</h3>`
-    + `<div class="detail" style="margin-bottom:8px">指定分发目标与用料（都可留自动匹配）；指定后该机不可用会滞留等人工、不静默改派</div>`
-    + modelNote
-    + brandHint
-    + filNote
-    + `<label>目标打印机</label><select id="apPrinter" onchange="renderApTrays()"><option value="">自动匹配（按材料/颜色选机）</option>${opts}</select>`
-    + filRows
-    + `<div id="apNozzleRow" style="display:none"><label>喷嘴</label><select id="apNozzle"><option value="">自动</option></select></div>`
-    + (canSample
-        ? `<label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer"><input type="checkbox" id="apSample" style="width:auto;margin:0">📚 入库为训练样本<span class="detail">（打印完成后自动回填成功/失败）</span></label>`
-        : `<div class="detail" style="margin-top:8px">📚 入库训练样本：本单无工况勾选——切片参数由工况×几何共同决定，无标注的纯切片件入库无训练意义（如需入库请在提交时补齐工况/标注）</div>`)
-    + `<label>审批意见（可空）</label><input type="text" id="apComment" placeholder="如：优先打这个件">`
-    + `<div class="actions" style="margin-top:10px">`
-    + `<button class="ok" id="apGo">通过并分发</button>`
-    + `<button class="mini" id="apCancel">取消</button></div>`;
-  document.body.appendChild(dlg);
-  // 内嵌机型命中同品牌唯一机 → 预选定好目标机（2026-10-16 曼波令：直通单机型直接给好）
-  if (preselect) { dlg.querySelector('#apPrinter').value = preselect; renderApTrays(); }
-  dlg.querySelector('#apCancel').onclick = () => dlg.close();
-  dlg.querySelector('#apGo').onclick = () => {
-    const dispatch = {};
-    const pr = dlg.querySelector('#apPrinter').value;
-    if (pr) dispatch.assignedPrinter = pr;
-    const traySels = [...dlg.querySelectorAll('.apTraySel')];
-    if (traySels.length) {
-      // 多耗材逐条收集：与文件用料逐条对齐，留自动的条目传 null（服务端分发时按该条用料自动匹配）
-      const trays = traySels.map((s) => {
-        if (!s.value) return null;
-        try { return JSON.parse(s.value); } catch { return null; }
-      });
-      if (trays.some(Boolean)) dispatch.trays = trays;
-    } else {
-      const trayRaw = dlg.querySelector('#apTray').value;
-      if (trayRaw) { try { dispatch.tray = JSON.parse(trayRaw); } catch { /* 忽略坏值 */ } }
-    }
-    const nz = dlg.querySelector('#apNozzleRow').style.display !== 'none' ? dlg.querySelector('#apNozzle').value : '';
-    if (nz !== '') dispatch.nozzleId = Number(nz);
-    const sampleEntry = !!(dlg.querySelector('#apSample') && dlg.querySelector('#apSample').checked); // 📚 入库为训练样本（2026-10-16；无底料的单不渲染此勾选）
-    const comment = dlg.querySelector('#apComment').value.trim();
-    dlg.close();
-    doReview(id, 'approve', comment, dispatch, sampleEntry);
-  };
-  dlg.showModal();
-}
-
-/** 目标机联动：填充该机实装 AMS 槽位（单栏 #apTray 或多耗材逐条 .apTraySel 全填；双喷头机显示喷嘴选择） */
-function renderApTrays() {
-  const nozzleRow = document.getElementById('apNozzleRow');
-  const traySels = [document.getElementById('apTray'), ...document.querySelectorAll('.apTraySel')].filter(Boolean);
-  if (!traySels.length) return;
-  const p = (window.__printers || []).find((x) => x.name === document.getElementById('apPrinter').value);
-  const fill = (sel) => {
-    const autoLabel = sel.id === 'apTray' ? '自动匹配（按材料/颜色）' : '自动匹配（按该料类型/颜色）';
-    sel.innerHTML = `<option value="">${autoLabel}</option>`;
-    sel.disabled = true;
-    if (!p) return;
-    sel.disabled = false;
-    for (const t of (p.ams || [])) {
-      if (!t.type) continue;
-      const opt = document.createElement('option');
-      // 只传槽位名：amsId/trayId 由服务端按实时料位清单解析（2026-10-16 防两侧口径漂移；
-      // 外挂料盘 ams_id=254/255、AMS 槽 ams_id=0）
-      opt.value = JSON.stringify({ slot: t.slot });
-      opt.textContent = `${t.slot} · ${t.type}${t.colorHex ? ' · #' + t.colorHex : ''}${t.remain != null && t.remain > 0 ? ' · 余 ' + Math.round(t.remain) + '%' : ''}`;
-      sel.appendChild(opt);
-    }
-  };
-  for (const sel of traySels) fill(sel);
-  const nozzles = p ? (p.nozzles || []) : [];
-  if (nozzleRow) nozzleRow.style.display = nozzles.length >= 2 ? 'block' : 'none';
-  if (!p || !nozzleRow) return;
-  const nSel = document.getElementById('apNozzle');
-  // 左右喷嘴展示名（H2D：id0=左·外挂料盘、id1=右·AMS；2026-10-16 官方打印区实锤）
-  const nzLabel = (n) => (n.side === 'left' ? '左喷嘴（外挂料盘）' : n.side === 'right' ? '右喷嘴（AMS）' : `喷头 ${n.id + 1}`);
-  nSel.innerHTML = '<option value="">自动</option>' + nozzles.map((n) => `<option value="${n.id}">${nzLabel(n)}${n.active ? '（当前）' : ''}</option>`).join('');
-}
+// 审批操作/通过并分发对话框已迁至独立审批台 public/approve.html（2026-10-18 曼波令）
 
 async function cancelReservation(id) {
   if (!confirm(`确认取消 ${id}？`)) return;

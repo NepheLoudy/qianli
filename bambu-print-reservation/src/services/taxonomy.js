@@ -705,10 +705,14 @@ function selectionFromFormFields(fields) {
 
 /** 窗口输出（GET /api/print/taxonomy）：标签池全景 + 冲突规则可读版 */
 function getTaxonomy() {
+  // 使用场景顶置（2026-10-18 曼波令：标注工坊与预约台两页均置顶且必填——场景是整条
+  // 链路的上下文标签；两页按本顺序渲染，改这一处双页生效）
+  const orderedGroups = groups.filter((g) => g.id === 'scene')
+    .concat(groups.filter((g) => g.id !== 'scene'));
   return {
     version: TAXONOMY_VERSION,
     convention: '受力方向按此件【工作时】的朝向为准（Z=工作时竖直向上，可多选）；材料可不填——引擎按需求标签反推可用材料（排除/优先）',
-    groups: groups.map((g) => ({
+    groups: orderedGroups.map((g) => ({
       id: g.id,
       title: g.title,
       tooltip: g.tooltip,
@@ -736,6 +740,13 @@ function getTaxonomy() {
   };
 }
 
+/** 使用场景必填判定（2026-10-18 曼波令：标注工坊与预约台「使用场景」必填）：
+ *  scene_usage 为 multi 数组，至少勾选一项即通过 */
+function isSceneSelected(selection) {
+  const v = selection && selection.scene_usage;
+  return Array.isArray(v) ? v.length > 0 : Boolean(v);
+}
+
 module.exports = {
   TAXONOMY_VERSION,
   groups,
@@ -743,4 +754,5 @@ module.exports = {
   validateSelection,
   selectionFromFormFields,
   getTaxonomy,
+  isSceneSelected,
 };

@@ -785,6 +785,10 @@ async function submitSample() {
   const selection = collectSelection();
   if (!model) return toast('❌ 请选择模型文件');
   if (Object.keys(selection).length === 0) return toast('❌ 工况勾选不能为空——没有人工标注的样本不构成训练数据');
+  // 使用场景必填（2026-10-18 曼波令）：置顶组未勾选不许入库
+  if (!Array.isArray(selection.scene_usage) || selection.scene_usage.length === 0) {
+    return toast('❌ 请勾选「使用场景」（必填）——需求标签区最上方');
+  }
 
   const fd = new FormData();
   fd.append('model', model);

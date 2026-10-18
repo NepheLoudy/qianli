@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>千里战队3D打印预约中心 · 打印审批台</title>
+<style>
+  /* ============ 打印审批台（2026-10-18 曼波令：admin 独立审批界面） ============ */
+  :root {
+    --bg0: #0a0d12; --bg1: #10141b; --bg2: #161c26; --inset: #0c1016;
+    --line: #212a36; --line2: #2c3745;
+    --ink: #e8edf4; --muted: #7e8a99; --dim: #55606e;
+    --amber: #ffb02e; --amber2: #ff8f1f; --hot: #ff6a2b;
+    --cyan: #53d6f0; --ok: #35d07f; --warn: #ffb02e; --bad: #ff5d5d;
+    --accent: var(--amber);
+    --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg0); color: var(--ink);
+    padding: 0 16px 40px; min-height: 100vh;
+    background-image:
+      radial-gradient(1200px 500px at 75% -10%, rgba(255, 138, 31, .07), transparent 60%),
+      repeating-linear-gradient(0deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px),
+      repeating-linear-gradient(90deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px);
+    background-attachment: fixed;
+  }
+  .wrap { max-width: 1060px; margin: 0 auto; }
+  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 22px 4px 14px; position: relative; }
+  .head::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
+    background: repeating-linear-gradient(-45deg, var(--amber) 0 12px, #131920 12px 24px); opacity: .85; border-radius: 2px; }
+  .brandbar { display: flex; align-items: center; gap: 14px; }
+  .brandmark { width: 46px; height: 46px; flex: 0 0 46px; background: linear-gradient(135deg, var(--amber), var(--hot));
+    clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); display: flex; align-items: center; justify-content: center;
+    font: 800 15px/1 var(--mono); color: #14100a; letter-spacing: -1px; }
+  h1 { font-size: 21px; letter-spacing: 2px; font-weight: 700; }
+  h1 .en { display: block; font: 600 10px/1.4 var(--mono); letter-spacing: 3px; color: var(--muted); text-transform: uppercase; }
+  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
+  .sub a { color: var(--cyan); text-decoration: none; }
+  .userbox { font-size: 13px; text-align: right; }
+  .userbox .role { display: inline-block; padding: 1px 9px; border-radius: 3px; color: #14100a; font: 700 11px/1.6 var(--mono); margin: 0 4px; letter-spacing: 1px; }
+  .r-admin { background: var(--amber); } .r-reviewer { background: var(--cyan); color: #0c2230; } .r-member { background: #8b98a8; color: #10141b; }
+  .userbox button { padding: 3px 10px; font-size: 12px; background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; cursor: pointer; }
+  .userbox a { color: var(--cyan); font-size: 12px; margin-right: 6px; }
+  .card { background: var(--bg1); border: 1px solid var(--line); border-radius: 4px;
+    padding: 16px 18px 18px; margin-bottom: 18px; position: relative;
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
+  .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: linear-gradient(180deg, var(--amber), transparent 120%); opacity: .7; }
+  .card h2 { font-size: 14px; margin-bottom: 14px; letter-spacing: 1.5px; color: var(--ink); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .card h2 .sub { display: inline; margin: 0; letter-spacing: 0; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; letter-spacing: .5px; }
+  input[type=text], input[type=number], input[type=password], select {
+    width: 100%; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 3px; font-size: 14px;
+    background: var(--inset); color: var(--ink); transition: border-color .15s;
+  }
+  input:focus, select:focus { outline: none; border-color: var(--amber); }
+  .hint { font-size: 12px; margin-top: 6px; min-height: 16px; color: var(--muted); }
+  .hint.bad { color: var(--bad); }
+  button.primary { padding: 10px 22px; border: none; border-radius: 3px; font-size: 14px; font-weight: 700; cursor: pointer;
+    background: linear-gradient(135deg, var(--amber), var(--hot)); color: #14100a; letter-spacing: 2px; }
+  button.ok { background: #123527; color: var(--ok); border: 1px solid #1e5c40; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  button.bad { background: #3d1614; color: var(--bad); border: 1px solid #6e2a26; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
+  button.mini { background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 3px; padding: 3px 9px; cursor: pointer; font-size: 12px; }
+  button:not(:disabled):hover { filter: brightness(1.15); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .actions { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 3px; font-size: 12px; color: #14100a; font-weight: 700; font-family: var(--mono); letter-spacing: .5px; }
+  .s-待审批 { background: var(--warn); } .s-已通过 { background: var(--cyan); color: #0c2230; }
+  .s-排队中 { background: #8fa4ff; color: #131928; } .s-打印中 { background: var(--hot); }
+  .s-已完成 { background: var(--ok); color: #0c2417; } .s-已驳回, .s-已取消 { background: #6b7684; color: #10141b; }
+  .detail { font-size: 12px; color: var(--muted); }
+  .detail b { color: var(--ink); }
+  .empty { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
+  dialog { background: var(--bg1); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; padding: 18px; max-width: 560px; width: 92vw; }
+  dialog::backdrop { background: rgba(4, 6, 10, .7); }
+  .qitem { border: 1px solid var(--line2); border-radius: 4px; padding: 12px 14px; margin-bottom: 12px; background: var(--bg2); }
+  .qitem .qhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
+  .qitem .qhead b { font-size: 14px; }
+  .qitem .qline { font-size: 13px; margin: 3px 0; }
+  .qitem .qline .lbl { color: var(--muted); font-size: 12px; margin-right: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: 1px; font-family: var(--mono); }
+  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg2); color: var(--ink);
+    border: 1px solid var(--line2); border-radius: 4px; padding: 10px 18px; font-size: 13px; display: none; z-index: 99; max-width: 90vw; }
+  .roleTag { font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 3px; background: var(--cyan); color: #0c2230; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="head">
+    <div class="brandbar">
+      <div class="brandmark">审</div>
+      <div>
+        <h1>打印审批台<span class="en">Approval Console</span></h1>
+        <div class="sub">待审批队列与分发决策 · <a href="/">← 返回预约中心</a></div>
+      </div>
+    </div>
+    <div class="userbox" id="userbox" style="display:none"></div>
+  </div>
+
+  <div id="loginBox" style="display:none">
+    <div class="card" style="max-width:420px;margin:40px auto">
+      <h2>🔑 登录（审批人）</h2>
+      <label>用户名</label><input type="text" id="username" autocomplete="username">
+      <label>密码</label><input type="password" id="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()">
+      <div class="actions"><button class="primary" onclick="doLogin()">登录</button><span class="hint" id="loginHint"></span></div>
+      <div class="detail" style="margin-top:10px">审批台仅 <b>reviewer / admin</b> 可用；普通用户请回预约中心查看进度。</div>
+    </div>
+  </div>
+
+  <div id="noPerm" style="display:none">
+    <div class="card"><h2>🔒 无审批权限</h2>
+      <div class="detail">当前账号权限不足（需要 reviewer / admin）。<a href="/" style="color:var(--cyan)">返回预约中心</a></div></div>
+  </div>
+
+  <div id="appBody" style="display:none">
+    <div class="card">
+      <h2>⏳ 待审批 <span class="sub" id="pendingCount">（每 15s 自动刷新）</span></h2>
+      <div id="pendingList"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card">
+      <h2>📜 最近处理 <span class="sub">（只读，最近 20 条）</span></h2>
+      <div id="recentList"><div class="empty">加载中…</div></div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+<script>
+// 打印审批台（2026-10-18 曼波令：admin/reviewer 独立审批界面；预约中心列表回归纯状态展示）
+const $ = (id) => document.getElementById(id);
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
+function fmtMins(mins) { const m = Number(mins); if (!Number.isFinite(m) || m <= 0) return ''; return m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? (m % 60) + 'm' : '') : m + 'm'; }
+const PARAM_LABELS = { layerHeight: '层高', wallLoops: '墙数', topShellLayers: '顶面层', bottomShellLayers: '底面层', infillDensity: '填充%', infillPattern: '填充图案', speedProfile: '速度档', supportType: '支撑', supportThresholdAngle: '支撑阈值°', supportDensity: '支撑密度%', seamPosition: '接缝', directionStrategy: '朝向策略', ironing: '熨烫', brim: '裙边', brimWidth: '裙边mm', xyHoleComp: '孔补偿', xyContourComp: '轮廓补偿', temperatureDelta: '热床Δ°', nozzleTempDelta: '喷嘴Δ°' };
+
+let ME = null;
+const isReviewer = () => ME && ['reviewer', 'admin'].includes(ME.role);
+
+// ---------- 登录 ----------
+async function loadMe() {
+  const res = await fetch('/api/auth/me');
+  if (res.ok) { ME = await res.json(); return true; }
+  return false;
+}
+async function doLogin() {
+  const res = await fetch('/api/auth/login', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username: $('username').value.trim(), password: $('password').value }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { $('loginHint').textContent = '❌ ' + (data.error || '登录失败'); return; }
+  ME = data; enter();
+}
+function logout() { fetch('/api/auth/logout', { method: 'POST' }).then(() => location.reload()); }
+function renderIdentity() {
+  const box = $('userbox');
+  if (!ME) { box.style.display = 'none'; $('appBody').style.display = 'none'; $('noPerm').style.display = 'none'; $('loginBox').style.display = 'block'; return; }
+  box.style.display = 'block';
+  box.innerHTML = `你好，<b>${esc(ME.displayName)}</b><span class="role r-${esc(ME.role)}">${esc(ME.role)}</span>
+    <a href="/">预约中心</a><button onclick="logout()">退出</button>`;
+  $('loginBox').style.display = 'none';
+  if (!isReviewer()) { $('noPerm').style.display = 'block'; $('appBody').style.display = 'none'; return; }
+  $('noPerm').style.display = 'none'; $('appBody').style.display = 'block';
+}
+function enter() {
+  renderIdentity();
+  if (!isReviewer()) return;
+  loadAll();
+  setInterval(loadAll, 15000);
+}
+
+// ---------- 数据 ----------
+window.__printers = [];
+async function loadAll() {
+  try {
+    const [resList, resPrinters] = await Promise.all([fetch('/api/reservations'), fetch('/api/printers')]);
+    if (resList.status === 401) { ME = null; renderIdentity(); return; }
+    const records = await resList.json();
+    if (resPrinters.ok) window.__printers = await resPrinters.json();
+    const pending = records.filter((r) => r.status === '待审批');
+    const recent = records.filter((r) => r.status !== '待审批').slice().reverse().slice(0, 20);
+    renderPending(pending);
+    renderRecent(recent);
+  } catch (err) {
+    $('pendingList').innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+function renderPending(list) {
+  $('pendingCount').textContent = `（${list.length} 单待审批 · 每 15s 自动刷新）`;
+  const box = $('pendingList');
+  if (!list.length) { box.innerHTML = '<div class="empty">🎉 暂无待审批单</div>'; return; }
+  box.innerHTML = list.map((r) => {
+    const paramEntries = r.processParams ? Object.entries(r.processParams)
+      .filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null && !(Array.isArray(v) && !v.length)) : [];
+    const params = paramEntries.slice(0, 10).map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ');
+    const srcTag = r.processParams ? '' : (r.embeddedParams
+      ? `<span class="detail">📦 3mf 直通（内嵌: ${Object.entries(r.embeddedParams.params || {}).slice(0, 5).map(([k, v]) => esc((PARAM_LABELS[k] || k) + '=' + v)).join(' · ')}${Object.keys(r.embeddedParams.params || {}).length > 5 ? ' …' : ''}${r.estMinutes ? '｜预计 ' + fmtMins(r.estMinutes) : ''}）</span>`
+      : '<span class="detail">📦 3mf 直通（切片参数内嵌）</span>');
+    const rules = (r.appliedRules || []).map((x) => esc(x.reason)).join('；');
+    const hist = (r.history || []).slice(-2).map((h) => `${esc((h.at || '').replace('T', ' ').slice(5, 16))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).join(' ｜ ');
+    const unsliced = !/\.(3mf|gcode|gx|g)$/i.test(r.fileName || '');
+    return `<div class="qitem">
+      <div class="qhead">
+        <span class="badge s-待审批">待审批</span>
+        <b>${esc(r.id)}</b>
+        <span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span>
+        ${r.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡ 加急</span>' : ''}
+      </div>
+      <div class="qline"><span class="lbl">发起人</span>${esc(r.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc(r.fileName || '')}</div>
+      <div class="qline"><span class="lbl">需求</span>${esc(r.materialType || '未指定材料')}${r.color ? ' ×' + esc(r.color) : ''}${r.quantity > 1 ? ' ×' + r.quantity + ' 件' : ''}${r.assignedPrinter ? `<span class="lbl" style="margin-left:12px">指定机</span>${esc(r.assignedPrinter)}` : ''}</div>
+      ${srcTag ? `<div class="qline">${srcTag}</div>` : ''}
+      ${params ? `<div class="qline"><span class="lbl">参数</span>${params}${paramEntries.length > 10 ? ` <span class="detail">…共 ${paramEntries.length} 项</span>` : ''}</div>` : ''}
+      ${rules ? `<div class="qline"><span class="lbl">依据</span><span class="detail">${rules}</span></div>` : ''}
+      ${hist ? `<div class="qline"><span class="lbl">轨迹</span><span class="detail">${hist}</span></div>` : ''}
+      ${unsliced ? '<div class="qline" style="color:var(--warn)">⚠️ 未切片模型——切片后重新提交才能分发（3mf / gcode）</div>' : ''}
+      <div class="actions">
+        <button class="ok" ${unsliced ? 'disabled title="未切片模型：请先切片（拓竹 3mf / 闪铸 gcode）后重新提交"' : ''} onclick="review('${esc(r.id)}','approve')">✅ 通过并分发</button>
+        <button class="bad" onclick="review('${esc(r.id)}','reject')">❌ 驳回</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderRecent(list) {
+  const box = $('recentList');
+  if (!list.length) { box.innerHTML = '<div class="empty">暂无已处理记录</div>'; return; }
+  box.innerHTML = `<table>
+    <thead><tr><th>单号</th><th>状态</th><th>发起人/文件</th><th>需求</th><th>时间</th></tr></thead>
+    <tbody>${list.map((r) => `<tr>
+      <td><b>${esc(r.id)}</b></td>
+      <td><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}</td>
+      <td>${esc(r.applicant || '?')}<br><span class="detail">${esc(r.fileName || '')}</span></td>
+      <td class="detail">${esc(r.materialType || '?')}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
+      <td class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
+
+// ---------- 审批操作 ----------
+function review(id, action) {
+  if (!isReviewer()) return toast('仅审批人可操作');
+  if (action === 'approve') return openApproveDialog(id);
+  const reason = prompt('驳回理由：');
+  if (reason === null) return;
+  doReview(id, 'reject', reason || '');
+}
+
+async function doReview(id, action, comment, dispatch, sampleEntry) {
+  const res = await fetch(`/api/reservations/${id}/${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ comment, ...(dispatch ? { dispatch } : {}), ...(sampleEntry ? { sampleEntry: true } : {}) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401) { ME = null; renderIdentity(); return toast('登录已过期'); }
+  if (!res.ok) return toast('❌ ' + (data.error || '操作失败'));
+  toast(`✅ ${id} ${action === 'approve' ? '已通过并入队' : '已驳回'}`);
+  loadAll();
+}
+
+/** 通过并分发对话框（2026-10-18 自预约中心迁入）：指定目标机/AMS 槽位/喷嘴，留空自动匹配；
+ *  入库训练样本勾选按源单底料可用性把关 */
+async function openApproveDialog(id) {
+  const dlg = document.createElement('dialog');
+  const printers = (window.__printers || []);
+  let rec = null;
+  try {
+    const r = await fetch(`/api/reservations/${id}`);
+    if (r.ok) rec = await r.json();
+  } catch { /* 取不到按不可入库处理（宁严勿空） */ }
+  const canSample = !!(rec && rec.selection && Object.keys(rec.selection).length > 0);
+  // 品牌判定：切片文件内嵌机型优先；无内嵌按扩展名
+  const mm = (rec && rec.embeddedParams && rec.embeddedParams.machineModel) || '';
+  const fileIsFf = mm ? /flashforge|ad5|5m|creator/i.test(mm) : /\.(gcode|gx|g)$/i.test((rec && rec.fileName) || '');
+  const usable = printers.filter((p) => Boolean(p.brand === 'flashforge') === fileIsFf);
+  const preselect = mm && usable.length === 1 ? usable[0].name : '';
+  const modelNote = mm
+    ? `<div class="detail" style="margin-bottom:6px">📦 文件内嵌机型：<b>${esc(mm)}</b>${preselect ? '——已为你锁定匹配机型' : '（请在同品牌机型中确认目标机）'}</div>`
+    : '';
+  const brandHint = usable.length && usable.length < printers.length
+    ? `<div class="detail" style="margin-bottom:6px;color:var(--warn)">🔒 该文件目标品牌为${fileIsFf ? '闪铸' : '拓竹'}，只列同品牌机型（跨品牌切片格式互不兼容）</div>`
+    : '';
+  const opts = (usable.length ? usable : printers).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.status)}${p.stateStale ? '/失联' : ''}）</option>`).join('');
+  const fil = (rec && rec.embeddedParams && Array.isArray(rec.embeddedParams.filaments)) ? rec.embeddedParams.filaments : [];
+  const filRows = fil.length
+    ? fil.map((f, i) => {
+        const sw = f.colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(String(f.colorHex).replace(/^#/, ''))};margin-left:6px;vertical-align:middle;border:1px solid #55555a"></span>` : '';
+        return `<label>用料 ${i + 1}：${esc(f.type || '未知')}${sw}</label><select class="apTraySel" data-idx="${i}" disabled><option value="">自动匹配（按该料类型/颜色）</option></select>`;
+      }).join('')
+    : `<label>AMS 槽位（用料）</label><select id="apTray" disabled><option value="">自动匹配（按材料/颜色）</option></select>`;
+  const filNote = fil.length > 1
+    ? `<div class="detail" style="margin-bottom:6px">🧵 文件含 <b>${fil.length}</b> 种用料——逐条指定槽位，留自动的按该条用料类型/颜色匹配</div>`
+    : '';
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">✅ 通过并分发（${esc(id)}）</h3>`
+    + `<div class="detail" style="margin-bottom:8px">指定分发目标与用料（都可留自动匹配）；指定后该机不可用会滞留等人工、不静默改派</div>`
+    + modelNote + brandHint + filNote
+    + `<label>目标打印机</label><select id="apPrinter" onchange="renderApTrays()"><option value="">自动匹配（按材料/颜色选机）</option>${opts}</select>`
+    + filRows
+    + `<div id="apNozzleRow" style="display:none"><label>喷嘴</label><select id="apNozzle"><option value="">自动</option></select></div>`
+    + (canSample
+        ? `<label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer"><input type="checkbox" id="apSample" style="width:auto;margin:0">📚 入库为训练样本<span class="detail">（打印完成后自动回填成功/失败）</span></label>`
+        : `<div class="detail" style="margin-top:8px">📚 入库训练样本：本单无工况勾选——切片参数由工况×几何共同决定，无标注的纯切片件入库无训练意义</div>`)
+    + `<label>审批意见（可空）</label><input type="text" id="apComment" placeholder="如：优先打这个件">`
+    + `<div class="actions" style="margin-top:10px"><button class="ok" id="apGo">通过并分发</button><button class="mini" id="apCancel">取消</button></div>`;
+  document.body.appendChild(dlg);
+  if (preselect) { dlg.querySelector('#apPrinter').value = preselect; renderApTrays(); }
+  dlg.querySelector('#apCancel').onclick = () => dlg.close();
+  dlg.querySelector('#apGo').onclick = () => {
+    const dispatch = {};
+    const pr = dlg.querySelector('#apPrinter').value;
+    if (pr) dispatch.assignedPrinter = pr;
+    const traySels = [...dlg.querySelectorAll('.apTraySel')];
+    if (traySels.length) {
+      const trays = traySels.map((s) => { if (!s.value) return null; try { return JSON.parse(s.value); } catch { return null; } });
+      if (trays.some(Boolean)) dispatch.trays = trays;
+    } else {
+      const trayRaw = dlg.querySelector('#apTray').value;
+      if (trayRaw) { try { dispatch.tray = JSON.parse(trayRaw); } catch { /* 忽略坏值 */ } }
+    }
+    const nz = dlg.querySelector('#apNozzleRow').style.display !== 'none' ? dlg.querySelector('#apNozzle').value : '';
+    if (nz !== '') dispatch.nozzleId = Number(nz);
+    const sampleEntry = !!(dlg.querySelector('#apSample') && dlg.querySelector('#apSample').checked);
+    const comment = dlg.querySelector('#apComment').value.trim();
+    dlg.close();
+    doReview(id, 'approve', comment, dispatch, sampleEntry);
+  };
+  dlg.showModal();
+}
+
+/** 目标机联动：填充该机实装 AMS 槽位（单栏或多耗材逐条；双喷头机显示喷嘴选择） */
+function renderApTrays() {
+  const nozzleRow = document.getElementById('apNozzleRow');
+  const traySels = [document.getElementById('apTray'), ...document.querySelectorAll('.apTraySel')].filter(Boolean);
+  if (!traySels.length) return;
+  const p = (window.__printers || []).find((x) => x.name === document.getElementById('apPrinter').value);
+  const fill = (sel) => {
+    const autoLabel = sel.id === 'apTray' ? '自动匹配（按材料/颜色）' : '自动匹配（按该料类型/颜色）';
+    sel.innerHTML = `<option value="">${autoLabel}</option>`;
+    sel.disabled = true;
+    if (!p) return;
+    sel.disabled = false;
+    for (const t of (p.ams || [])) {
+      if (!t.type) continue;
+      const opt = document.createElement('option');
+      opt.value = JSON.stringify({ slot: t.slot });
+      opt.textContent = `${t.slot} · ${t.type}${t.colorHex ? ' · #' + t.colorHex : ''}${t.remain != null && t.remain > 0 ? ' · 余 ' + Math.round(t.remain) + '%' : ''}`;
+      sel.appendChild(opt);
+    }
+  };
+  for (const sel of traySels) fill(sel);
+  const nozzles = p ? (p.nozzles || []) : [];
+  if (nozzleRow) nozzleRow.style.display = nozzles.length >= 2 ? 'block' : 'none';
+  if (!p || !nozzleRow) return;
+  const nSel = document.getElementById('apNozzle');
+  const nzLabel = (n) => (n.side === 'left' ? '左喷嘴（外挂料盘）' : n.side === 'right' ? '右喷嘴（AMS）' : `喷头 ${n.id + 1}`);
+  nSel.innerHTML = '<option value="">自动</option>' + nozzles.map((n) => `<option value="${n.id}">${nzLabel(n)}${n.active ? '（当前）' : ''}</option>`).join('');
+}
+
+// ---------- 启动 ----------
+(async () => {
+  await loadMe();
+  renderIdentity();
+  if (isReviewer()) enter();
+  else if (ME) renderIdentity();
+})();
+</script>
+</body>
+</html>

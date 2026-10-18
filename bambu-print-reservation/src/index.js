@@ -491,6 +491,10 @@ app.post('/api/training/samples', requireUser(), upload.fields([
     } catch {
       return res.status(400).json({ error: 'selection/spatial 不是合法 JSON' });
     }
+    // 使用场景必填（2026-10-18 曼波令：标注工坊与预约台双入口同口径，服务端兜底）
+    if (!require('./services/taxonomy').isSceneSelected(selection)) {
+      return res.status(400).json({ error: '请勾选「使用场景」（必填）', details: ['使用场景是必填项——在需求标签区顶部勾选至少一项'] });
+    }
     // 放置平面四元数（2026-10-16）：与预约单同口径——随样本存档（标注朝向帧换算桥）
     let placement = null;
     if (body.placement) {
@@ -686,6 +690,10 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       );
     } catch {
       return res.status(400).json({ error: 'selection/spatial 不是合法 JSON' });
+    }
+    // 使用场景必填（2026-10-18 曼波令；标注/预约台双入口同口径，服务端兜底）
+    if (!require('./services/taxonomy').isSceneSelected(selection)) {
+      return res.status(400).json({ error: '请勾选「使用场景」（必填）', details: ['使用场景是必填项——在需求标签区顶部勾选至少一项'] });
     }
     // 放置平面四元数（2026-10-16）：3D 工坊 Place on Face 的累计旋转随单存档——
     // 标注坐标在放置后的朝向帧里，此值即朝向帧↔原始文件坐标系的换算桥（切片烘焙/解义用）

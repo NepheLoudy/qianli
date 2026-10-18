@@ -10,6 +10,7 @@ const {
   validateSelection,
   selectionFromFormFields,
   getTaxonomy,
+  isSceneSelected,
 } = require('../src/services/taxonomy');
 
 let failures = 0;
@@ -220,6 +221,16 @@ check('冲突规则引用的字段/材料正则自洽（防规则库写错字段
     }
     assert.ok(rule.message && rule.message.length > 5, `冲突规则 ${rule.id} 缺 message`);
   }
+});
+
+check('使用场景置顶 + 必填判定（2026-10-18 曼波令）', () => {
+  const t = getTaxonomy();
+  assert.equal(t.groups[0].id, 'scene', 'taxonomy 首组必须是使用场景（两页同源渲染）');
+  assert.equal(t.groups.filter((g) => g.id === 'scene').length, 1, '场景组不得重复');
+  assert.equal(isSceneSelected({ scene_usage: ['robot'] }), true);
+  assert.equal(isSceneSelected({ scene_usage: [] }), false);
+  assert.equal(isSceneSelected({}), false);
+  assert.equal(isSceneSelected(null), false);
 });
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`);
