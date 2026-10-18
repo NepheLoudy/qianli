@@ -410,6 +410,37 @@ app.post('/api/training/rule-fit', requireUser('reviewer', 'admin'), (req, res) 
 });
 
 // 网格下发（3D 标注工房用）：模型文件 → 抽稀网格 JSON（≤12 万面，浏览器可渲染）
+/** 模型文件 → 3D 预览网格（训练标注工坊与审批台 Z 截面预览共用；超 80MB 由调用方拦截） */
+async function buildMeshPreview(fileBuffer, fileName) {
+  const mf = require('./services/modelFeatures');
+  let parsed;
+  if (/\.3mf$/i.test(fileName)) {
+    // 注意：用 parse3mfModel 拿原始网格（analyze3mf 的对象是分析结果，不含几何）
+    const r = mf.parse3mfModel(fileBuffer);
+    if (r.error || !r.objects.length) throw new Error(r.error || '3mf 内无可渲染网格');
+    parsed = r.objects[0]; // 多零件取首件（v1 标注以主零件为界）
+  } else if (require('./utils/stepMesh').isCadFile(fileName)) {
+    // STEP/IGES：occt WASM 网格化（2026-10-15 支持 step 解析）
+    parsed = await require('./utils/stepMesh').parseCadToParsed(fileBuffer, fileName);
+  } else {
+    parsed = mf.parseStl(fileBuffer);
+  }
+  if (parsed.error) throw new Error(parsed.error);
+  const { positions, faces, triangles } = parsed;
+  const MAX_VIEW_FACES = 120000;
+  const skip = Math.max(1, Math.ceil(triangles / MAX_VIEW_FACES));
+  const outFaces = [];
+  for (let t = 0; t < triangles; t += skip) outFaces.push(faces[t * 3], faces[t * 3 + 1], faces[t * 3 + 2]);
+  return {
+    positions: Array.from(positions),
+    faces: outFaces,
+    faceCount: outFaces.length / 3,
+    originalFaceCount: triangles,
+    decimated: skip > 1,
+    skip,
+  };
+}
+
 app.post('/api/training/mesh', requireUser(), upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: '缺少模型文件' });
@@ -418,36 +449,14 @@ app.post('/api/training/mesh', requireUser(), upload.single('file'), async (req,
       return res.status(400).json({ error: '模型超过 80MB，3D 标注视图不支持（不影响录入）' });
     }
     const clean = () => { try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ } };
-    const mf = require('./services/modelFeatures');
-    const fileName = req.file.originalname || '';
-    let parsed;
-    if (/\.3mf$/i.test(fileName)) {
-      // 注意：用 parse3mfModel 拿原始网格（analyze3mf 的对象是分析结果，不含几何）
-      const r = mf.parse3mfModel(fs.readFileSync(req.file.path));
-      if (r.error || !r.objects.length) { clean(); return res.status(400).json({ error: r.error || '3mf 内无可渲染网格' }); }
-      // 多零件取首件（v1 标注以主零件为界，多零件逐件标注待下批）
-      parsed = r.objects[0];
-    } else if (require('./utils/stepMesh').isCadFile(fileName)) {
-      // STEP/IGES：occt WASM 网格化（2026-10-15 支持 step 解析）
-      parsed = await require('./utils/stepMesh').parseCadToParsed(fs.readFileSync(req.file.path), fileName);
-    } else {
-      parsed = mf.parseStl(fs.readFileSync(req.file.path));
+    try {
+      const preview = await buildMeshPreview(fs.readFileSync(req.file.path), req.file.originalname || '');
+      clean();
+      res.json(preview);
+    } catch (err) {
+      clean();
+      return res.status(400).json({ error: err.message });
     }
-    clean();
-    if (parsed.error) return res.status(400).json({ error: parsed.error });
-    const { positions, faces, triangles } = parsed;
-    const MAX_VIEW_FACES = 120000;
-    const skip = Math.max(1, Math.ceil(triangles / MAX_VIEW_FACES));
-    const outFaces = [];
-    for (let t = 0; t < triangles; t += skip) outFaces.push(faces[t * 3], faces[t * 3 + 1], faces[t * 3 + 2]);
-    res.json({
-      positions: Array.from(positions),
-      faces: outFaces,
-      faceCount: outFaces.length / 3,
-      originalFaceCount: triangles,
-      decimated: skip > 1,
-      skip,
-    });
   } catch (err) {
     if (req.file) { try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ } }
     res.status(400).json({ error: `网格下发失败: ${err.message}` });
@@ -661,6 +670,132 @@ app.get('/api/reservations/:id', requireUser(), async (req, res) => {
   } catch (err) {
     console.error('获取预约失败:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------- 审批台切片预览（2026-10-18 P0）：真实刀轨分层截面 ----------
+// 解析切片产物内嵌 gcode（3mf 的 Metadata/plate_1.gcode / 闪铸单 .gcode），按 Z 层
+// 抽出挤出路徑供前端画截面视图；解析结果按文件 mtime+size 缓存（最多 6 份）。
+const slicePreviewCache = new Map();
+function readGcodeFromRecord(rec) {
+  const buf = fs.readFileSync(rec.filePath);
+  if (/\.gcode$/i.test(rec.fileName || '')) return buf.toString('utf8');
+  if (/\.3mf$/i.test(rec.fileName || '')) {
+    const AdmZipMod = require('adm-zip');
+    const zip = new AdmZipMod(buf);
+    const entry = zip.getEntry('Metadata/plate_1.gcode');
+    return entry ? entry.getData().toString('utf8') : null;
+  }
+  return null;
+}
+function getSliceLayers(rec) {
+  if (!rec || rec.fileCleaned || !rec.filePath) return null;
+  const stat = fs.statSync(rec.filePath);
+  const key = `${rec.id}:${stat.mtimeMs}:${stat.size}`;
+  if (slicePreviewCache.has(key)) return slicePreviewCache.get(key);
+  const text = readGcodeFromRecord(rec);
+  if (!text) return null;
+  const layers = require('./services/gcodeLayers').parseGcodeLayers(text);
+  while (slicePreviewCache.size >= 6) slicePreviewCache.delete(slicePreviewCache.keys().next().value);
+  slicePreviewCache.set(key, layers);
+  return layers;
+}
+
+// 切片分层清单（reviewer+）：层号/Z/段数/全层包围盒 + 缩略图地址
+app.get('/api/reservations/:id/slice-layers', requireUser('reviewer'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    const layers = getSliceLayers(rec);
+    if (!layers || !layers.length) return res.status(404).json({ error: '该文件无内嵌 gcode（非切片产物或未含 plate_1.gcode）' });
+    const bounds = layers.reduce((acc, l) => {
+      const [a, b, c, d] = l.bounds;
+      return [Math.min(acc[0], a), Math.min(acc[1], b), Math.max(acc[2], c), Math.max(acc[3], d)];
+    }, [Infinity, Infinity, -Infinity, -Infinity]);
+    res.json({
+      count: layers.length,
+      layers: layers.map((l) => ({ i: l.i, z: l.z, count: l.segs.length })),
+      bounds,
+      thumbnail: /\.3mf$/i.test(rec.fileName || '') ? `/api/reservations/${encodeURIComponent(rec.id)}/thumbnail` : null,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 单层截面（reviewer+）：segments=[[x1,y1,x2,y2]...]（mm，gcode 坐标）
+app.get('/api/reservations/:id/slice-layer', requireUser('reviewer'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    const layers = getSliceLayers(rec);
+    if (!layers) return res.status(404).json({ error: '该文件无内嵌 gcode' });
+    const layer = layers[Number(req.query.i)];
+    if (!layer) return res.status(404).json({ error: '层序号越界' });
+    res.json({ i: layer.i, z: layer.z, bounds: layer.bounds, segments: layer.segs });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 3mf 切片缩略图（reviewer+）：Metadata/plate_1.png（切片器自带渲染）
+app.get('/api/reservations/:id/thumbnail', requireUser('reviewer'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    if (rec.fileCleaned || !rec.filePath || !/\.3mf$/i.test(rec.fileName || '')) return res.status(404).json({ error: '无缩略图' });
+    const AdmZipMod = require('adm-zip');
+    const zip = new AdmZipMod(fs.readFileSync(rec.filePath));
+    const entry = zip.getEntry('Metadata/plate_1.png') || zip.getEntry('Metadata/plate_1_small.png');
+    if (!entry) return res.status(404).json({ error: '3mf 内无 plate 缩略图' });
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'private, max-age=600');
+    res.send(entry.getData());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ---------- 审批台模型预览（reviewer+，2026-10-18 曼波令）：预约源文件 → 3D 网格，
+// 前端用 MeshAnnotator 只读渲染 + Z 轴截面滑块查看「切片长啥样」
+app.get('/api/reservations/:id/mesh', requireUser('reviewer'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    if (rec.fileCleaned) return res.status(410).json({ error: '源文件已过保留期清理，无法预览' });
+    if (!rec.filePath) return res.status(404).json({ error: '该单无源文件路径' });
+    const buf = await fs.promises.readFile(rec.filePath);
+    if (buf.length > 80 * 1024 * 1024) return res.status(413).json({ error: '模型超过 80MB，预览不支持（不影响审批）' });
+    res.json(await buildMeshPreview(buf, rec.fileName || ''));
+  } catch (err) {
+    res.status(400).json({ error: `网格下发失败: ${err.message}` });
+  }
+});
+
+// 审批台切片回读校验（reviewer+，2026-10-18 P0 框架）：切片产物内嵌参数 ↔ 规则引擎
+// 参数 → 拟合度 v2（容差+加权+verdict）与差异表——审批人「专家切得对不对」一屏核对
+app.get('/api/reservations/:id/fit', requireUser('reviewer'), async (req, res) => {
+  try {
+    const rec = await reservationService.getReservationById(req.params.id);
+    if (!rec) return res.status(404).json({ error: '预约记录不存在' });
+    const processRules = require('./services/processRules');
+    const paramFit = require('./services/paramFit');
+    const applied = processRules.applyRules(rec.selection || {}, { material: rec.materialType || '' });
+    const expert = rec.embeddedParams && rec.embeddedParams.params ? rec.embeddedParams.params : null;
+    const fit = expert ? paramFit.compare(applied.params || {}, expert) : null;
+    res.json({
+      engineParams: applied.params,
+      blocked: Boolean(applied.blocked),
+      errors: applied.errors || [],
+      appliedRules: applied.applied || [],
+      expertParams: expert,
+      machineModel: (rec.embeddedParams && rec.embeddedParams.machineModel) || '',
+      filaments: (rec.embeddedParams && rec.embeddedParams.filaments) || [],
+      fit,
+      rulesVersion: applied.rulesVersion || null,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
 });
 

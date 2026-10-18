@@ -2,15 +2,14 @@ const config = require('../config');
 const PrinterClient = require('./client');
 const FlashforgeClient = require('./flashforge');
 const bitableApi = require('../feishu/bitable');
+const { capabilitiesFor } = require('./capabilities');
 
 /**
- * 机型 → 品牌适配层分派（2026-10-14 纯内网批）：拓竹走 MQTT(bambu-link)，闪铸走
- * HTTP REST 轮询（flashforge.js）。未知型号默认按拓竹处理（保持老 .env 兼容）。
+ * 机型 → 品牌适配层分派（2026-10-18 P0：能力矩阵统一收编，见 capabilities.js，
+ * 业务代码不再自写机型正则）。未知型号默认按拓竹处理（保持老 .env 兼容）。
  */
 function brandOf(model) {
-  const m = String(model || '').toUpperCase();
-  if (m.includes('AD5') || m.includes('AD5X') || m.includes('5M') || m.includes('CREATOR')) return 'flashforge';
-  return 'bambu';
+  return capabilitiesFor(model).brand;
 }
 
 // 判断打印机是否支持自动分发：两条链路就绪后拓竹与闪铸均可（gcode/3mf 文件类型
@@ -20,20 +19,14 @@ function isAutoDispatchable(printer) {
 }
 
 /**
- * 摄像头通道类型（观察台画面区按此选渲染器）：
- *   mjpeg    = JPEG 帧流经服务端代理（<img> 直显）：闪铸 8080 HTTP MJPEG；
- *              拓竹 P1/A1 为 6000 TLS+认证包 JPEG 帧流（2026-10-17 A1 mini 实证修正，
- *              原「P1/A1 裸 H.264 走 p1stream」是未验证假设）
- *   rtsp     = 拓竹 X1/H2D 系 RTSPS:322（服务端 WS 中继 + 前端 WebCodecs 解码）
+ * 摄像头通道类型（观察台画面区按此选渲染器，2026-10-18 起由能力矩阵给出）：
  *   p1stream = 历史通道（P1/A1 已改走 mjpeg），保留代码不再映射机型
+ *   mjpeg    = JPEG 帧流经服务端代理：闪铸 8080 HTTP MJPEG；拓竹 P1/A1 6000 TLS+认证包
+ *   rtsp     = 拓竹 X1/H2D 系 RTSPS:322（服务端 WS 中继 + 前端 WebCodecs 解码）
  *   null     = 未知机型
  */
 function cameraKind(printer) {
-  const m = String(printer.model || '').toUpperCase();
-  if (brandOf(m) === 'flashforge') return 'mjpeg';
-  if (m.includes('P1') || m.includes('A1')) return 'mjpeg';
-  if (m.includes('X1') || m.includes('H2D')) return 'rtsp';
-  return null;
+  return capabilitiesFor(printer.model).camera;
 }
 
 /**

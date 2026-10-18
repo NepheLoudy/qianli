@@ -59,13 +59,15 @@
 
   const VS = `
     attribute vec3 aPos; attribute vec3 aNor; attribute vec3 aPick; attribute vec3 aTint;
-    uniform mat4 uMVP; varying vec3 vNor; varying vec3 vPick; varying vec3 vTint;
-    void main() { vNor = aNor; vPick = aPick; vTint = aTint; gl_Position = uMVP * vec4(aPos, 1.0); }`;
+    uniform mat4 uMVP; varying vec3 vNor; varying vec3 vPick; varying vec3 vTint; varying float vZ;
+    void main() { vNor = aNor; vPick = aPick; vTint = aTint; vZ = aPos.z; gl_Position = uMVP * vec4(aPos, 1.0); }`;
   const FS = `
-    precision mediump float; varying vec3 vNor; varying vec3 vPick; varying vec3 vTint;
+    precision mediump float; varying vec3 vNor; varying vec3 vPick; varying vec3 vTint; varying float vZ;
     uniform vec3 uColor; uniform float uMode; // 0=正常着色 1=悬停/覆盖纯色 2=拾取原样
+    uniform float uClipOn; uniform float uClipZ; // Z 轴截面（2026-10-18 审批台预览：上方裁掉看内部）
     void main() {
       if (uMode > 1.5) { gl_FragColor = vec4(vPick, 1.0); return; }
+      if (uClipOn > 0.5 && vZ > uClipZ) discard;
       float lit = 0.55 + 0.45 * max(dot(normalize(vNor), normalize(vec3(0.4, -0.6, 0.8))), 0.0);
       vec3 base = uColor * lit * vTint;
       gl_FragColor = vec4(mix(base, uColor, step(0.5, uMode)), 1.0);
@@ -89,6 +91,7 @@
   window.MeshAnnotator = function (canvas, overlay, opts) {
     opts = opts || {};
     const tools = opts.tools || [];
+    const readonly = !!opts.readonly; // 只读预览（2026-10-18 审批台）：禁标注创建，保留轨道旋转/缩放
     const gl = canvas.getContext('webgl', { antialias: true });
     if (!gl) throw new Error('浏览器不支持 WebGL');
     const prog = gl.createProgram();
@@ -106,10 +109,12 @@
       aPick: gl.getAttribLocation(prog, 'aPick'), aTint: gl.getAttribLocation(prog, 'aTint'),
       uMVP: gl.getUniformLocation(prog, 'uMVP'), uColor: gl.getUniformLocation(prog, 'uColor'),
       uMode: gl.getUniformLocation(prog, 'uMode'),
+      uClipOn: gl.getUniformLocation(prog, 'uClipOn'), uClipZ: gl.getUniformLocation(prog, 'uClipZ'),
     };
 
     const st = {
       mesh: null, triCount: 0, center: [0, 0, 0], span: 100,
+      clipZ: null, // Z 轴截面（null=不裁；世界坐标 z，高于它片元 discard）
       yaw: 0.7, pitch: 0.5, dist: 2.6,
       tool: tools.length ? tools[0].id : null,
       annotations: [],        // point/line/axis/survey/circle/region 混合
@@ -232,6 +237,10 @@
       gl.uniform1f(loc.uMode, pickMode ? 2 : mode === 'hover' ? 1 : 0);
       if (mode === 'hover') gl.uniform3f(loc.uColor, 1.0, 0.76, 0.18);
       else gl.uniform3f(loc.uColor, 0.55, 0.62, 0.7);
+      // Z 轴截面裁剪（2026-10-18 审批台预览）：高于 st.clipZ 的片元 discard，
+      // 拾取渲染同样裁剪保证点选与所见一致
+      gl.uniform1f(loc.uClipOn, st.clipZ == null ? 0 : 1);
+      gl.uniform1f(loc.uClipZ, st.clipZ == null ? 0 : st.clipZ);
       gl.drawArrays(gl.TRIANGLES, 0, st.triCount * 3);
       if (mode === 'hover' && st.hoverFace >= 0 && st.hoverFace < st.triCount) {
         gl.uniform1f(loc.uMode, 1);
@@ -1047,6 +1056,7 @@
     }
 
     canvas.addEventListener('click', (e) => {
+      if (readonly) return; // 只读预览（审批台）：不创建标注、不进放置模式
       // 放置平面模式（2026-10-16）：点面 → 该面朝下落到盘面；不参与标注选中/放置
       if (st.placementArmed) {
         if (moved > 6 || !st.mesh) return;
@@ -1333,6 +1343,12 @@
       },
       setLoadType: (t) => { st.loadType = t; },
       setCircleCandidates: (circles) => { st.circleCandidates = circles || []; invalidate(); },
+      /** Z 轴截面（2026-10-18 审批台预览）：传世界坐标 z 裁剪其上方；null 取消裁剪 */
+      setClipZ: (z) => {
+        st.clipZ = z == null || z === '' || !Number.isFinite(Number(z)) ? null : Number(z);
+        invalidate();
+        return st.clipZ;
+      },
       getAnnotations,
       undo: () => undo(),
       redo: () => redo(),

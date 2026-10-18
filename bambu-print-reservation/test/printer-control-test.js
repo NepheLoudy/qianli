@@ -151,6 +151,29 @@ checkAsync('灯控节点按机型分型（H2D=chamber_light2 / X1C=chamber_light
   assert.strictEqual(x1.seen[0].system.led_mode, 'on');
 });
 
+// ---------- 能力矩阵（2026-10-18 P0：机型能力单一事实源） ----------
+check('能力矩阵：机型 → 品牌/世代/相机/命令通道', () => {
+  const { capabilitiesFor } = require('../src/printer/capabilities');
+  const h2 = capabilitiesFor('H2D');
+  assert.equal(h2.brand, 'bambu');
+  assert.equal(h2.generation, 'new');
+  assert.equal(h2.camera, 'rtsp');
+  assert.equal(h2.commandTopic, 'request');
+  const p1 = capabilitiesFor('P1S');
+  assert.equal(p1.generation, 'old');
+  assert.equal(p1.camera, 'mjpeg');
+  assert.equal(p1.commandTopic, 'report');
+  assert.equal(capabilitiesFor('A1 mini').camera, 'mjpeg');
+  const ff = capabilitiesFor('Creator 5 Pro');
+  assert.equal(ff.brand, 'flashforge');
+  assert.equal(ff.commandTopic, 'http');
+  const unknown = capabilitiesFor('奇形怪状');
+  assert.equal(unknown.brand, 'bambu');
+  assert.equal(unknown.camera, null);
+  assert.equal(unknown.commandTopic, 'report');
+  assert.equal(capabilitiesFor('X1C').version, 'v1');
+});
+
 // 异步断言全部收尾后再退（checkAsync 不阻塞同步流程，直接 exit 会抢杀未决断言）
 await Promise.resolve();
 setTimeout(() => process.exit(failures ? 1 : 0), 50);

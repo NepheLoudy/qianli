@@ -71,6 +71,22 @@ check('空间标注工具计数 → annot_* 特征', () => {
   assert.strictEqual(feat.has_load_annot, 1);
 });
 
+check('载荷标注分桶（方向/类型/性质/量级，2026-10-18 P0）', () => {
+  const spatial = [
+    { tool: 'load', type: 'load', loadType: 'bending', loadNature: 'fatigue', loadMagnitude: 'heavy', pos: [1, 1, 1], dir: [0, 0, -1] },
+    { tool: 'load', type: 'load', loadType: 'compression', loadNature: 'static', loadMagnitude: 'light', pos: [2, 1, 1], dir: [1, 0, 0] },
+    { tool: 'load', type: 'load', loadType: 'bending', loadNature: 'static', loadMagnitude: 'medium', pos: [3, 1, 1], dir: [0, 0, 1] },
+  ];
+  const feat = deriveFeatures(spatial, null, {});
+  assert.strictEqual(feat.load_z, 2, '两支竖直载荷');
+  assert.strictEqual(feat.load_xy, 1);
+  assert.strictEqual(feat.load_type_bending, 2);
+  assert.strictEqual(feat.load_type_compression, 1);
+  assert.strictEqual(feat.load_nature_fatigue, 1);
+  assert.strictEqual(feat.load_mag_heavy, 1);
+  assert.strictEqual(feat.load_mag_light, 1);
+});
+
 check('体检数值特征直通（悬垂/贴底/曲面/高度）', () => {
   const feat = deriveFeatures([], { ok: true, overhang: { severePct: 12.5, moderatePct: 3 }, contact: { areaMm2: 800, footprintPct: 55 }, curvedPct: 20, mesh: { closed: true }, bbox: { x: 10, y: 10, z: 42 } }, {});
   assert.strictEqual(feat.overhang_severe_pct, 12.5);

@@ -4,6 +4,7 @@ const ftp = require('ftp');
 const { Client: FTPSClient } = require('basic-ftp');
 const net = require('net');
 const tls = require('tls');
+const { capabilitiesFor } = require('./capabilities');
 const { Readable } = require('stream');
 const RtpsSession = require('./rtsps');
 
@@ -146,8 +147,9 @@ class PrinterClient {
    * dataUpdateTopic 同时管订阅与发布，早改会订错 topic。
    */
   _patchCommandTopic() {
-    const model = String(this.config.model || '').toUpperCase();
-    if (!/H2|X1/.test(model)) return;
+    // 能力矩阵唯一口径（2026-10-18 P0）：新世代（H2/X1）命令走 device/{SN}/request，
+    // 老世代（P1/A1）维持 report 单 topic，闪铸走 HTTP（不经本函数）
+    if (capabilitiesFor(this.config.model).commandTopic !== 'request') return;
     try {
       const mqttClient = this.client.getMqttClient();
       mqttClient.dataUpdateTopic = `device/${this.config.serial}/request`;
@@ -476,7 +478,7 @@ class PrinterClient {
     if (!this.client || !this.connected) {
       throw new Error('打印机未连接');
     }
-    const isNewGen = /H2|X1/.test(String(this.config.model || '').toUpperCase());
+    const isNewGen = capabilitiesFor(this.config.model).generation === 'new'; // 能力矩阵唯一口径（2026-10-18 P0）
     // 审批分发指定槽位（2026-10-16 曼波令）：ams_mapping2 指向指定 AMS/槽位——
     // 未指定时维持默认 [{ams_id:0, slot_id:0}]（打印机按切片/自动映射）
     const mapAms = prefTray && Number.isInteger(prefTray.amsId) && Number.isInteger(prefTray.trayId)
@@ -705,7 +707,7 @@ class PrinterClient {
       throw new Error('打印机未连接');
     }
     const model = String(this.config.model || '').toUpperCase();
-    const isNewGen = /H2|X1/.test(model);
+    const isNewGen = capabilitiesFor(this.config.model).generation === 'new'; // 能力矩阵唯一口径（2026-10-18 P0）
     const sequenceId = ++this.projectSeq;
     if (isNewGen) {
       // H2D 三灯节点：chamber_light（主腔灯）/ work_light（工作灯）/ chamber_light2（副腔灯）
@@ -903,10 +905,10 @@ class PrinterClient {
     }
   }
 
-  /** 切片文件清单（按修改时间倒序）——FTPS 990；新世代 USB 根 /，老世代 /sdcard */
+  /** 切片文件清单（按修改时间倒序）——FTPS 990；两世代 FTP 根均为 SD 卡根
+   *  （2026-10-18 P1S 实证：老世代不存在 /sdcard 目录，直接列根） */
   async listSdcardFiles() {
-    const isNewGen = /H2|X1/.test(String(this.config.model || '').toUpperCase());
-    const dir = isNewGen ? '/' : '/sdcard';
+    const dir = '/';
     return this.withFtps(async (client) => {
       const list = await client.list(dir);
       return list
@@ -924,8 +926,7 @@ class PrinterClient {
     if (!n || /[\\/]/.test(n) || n.includes('..') || !/\.(3mf|gcode|gx|g)$/i.test(n)) {
       throw new Error('非法文件名');
     }
-    const isNewGen = /H2|X1/.test(String(this.config.model || '').toUpperCase());
-    const full = isNewGen ? `/${n}` : `/sdcard/${n}`;
+    const full = `/${n}`; // 两世代 FTP 根=SD 卡根（2026-10-18 P1S 实证，/sdcard 不存在）
     return this.withFtps(async (client) => {
       await client.remove(full);
       return { deleted: n };

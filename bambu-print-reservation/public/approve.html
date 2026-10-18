@@ -126,6 +126,7 @@
   </div>
 </div>
 <div id="toast"></div>
+<script src="/annotator.js?v=25"></script>
 <script>
 // 打印审批台（2026-10-18 曼波令：admin/reviewer 独立审批界面；预约中心列表回归纯状态展示）
 const $ = (id) => document.getElementById(id);
@@ -218,6 +219,7 @@ function renderPending(list) {
       <div class="actions">
         <button class="ok" ${unsliced ? 'disabled title="未切片模型：请先切片（拓竹 3mf / 闪铸 gcode）后重新提交"' : ''} onclick="review('${esc(r.id)}','approve')">✅ 通过并分发</button>
         <button class="bad" onclick="review('${esc(r.id)}','reject')">❌ 驳回</button>
+        <button class="mini" onclick="openPreview('${esc(r.id)}')" title="3D 预览 + Z 轴截面 + 切片参数回读校验">🔍 预览 / 切片核对</button>
       </div>
     </div>`;
   }).join('');
@@ -235,6 +237,185 @@ function renderRecent(list) {
       <td class="detail">${esc(r.materialType || '?')}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
       <td class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
     </tr>`).join('')}</tbody></table>`;
+}
+
+// ---------- 预览 / 切片核对（2026-10-18 曼波令 + P0 框架） ----------
+/** 3D 预览 + Z 轴截面 + 切片回读校验：
+ *  · /mesh 端点取源文件网格（STL/3MF/STEP 同源解析）→ 只读渲染 + Z 裁剪滑块；
+ *  · /fit 端点取「切片产物内嵌参数 ↔ 规则引擎参数」拟合度 v2（容差/加权/差异表）。 */
+async function jget(url) {
+  try {
+    const r = await fetch(url);
+    const d = await r.json().catch(() => ({}));
+    return { ok: r.ok, data: d };
+  } catch (e) {
+    return { ok: false, data: { error: e.message } };
+  }
+}
+
+async function openPreview(id) {
+  const dlg = document.createElement('dialog');
+  dlg.style.cssText = 'width:min(920px,94vw);max-width:94vw;max-height:92vh;overflow:auto';
+  dlg.innerHTML = '<div class="detail">加载中…</div>';
+  document.body.appendChild(dlg);
+  dlg.showModal();
+  const [recR, meshR, fitR, sliceR] = await Promise.all([
+    jget(`/api/reservations/${id}`),
+    jget(`/api/reservations/${id}/mesh`),
+    jget(`/api/reservations/${id}/fit`),
+    jget(`/api/reservations/${id}/slice-layers`),
+  ]);
+  const rec = recR.ok ? recR.data : null;
+  const mesh = meshR.ok ? meshR.data : null;
+  const fitInfo = fitR.ok ? fitR.data : null;
+  const sliceMeta = sliceR.ok ? sliceR.data : null;
+  const meshErr = meshR.ok ? '' : (meshR.data.error || '网格不可用');
+  const fit = fitInfo && fitInfo.fit ? fitInfo.fit : null;
+  const verdictMap = { pass: ['✅ 通过', 'var(--ok)'], warn: ['⚠️ 接近', 'var(--warn)'], fail: ['❌ 差异大', 'var(--bad)'] };
+  const vd = fit ? (verdictMap[fit.verdict] || ['—', 'var(--muted)']) : null;
+  const fitRows = fit ? fit.rows.map((r) => `<tr>
+      <td>${esc(PARAM_LABELS[r.key] || r.key)}</td>
+      <td class="detail">${esc(r.engine == null ? '（无规则）' : r.engine)}</td>
+      <td class="detail">${esc(r.expert == null ? '—' : r.expert)}</td>
+      <td class="detail">${r.tol ? '±' + r.tol : '精确'}</td>
+      <td>${r.match ? '<span style="color:var(--ok)">✅</span>' : r.nearMiss ? '<span style="color:var(--warn)">≈ 接近</span>' : '<span style="color:var(--bad)">❌</span>'}</td>
+    </tr>`).join('') : '';
+  const engineList = fitInfo && fitInfo.engineParams
+    ? Object.entries(fitInfo.engineParams).filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null)
+        .map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ')
+    : '';
+  dlg.innerHTML = `<h3 style="font-size:15px;margin-bottom:6px">🔍 预览 · ${esc(id)}</h3>
+    <div class="detail" style="margin-bottom:8px">${esc((rec && rec.fileName) || '')}${fitInfo && fitInfo.machineModel ? ' ｜ 内嵌机型：<b>' + esc(fitInfo.machineModel) + '</b>' : ''}</div>
+    ${mesh ? `
+    <div style="position:relative">
+      <canvas id="pvCanvas" style="width:100%;height:380px;display:block;background:#0c1016;border:1px solid var(--line2);border-radius:4px"></canvas>
+      <div id="pvOverlay" style="position:absolute;inset:0;pointer-events:none"></div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <span class="detail" style="white-space:nowrap">Z 截面</span>
+      <input type="range" id="pvZ" min="0" max="1000" value="1000" style="flex:1">
+      <span class="detail" id="pvZLabel" style="white-space:nowrap;font-family:var(--mono)"></span>
+    </div>
+    <div class="detail">拖左裁掉高处片元、看内部截面；拖满=完整模型。拖拽旋转 / 滚轮缩放。${mesh.decimated ? '（面数已抽稀 ' + mesh.skip + ':1）' : ''}</div>
+    ` : (sliceMeta ? `
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-start">
+      ${sliceMeta.thumbnail ? `<img src="${sliceMeta.thumbnail}" alt="切片缩略图" style="width:220px;height:220px;object-fit:contain;background:#0c1016;border:1px solid var(--line2);border-radius:4px">` : ''}
+      <canvas id="slCanvas" style="flex:1;min-width:300px;height:360px;display:block;background:#0c1016;border:1px solid var(--line2);border-radius:4px"></canvas>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+      <span class="detail" style="white-space:nowrap">层</span>
+      <input type="range" id="slLayer" min="0" max="${Math.max(0, sliceMeta.count - 1)}" value="0" style="flex:1">
+      <span class="detail" id="slLabel" style="white-space:nowrap;font-family:var(--mono)"></span>
+    </div>
+    <div class="detail">真实切片刀轨截面（每层挤出路徑，来自切片产物内嵌 gcode）——拖动层滑块切换 Z 层。${sliceMeta.thumbnail ? '左侧为切片器渲染的整盘缩略图。' : ''}</div>
+    ` : `<div class="detail" style="color:var(--warn);padding:14px 0">📷 ${esc(meshErr)}；该文件也无内嵌 gcode（非切片产物）</div>`)}
+    <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:10px">
+      <h3 style="font-size:14px;margin-bottom:6px">📐 切片回读校验（专家切片参数 ↔ 规则引擎）</h3>
+      ${fit
+        ? `<div style="margin-bottom:6px">拟合度（加权）<b style="font-size:16px;color:${vd[1]}">${fit.weightedScore}%</b> <span style="color:${vd[1]};font-weight:700">${vd[0]}</span>
+            <span class="detail">｜ 通过 ${fit.matches}/${fit.total}（未加权 ${fit.score}%）${fit.mismatches ? ' · ' + fit.mismatches + ' 项差异' : ''}</span></div>
+           <table><thead><tr><th>参数</th><th>引擎</th><th>专家</th><th>容差</th><th>结论</th></tr></thead><tbody>${fitRows}</tbody></table>`
+        : `<div class="detail">${fitInfo && fitInfo.blocked ? '⚠️ 勾选存在硬冲突：' + esc((fitInfo.errors || []).join('；')) : '📦 需求链路单（无内嵌切片参数，如 STL/STEP 或闪铸 gcode）——无回读对象'}</div>`}
+      ${engineList ? `<div class="detail" style="margin-top:6px"><b>引擎参数</b>：${engineList}</div>` : ''}
+      ${fitInfo && fitInfo.appliedRules && fitInfo.appliedRules.length ? `<div class="detail" style="margin-top:4px"><b>依据</b>：${fitInfo.appliedRules.map((x) => esc(x.reason)).join('；')}</div>` : ''}
+    </div>
+    <div class="actions" style="justify-content:flex-end"><button class="mini" id="pvClose">关闭</button></div>`;
+  dlg.querySelector('#pvClose').onclick = () => dlg.close();
+  if (mesh) {
+    try {
+      const canvas = dlg.querySelector('#pvCanvas');
+      const overlay = dlg.querySelector('#pvOverlay');
+      canvas.width = canvas.clientWidth || 860;
+      canvas.height = canvas.clientHeight || 380;
+      const view = new window.MeshAnnotator(canvas, overlay, { readonly: true });
+      view.loadMesh({ positions: mesh.positions, faces: mesh.faces });
+      let zmin = Infinity;
+      let zmax = -Infinity;
+      for (let i = 2; i < mesh.positions.length; i += 3) {
+        const z = Number(mesh.positions[i]);
+        if (z < zmin) zmin = z;
+        if (z > zmax) zmax = z;
+      }
+      if (!Number.isFinite(zmin) || !Number.isFinite(zmax)) { zmin = 0; zmax = 1; }
+      const slider = dlg.querySelector('#pvZ');
+      const zLabel = dlg.querySelector('#pvZLabel');
+      const apply = () => {
+        const t = Number(slider.value) / 1000;
+        const z = zmin + t * (zmax - zmin);
+        const clipped = t >= 0.999 ? null : z;
+        view.setClipZ(clipped);
+        zLabel.textContent = clipped == null
+          ? 'z=' + zmax.toFixed(2) + '（完整）'
+          : 'z=' + z.toFixed(2) + ' / ' + zmax.toFixed(2) + 'mm';
+      };
+      slider.oninput = apply;
+      apply();
+    } catch (e) {
+      const cv = dlg.querySelector('#pvCanvas');
+      if (cv) cv.insertAdjacentHTML('afterend', `<div class="detail" style="color:var(--bad)">3D 渲染失败：${esc(e.message)}</div>`);
+    }
+  } else if (sliceMeta) {
+    initSliceViewer(dlg, id, sliceMeta);
+  }
+}
+
+/** 切片层截面渲染（2026-10-18 P0）：meta.bounds 全层包围盒定标，按需拉取单层段，
+ *  gcode 坐标 Y 向上 → canvas Y 翻转；10mm 参考网格 + 青色刀轨。 */
+function initSliceViewer(dlg, id, meta) {
+  const canvas = dlg.querySelector('#slCanvas');
+  const slider = dlg.querySelector('#slLayer');
+  const label = dlg.querySelector('#slLabel');
+  if (!canvas || !slider || !label) return;
+  const cache = new Map();
+  const [minX, minY, maxX, maxY] = meta.bounds || [0, 0, 1, 1];
+  const w = canvas.clientWidth || 620;
+  const h = canvas.clientHeight || 360;
+  canvas.width = w;
+  canvas.height = h;
+  const pad = 22;
+  const spanX = Math.max(1e-6, maxX - minX);
+  const spanY = Math.max(1e-6, maxY - minY);
+  const scale = Math.min((w - pad * 2) / spanX, (h - pad * 2) / spanY);
+  const tx = (x) => pad + (x - minX) * scale;
+  const ty = (y) => h - pad - (y - minY) * scale;
+  const show = (layer) => {
+    label.textContent = `层 ${layer.i + 1}/${meta.count}${layer.z != null ? ' · z=' + layer.z.toFixed(2) + 'mm' : ''} · ${layer.segments.length} 段`;
+    const g = canvas.getContext('2d');
+    g.fillStyle = '#0c1016';
+    g.fillRect(0, 0, w, h);
+    g.strokeStyle = 'rgba(120,150,190,.14)';
+    g.lineWidth = 1;
+    for (let gx = Math.ceil(minX / 10) * 10; gx <= maxX; gx += 10) {
+      g.beginPath(); g.moveTo(tx(gx), ty(minY)); g.lineTo(tx(gx), ty(maxY)); g.stroke();
+    }
+    for (let gy = Math.ceil(minY / 10) * 10; gy <= maxY; gy += 10) {
+      g.beginPath(); g.moveTo(tx(minX), ty(gy)); g.lineTo(tx(maxX), ty(gy)); g.stroke();
+    }
+    g.strokeStyle = '#53d6f0';
+    g.lineWidth = 1;
+    g.beginPath();
+    for (const [a, b, c, d] of layer.segments) {
+      g.moveTo(tx(a), ty(b));
+      g.lineTo(tx(c), ty(d));
+    }
+    g.stroke();
+  };
+  const load = async (i) => {
+    let layer = cache.get(i);
+    if (!layer) {
+      const r = await jget(`/api/reservations/${id}/slice-layer?i=${i}`);
+      if (!r.ok) { label.textContent = '层加载失败：' + (r.data.error || ''); return; }
+      layer = r.data;
+      cache.set(i, layer);
+    }
+    show(layer);
+  };
+  let timer = null;
+  slider.oninput = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => load(Number(slider.value)), 120);
+  };
+  load(Number(slider.value));
 }
 
 // ---------- 审批操作 ----------

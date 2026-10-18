@@ -80,6 +80,23 @@ function deriveFeatures(spatial, modelFeatures, selection = {}) {
   feat.has_load_annot = anns.some((a) => a && a.type === 'load') ? 1 : 0;
   feat.has_support_annot = byTool.support_need ? 1 : 0;
 
+  // ---------- ②.5 载荷标注分桶（2026-10-18 P0：方向/性质/量级此前只采不学） ----------
+  // annotator 的 load 标注自带 dir（力方向向量）/ loadType（受拉/受压/…）/
+  // loadNature（静载/疲劳/冲击/振动）/ loadMagnitude（轻/中/重）——这些是 3D 标注
+  // 里性价比最高的工况信号（人亲手标的），此前只数了个总数。这里按桶计数，
+  // 规则与 ruleFitter 都能直接引用（如 load_cmp_bending ≥1 → 墙数+）。
+  const loads = anns.filter((a) => a && a.type === 'load');
+  if (loads.length) {
+    const zLoads = loads.filter((a) => Math.abs(Number(a.dir && a.dir[2]) || 0) > 0.5).length;
+    feat.load_z = zLoads;
+    feat.load_xy = loads.length - zLoads;
+    for (const l of loads) {
+      if (l.loadType) feat[`load_type_${String(l.loadType)}`] = (feat[`load_type_${String(l.loadType)}`] || 0) + 1;
+      if (l.loadNature) feat[`load_nature_${String(l.loadNature)}`] = (feat[`load_nature_${String(l.loadNature)}`] || 0) + 1;
+      if (l.loadMagnitude) feat[`load_mag_${String(l.loadMagnitude)}`] = (feat[`load_mag_${String(l.loadMagnitude)}`] || 0) + 1;
+    }
+  }
+
   // ---------- ③ 几何体检数值特征 ----------
   const mf = modelFeatures || {};
   // 宽松判据：样本库快照可能不带 ok 标志（字段齐即视为有效体检）
@@ -106,6 +123,12 @@ module.exports = { deriveFeatures, holeAxis, collectHoles };
 const FEATURE_NAMES = [
   'holes_z', 'holes_xy', 'holes_total', 'holes_min_r', 'holes_max_r', 'holes_small',
   'has_load_annot', 'has_support_annot',
+  // 载荷标注分桶（2026-10-18 P0）：方向/类型/性质/量级
+  'load_z', 'load_xy',
+  'load_type_tension', 'load_type_compression', 'load_type_shear', 'load_type_bending',
+  'load_type_torsion', 'load_type_contact',
+  'load_nature_static', 'load_nature_fatigue', 'load_nature_impact', 'load_nature_vibration',
+  'load_mag_light', 'load_mag_medium', 'load_mag_heavy',
   'overhang_severe_pct', 'overhang_moderate_pct', 'contact_area_mm2', 'contact_footprint_pct',
   'curved_pct', 'mesh_closed', 'bbox_z',
 ];
