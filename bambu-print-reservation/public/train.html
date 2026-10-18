@@ -244,6 +244,7 @@
           <canvas id="annoCanvas" style="width:100%;height:400px;display:block;background:#fafbfd;border:1px solid var(--line);border-radius:8px;cursor:crosshair"></canvas>
           <div id="annoOverlay" style="position:absolute;inset:0;pointer-events:none"></div>
         </div>
+        <div id="slicedPreview" style="display:none;margin-top:8px"></div>
         <div class="mfNotes" id="annoList"></div>
         <div id="selPanel" style="display:none;margin-top:8px;padding:8px;background:#fbfcfe;border:1px solid var(--line);border-radius:6px;font-size:12px"></div>
       </div>
@@ -734,11 +735,47 @@ function deleteSel() {
   toast('已删除');
 }
 
+/** 已切片产物降级视图（2026-10-18 曼波反馈「123123.gcode.3mf 报无对象网格」）：
+ *  切片 3mf 内部只有 gcode+缩略图、无模型网格——隐藏画布与放置工具，
+ *  显示切片器缩略图 + 层概览；工况勾选与入库照常可用 */
+function showSlicedState(mesh) {
+  if (ANNOTATOR) { try { ANNOTATOR.clearAnnotations(); } catch { /* 未初始化 */ } }
+  onAnnotationsChange([]);
+  const canvas = $('annoCanvas');
+  if (canvas && canvas.parentElement) canvas.parentElement.style.display = 'none';
+  const placeBtn = $('placeBtn');
+  if (placeBtn && placeBtn.parentElement) placeBtn.parentElement.style.display = 'none';
+  $('loadTypeRow').style.display = 'none';
+  const layerNote = mesh.layers
+    ? `（${mesh.layers.count} 层${mesh.layers.zMin != null ? ` · z ${mesh.layers.zMin}–${mesh.layers.zMax}mm` : ''}）`
+    : '';
+  $('toolRow').innerHTML = `<span class="hint">📦 ${esc(mesh.message || '已切片产物——3D 标注不可用')}${layerNote}</span>`;
+  const pv = $('slicedPreview');
+  if (pv) {
+    pv.style.display = 'block';
+    pv.innerHTML = (mesh.thumbnail
+      ? `<img src="${mesh.thumbnail}" alt="切片缩略图" style="max-width:100%;max-height:380px;border:1px solid var(--line);border-radius:8px;background:#fafbfd">`
+      : '<span class="hint">（无缩略图）</span>')
+      + '<div class="hint" style="margin-top:6px">如需 3D 标注：请上传 STL/STEP 或未切片的工程 3mf；本切片样本可直接勾选工况入库。</div>';
+  }
+}
+
+/** 复位已切片降级态（切回 STL/STEP 网格文件时） */
+function resetSlicedState() {
+  const pv = $('slicedPreview');
+  if (pv) { pv.style.display = 'none'; pv.innerHTML = ''; }
+  const canvas = $('annoCanvas');
+  if (canvas && canvas.parentElement) canvas.parentElement.style.display = 'block';
+  const placeBtn = $('placeBtn');
+  if (placeBtn && placeBtn.parentElement) placeBtn.parentElement.style.display = '';
+}
+
 async function loadAnnotator() {
   const file = $('modelFile').files[0];
   const box = $('annotatorBox');
   if (!file) { box.style.display = 'none'; return; }
   box.style.display = 'block';
+  resetSlicedState(); // 切回网格文件时恢复画布/放置工具（2026-10-18 已切片降级态复位）
   initAnnotatorTools();
   // 画布尺寸要在容器可见后量（隐藏容器 clientWidth=0），否则 WebGL 视口错
   const canvas = $('annoCanvas');
@@ -749,6 +786,7 @@ async function loadAnnotator() {
     const res = await fetch('/api/training/mesh', { method: 'POST', body: fd });
     const mesh = await res.json();
     if (!res.ok) { $('toolRow').innerHTML = '<span class="hint">网格下发失败：' + esc(mesh.error || '') + '</span>'; return; }
+    if (mesh.sliced) { showSlicedState(mesh); return; } // 已切片产物：无模型网格 → 缩略图/层概览降级
     if (!ANNOTATOR) {
       ANNOTATOR = MeshAnnotator($('annoCanvas'), $('annoOverlay'), {
         tools: SPATIAL_TOOLS.filter((t) => t.shape !== 'circle'),

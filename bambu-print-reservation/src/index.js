@@ -417,7 +417,13 @@ async function buildMeshPreview(fileBuffer, fileName) {
   if (/\.3mf$/i.test(fileName)) {
     // 注意：用 parse3mfModel 拿原始网格（analyze3mf 的对象是分析结果，不含几何）
     const r = mf.parse3mfModel(fileBuffer);
-    if (r.error || !r.objects.length) throw new Error(r.error || '3mf 内无可渲染网格');
+    if (r.error || !r.objects.length) {
+      // 已切片 3mf（2026-10-18 曼波反馈）：内部只有 gcode 与缩略图、没有模型网格——
+      // 返回切片展示要素供前端友好降级；两者都缺才保留原错误
+      const artifacts = require('./services/sliceArtifacts').extractSlicedArtifacts(fileBuffer);
+      if (artifacts) return artifacts;
+      throw new Error(r.error || '3mf 内无可渲染网格');
+    }
     parsed = r.objects[0]; // 多零件取首件（v1 标注以主零件为界）
   } else if (require('./utils/stepMesh').isCadFile(fileName)) {
     // STEP/IGES：occt WASM 网格化（2026-10-15 支持 step 解析）
