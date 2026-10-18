@@ -1084,8 +1084,9 @@ async function loadList() {
         </div>${unsliced ? '<div class="detail" style="color:var(--warn)">⚠️ 未切片模型——切片后重新提交才能分发（3mf / gcode）</div>' : ''}` : '';
     const cancelBtn = !['已完成', '已取消', '已驳回'].includes(r.status) && (mine || isReviewer())
       ? `<button class="mini" onclick="cancelReservation('${r.id}')">取消</button>` : '';
-    // 复刻：源文件仍在保留期的终态单一键带参重提（服务端复制文件免重传）
-    const reprintBtn = r.status === '已完成'
+    // 复刻：源文件仍在保留期的终态单一键带参重提（2026-10-18 放宽到已取消——
+    // 分发异常被取消后可免重传一键重开；服务端 reprint 本就不限状态，只查文件保留期）
+    const reprintBtn = ['已完成', '已取消'].includes(r.status)
       ? `<button class="mini" onclick="reprint('${r.id}')">复刻</button>` : '';
     return `<tr>
       <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span></td>

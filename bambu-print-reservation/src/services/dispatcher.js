@@ -257,9 +257,15 @@ function materialMatch(required, trayType) {
  * 群播出口：晚间静默窗口（默认 02:00–09:00）内不直接发送，卡片落盘积压、
  * 窗口结束原样补发（打印机控制/写表/队列匹配不延迟，只有消息延后）
  */
-function announce(name, card, onError) {
+function announce(name, card, onError, targetUrl) {
   if (quietHours.gatePayload('webhook-card', card, name)) return;
-  sendMessage(card).catch(onError);
+  // 打印异常类卡片（buildJobFailedCard，标题「❌ 打印异常」）改发审批 webhook 机器人所在群
+  // （2026-10-18 曼波令：机械组播报太吵，异常卡集中到话题群）；其余播报仍走机械组。
+  // 显式 targetUrl 优先；审批群 webhook 未配置时回落机械组（fail-safe）
+  const isFailureCard = card && card.header && card.header.title
+    && String(card.header.title.content || '').includes('打印异常');
+  const url = targetUrl || (isFailureCard ? config.bot.approvalWebhookUrl || undefined : undefined);
+  sendMessage(card, url).catch(onError);
 }
 
 class Dispatcher {
@@ -904,11 +910,14 @@ class Dispatcher {
 
       if (await checkCancelled('下发')) return;
       const amsFrame = buildAmsMapping(task, printer, fileMeta);
+      // 无 AMS 机型（P1S/A1mini 仅外挂槽，2026-10-18 P1S 首单排障）：use_ams 置 false——
+      // 否则固件按 AMS 供料解析找不到槽位；有 AMS（非外挂槽）的机型维持全局配置
+      const hasAms = (printer.ams || []).some((t) => !t.external);
       await printerManager.startProjectOnPrinter(
         printer.id,
         uploadName,
         task.fileName || task.applicationNo || uploadName,
-        config.dispatch.useAms,
+        config.dispatch.useAms && hasAms,
         task.prefTray || (Array.isArray(task.prefTrays) ? task.prefTrays.find(Boolean) : null) || null, // 审批分发指定（2026-10-16）：指定槽位随帧下发（多耗材取首条非空；实际映射以 amsMapping2 为准）
         {
           bedTypeName: (fileMeta && fileMeta.bedType) || null, // 板型随切片产物（防板检测错配暂停）

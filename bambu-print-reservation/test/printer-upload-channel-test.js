@@ -62,13 +62,13 @@ function makeClient(model) {
 (async () => {
   console.log('== 上传通道分流 ==');
 
-  await test('P1S：FTPS(990) 成功时不碰 FTP(21)', async () => {
+  await test('P1S：FTPS(990) 成功时不碰 FTP(21)（2026-10-18 实证：写 SD 根，剥 /sdcard 前缀）', async () => {
     reset();
     const c = makeClient('P1S');
     let ftpCalled = 0;
     c.ftpPut = async () => { ftpCalled++; };
     await c.uploadBuffer(Buffer.from('x'), '/sdcard/a.3mf');
-    assert.strictEqual(MockFTPSClient.uploads[0], '/sdcard/a.3mf');
+    assert.strictEqual(MockFTPSClient.uploads[0], '/a.3mf', 'P1S FTP 根=SD 卡根，应写根路径');
     assert.strictEqual(ftpCalled, 0, 'FTP(21) 不应被调用');
   });
 
@@ -119,6 +119,23 @@ function makeClient(model) {
     await c.uploadBuffer(Buffer.from('x'), '/sdcard/e.3mf');
     assert.strictEqual(ftpsCalled, 1);
     assert.strictEqual(sftpCalled, 0);
+  });
+
+  // 2026-10-18 P1S 实证：老世代 project_file URL 与上传路径同口径改根（ftp:///<name>），
+  // `ftp:///sdcard/...` 指向不存在的目录（P1S FTP 根=SD 卡根，实测 550）
+  await test('P1S：project_file URL 用根路径 ftp:///<name>', async () => {
+    reset();
+    const c = makeClient('P1S');
+    c.connected = true;
+    let captured = null;
+    c.client = {
+      getMqttClient: () => ({
+        sendCommand: async (json) => { captured = JSON.parse(json); return { print: { result: 'success' } }; },
+      }),
+    };
+    await c.startProjectFile('j.gcode.3mf', '测试任务', false, null, {});
+    assert.strictEqual(captured.print.command, 'project_file');
+    assert.strictEqual(captured.print.url, 'ftp:///j.gcode.3mf');
   });
 
   console.log('== connectFTPS 连接参数 ==');

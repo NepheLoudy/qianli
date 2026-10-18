@@ -533,7 +533,9 @@ class PrinterClient {
             sequence_id: sequenceId,
             command: 'project_file',
             param: '',
-            url: `ftp:///sdcard/${fileName}`,
+            // 2026-10-18 P1S 实证修正：老世代 SD 卡同样暴露在 FTPS 根、URL 按根路径
+            // 引用（`ftp:///sdcard/...` 指向不存在的目录）——与上传路径同口径改根
+            url: `ftp:///${fileName}`,
             subtask_name: subtaskName || fileName,
             use_ams: useAms,
             md5: '',
@@ -1002,8 +1004,10 @@ class PrinterClient {
    * 故新世代把 remotePath 的 /sdcard/ 前缀剥掉直写根；P1/A1 保持 /sdcard/
    */
   async uploadBuffer(buffer, remotePath) {
-    const isNewGen = /H2|X1/.test(String(this.config.model || '').toUpperCase());
-    const target = isNewGen ? String(remotePath).replace(/^\/sdcard\//, '/') : remotePath;
+    // 2026-10-18 P1S 实证：老世代 P1/A1 的 FTPS 根目录同样是 **SD 卡根**（P1S `/` 直列
+    // sdcard 内容、不存在 `/sdcard` 目录——直接 550）；两世代统一剥前缀写根，URL 同口径
+    // 按文件名引用（Bambuddy 同款：「files by name only, must be in the root」）
+    const target = String(remotePath).replace(/^\/sdcard\//, '/');
     let ftpsErr = null;
     try {
       return await this.ftpsPut(buffer, target);
@@ -1021,6 +1025,29 @@ class PrinterClient {
 
   async connectFTPS() {
     const client = new FTPSClient(15000);
+    // P1/A1 老固件 PASV 主机修补（P1S 实锤，2026-10-18 R20261018-003 上传失败根因）：
+    // 老固件的嵌入式 FTP 在 PASV 应答里把数据连接主机写成 0,0,0,0（"与控制连接同一主机"
+    // 的旧写法），basic-ftp 的严格比对（FTP bounce 防护）会因此拒绝数据连接 →
+    // 「PASV returned another host (0.0.0.0)」上传必败。这里仅把 0,0,0,0 改写为控制
+    // 连接的实际地址（数据连接仍只发往我们连接的那台打印机本身，不扩大信任面）；
+    // 其他跨主机应答继续走库内严格比对拒绝。
+    // 仅真实 basic-ftp Client（含 ftp 上下文）时启用修补；测试桩/降级实现缺省跳过
+    const origRequest = client.ftp && typeof client.ftp.request === 'function'
+      ? client.ftp.request.bind(client.ftp)
+      : null;
+    if (origRequest) {
+      client.ftp.request = async (cmd) => {
+        const res = await origRequest(cmd);
+        if (String(cmd || '').toUpperCase() === 'PASV' && /\b0,0,0,0\b/.test(String(res && res.message))) {
+          const ctlHost = String((client.ftp.socket && client.ftp.socket.remoteAddress) || '').replace(/^::ffff:/i, '');
+          const m = /(\d{1,3},\d{1,3},\d{1,3},\d{1,3}),(\d+),(\d+)/.exec(String(res.message));
+          if (ctlHost && m) {
+            res.message = String(res.message).replace(m[0], `${ctlHost.split('.').join(',')},${m[2]},${m[3]}`);
+          }
+        }
+        return res;
+      };
+    }
     try {
       await client.access({
         host: this.config.host,
