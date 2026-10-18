@@ -3,6 +3,9 @@
  * 用法：node test/taxonomy-test.js
  */
 const assert = require('assert');
+// 规则文件隔离（2026-10-18）：push 闸门会继承 .env 的 PROCESS_RULES_FILE（生产路径），
+// 本测试内的 applyRules 断言必须用自己的临时规则库，否则受现场文件内容影响
+process.env.PROCESS_RULES_FILE = require('os').tmpdir() + '/bambu-test-taxonomy-rules-' + process.pid + '.json';
 const {
   TAXONOMY_VERSION,
   groups,
@@ -27,7 +30,7 @@ function check(name, fn) {
 // ---------- 结构完整性 ----------
 
 check('标签池版本为 v4（几何体检组批）', () => {
-  assert.equal(TAXONOMY_VERSION, 'v6');
+  assert.equal(TAXONOMY_VERSION, 'v7');
 });
 
 check('几何体检（自动检测）组：4 个 bool 字段齐备', () => {
@@ -231,6 +234,46 @@ check('使用场景置顶 + 必填判定（2026-10-18 曼波令）', () => {
   assert.equal(isSceneSelected({ scene_usage: [] }), false);
   assert.equal(isSceneSelected({}), false);
   assert.equal(isSceneSelected(null), false);
+});
+
+// ---------- v7（2026-10-18）：材料特性组 + 移除食品接触 ----------
+check('材料特性组：multi 字段 + 4 策略选项（自润滑/含纤维/耐磨/导电）', () => {
+  const g = groups.find((x) => x.id === 'material_trait');
+  assert.ok(g, '材料特性组存在');
+  const f = g.fields.find((x) => x.id === 'material_traits');
+  assert.ok(f, 'material_traits 字段存在');
+  assert.equal(f.type, 'multi');
+  assert.deepEqual(f.options.map((o) => o.id), ['self_lubricating', 'fiber_reinforced', 'wear_resistant', 'conductive']);
+  assert.ok(Array.isArray(f.mapsHint) && f.mapsHint.length >= 4, '每个策略都要能映射');
+});
+
+check('环境工况：食品接触字段已移除', () => {
+  const env = groups.find((g) => g.id === 'environment');
+  assert.ok(env, '环境工况组存在');
+  assert.ok(!env.fields.some((f) => f.id === 'food_contact'), 'food_contact 不应再出现');
+});
+
+check('材料特性 × 电气绝缘：导电=硬拦截、含纤维=软警告（选项间互斥无需材料串）', () => {
+  const block = validateSelection({ electrical_insulation: true, material_traits: ['conductive'] });
+  assert.ok(block.errors.some((e) => e.includes('导电/抗静电需求与电气绝缘互斥')), '导电+绝缘应为 block');
+  const warn = validateSelection({ electrical_insulation: true, material_traits: ['fiber_reinforced'] });
+  assert.ok(warn.errors.length === 0, '含纤维+绝缘不拦');
+  assert.ok(warn.warnings.some((w) => w.includes('含纤维增强与电气绝缘冲突风险')), '含纤维+绝缘应给 warn');
+});
+
+check('材料特性 → 耗材策略：含纤维优先 CF、自润滑优先 PA、耐磨 PA/PETG、导电 CF', () => {
+  const processRules = require('../src/services/processRules');
+  const fiber = processRules.applyRules({ material_traits: ['fiber_reinforced'] });
+  assert.ok(fiber.params.materialPrefer.some((p) => p === 'CF'), '含纤维 → prefer CF');
+  const lub = processRules.applyRules({ material_traits: ['self_lubricating'] });
+  assert.ok(lub.params.materialPrefer.some((p) => p === 'PA'), '自润滑 → prefer PA');
+  const wear = processRules.applyRules({ material_traits: ['wear_resistant'] });
+  assert.ok(wear.params.materialPrefer.includes('PA') && wear.params.materialPrefer.includes('PETG'), '耐磨 → PA/PETG');
+  const cond = processRules.applyRules({ material_traits: ['conductive'] });
+  assert.ok(cond.params.materialPrefer.includes('CF'), '导电 → CF');
+  // 多特性同选 = 优先并集（2026-10-18：数组参数跨规则并集，不再后者覆盖前者）
+  const both = processRules.applyRules({ material_traits: ['fiber_reinforced', 'self_lubricating'] });
+  assert.ok(both.params.materialPrefer.includes('CF') && both.params.materialPrefer.includes('PA'), '含纤维+自润滑 → CF 与 PA 并集');
 });
 
 console.log(failures === 0 ? '\n全部通过' : `\n${failures} 项失败`);

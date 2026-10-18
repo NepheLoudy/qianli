@@ -103,7 +103,7 @@ check('multi 字段 when 任一命中（ torsion 单独成规则可触发）', (
 check('输出带双版本号（rulesVersion + taxonomyVersion）', () => {
   const r = applyRules({});
   assert.match(r.rulesVersion, /^r-[0-9a-f]{8}$/);
-  assert.equal(r.taxonomyVersion, 'v6');
+  assert.equal(r.taxonomyVersion, 'v7');
 });
 
 // ---------- 写窗口操作 ----------
@@ -183,6 +183,14 @@ check('shrink 三条种子规则已随字段一并移除', () => {
   assert.ok(!ids.includes('shrink-precision'), 'shrink-precision 应已移除');
   assert.ok(!ids.includes('shrink-negative'), 'shrink-negative 应已移除');
   assert.ok(!ids.includes('shrink-expand'), 'shrink-expand 应已移除');
+});
+
+// ---------- 数组参数跨规则并集（2026-10-18 修复） ----------
+check('materialExclude/Prefer 跨规则并集（不再后者覆盖前者）', () => {
+  // 耐温档排 PLA（priority 40）+ 绝缘排 CF（45）——两条都要生效（temp_class 为 single 字段传标量）
+  const r = applyRules({ temp_class: 't80', electrical_insulation: true });
+  assert.ok(r.params && r.params.materialExclude.some((x) => /PLA/i.test(x)), '耐温 → 排 PLA 保留');
+  assert.ok(r.params && r.params.materialExclude.some((x) => /CF|碳/i.test(x)), '绝缘 → 排 CF 保留');
 });
 
 // ---------- 清理 tmp 规则文件 ----------

@@ -95,6 +95,15 @@ const DEFAULT_RULES = [
     '柔顺弹性件（标尺 ≤-2）：排除 CF（脆）、低填充留变形余量、精密档保证细节、疏支撑便于脱弹臂'),
   seed('rigid-cf-prefer', 50, { deflection_scale: { min: 2 } },
     { materialPrefer: ['CF'] }, '高刚度件（标尺 ≥+2）：优先 CF 增强系'),
+  // 材料特性 → 耗材选择策略（2026-10-18 曼波令：本组只映射选料倾向，不改切片参数）
+  seed('trait-self-lubricating', 60, { material_traits: ['self_lubricating'] },
+    { materialPrefer: ['PA'] }, '自润滑/低摩擦：优先 PA 系（自润滑、滑动配合面友好）'),
+  seed('trait-fiber-reinforced', 60, { material_traits: ['fiber_reinforced'] },
+    { materialPrefer: ['CF'] }, '含纤维增强：优先 CF 增强系（高刚性/尺寸稳定；提示硬化喷嘴抗磨）'),
+  seed('trait-wear-resistant', 60, { material_traits: ['wear_resistant'] },
+    { materialPrefer: ['PA', 'PETG'] }, '高耐磨：耐磨序列 PA>PETG>PLA，优先 PA/PETG'),
+  seed('trait-conductive', 60, { material_traits: ['conductive'] },
+    { materialPrefer: ['CF'] }, '导电/抗静电：碳系增强导电（CF 系）；与电气绝缘互斥（taxonomy 硬拦截）'),
   seed('fit-precision-comp', 55, { fit_class: ['interference', 'precision'] },
     { xyHoleComp: -0.15, speedProfile: 'precise', supportThresholdAngle: 45 },
     '配合/精密面：孔径负补偿+外壁降速保尺寸；支撑阈值放宽减少配合面支撑疤'),
@@ -182,6 +191,9 @@ function validateRule(rule) {
 }
 
 // ---------- 规则存储：内置种子 + 外部文件覆盖（PROCESS_RULES_FILE，部署不丢；热改即写回） ----------
+// 2026-10-18 种子增量同步（P0 框架修正）：文件一旦存在就整体替代内置种子，导致「代码新增
+// 种子到不了线上」——改为**按 id 合并**：文件缺的内置种子自动补入；手动删除内置记入
+// removedBuiltins 墓碑（不复活）；upsert 同 id 视为重新启用（清墓碑）。
 const RULES_FILE = process.env.PROCESS_RULES_FILE || path.join(__dirname, '..', '..', '.process-rules.json');
 
 function loadRulesFromFile() {
@@ -189,18 +201,24 @@ function loadRulesFromFile() {
     if (!fs.existsSync(RULES_FILE)) return null;
     const data = JSON.parse(fs.readFileSync(RULES_FILE, 'utf-8'));
     if (!Array.isArray(data.rules)) throw new Error('rules 不是数组');
-    return data.rules;
+    return { rules: data.rules, removed: Array.isArray(data.removedBuiltins) ? data.removedBuiltins : [] };
   } catch (err) {
     console.warn('[规则库] 规则文件加载失败，回退出厂种子:', err.message);
     return null;
   }
 }
 
+let removedBuiltins = new Set();
+
 function saveRules(rules) {
   try {
     const tmp = RULES_FILE + '.tmp';
     fs.mkdirSync(path.dirname(RULES_FILE), { recursive: true });
-    fs.writeFileSync(tmp, JSON.stringify({ savedAt: new Date().toISOString(), rules }, null, 2));
+    fs.writeFileSync(tmp, JSON.stringify({
+      savedAt: new Date().toISOString(),
+      rules,
+      removedBuiltins: [...removedBuiltins],
+    }, null, 2));
     fs.renameSync(tmp, RULES_FILE);
     return true;
   } catch (err) {
@@ -212,7 +230,27 @@ function saveRules(rules) {
 const stripBuiltin = (r) => ({ ...r, builtin: false });
 const withSeqId = (r) => (r.id ? r : { ...r, id: `rule-${Date.now()}-${++RULE_SEQ}` });
 
-let rules = (loadRulesFromFile() || DEFAULT_RULES.slice()).sort((a, b) => a.priority - b.priority);
+const DEFAULT_RULES_BY_ID = new Set(DEFAULT_RULES.map((r) => r.id));
+
+/** 文件规则 + 缺失内置种子合并（墓碑保护；同 id 以文件为准——保留人工编辑） */
+function mergeSeeds(file) {
+  const have = new Set(file.rules.map((r) => r.id));
+  const merged = file.rules.slice();
+  for (const seed of DEFAULT_RULES) {
+    if (have.has(seed.id) || file.removed.includes(seed.id)) continue;
+    merged.push(seed);
+  }
+  return merged.sort((a, b) => a.priority - b.priority);
+}
+
+const fileState = loadRulesFromFile();
+let rules;
+if (fileState) {
+  removedBuiltins = new Set(fileState.removed);
+  rules = mergeSeeds(fileState);
+} else {
+  rules = DEFAULT_RULES.slice().sort((a, b) => a.priority - b.priority);
+}
 
 /** 规则集版本：内容 hash 短码（进切片产物缓存 key；规则一改即变） */
 function rulesVersion() {
@@ -261,7 +299,16 @@ function applyRules(selection, opts = {}) {
   const feat = opts.feat || {};
   for (const rule of rules) {
     if (!whenMatches(rule.when, selection, feat)) continue;
-    Object.assign(params, rule.set);
+    // 数组参数跨规则**并集**（2026-10-18 修复）：materialExclude/materialPrefer 是累积语义，
+    // 原 Object.assign 会让后应用规则整体覆盖前一条的排除/优先项（例：耐温排 PLA 被绝缘
+    // 排 CF 覆盖 → PLA 漏网；多材料特性同选时自润滑 PA 被含纤维 CF 挤掉）
+    for (const [param, value] of Object.entries(rule.set)) {
+      if (ARRAY_PARAMS.has(param)) {
+        params[param] = [...new Set([...(params[param] || []), ...(Array.isArray(value) ? value : [value])])];
+      } else {
+        params[param] = value;
+      }
+    }
     applied.push({ id: rule.id, priority: rule.priority, reason: rule.reason });
   }
 
@@ -295,6 +342,7 @@ function upsertRule(input) {
   const problems = validateRule(input);
   if (problems.length > 0) return { ok: false, errors: problems };
   const rule = withSeqId(stripBuiltin(input));
+  removedBuiltins.delete(rule.id); // 同 id upsert = 重新启用被删内置（清墓碑）
   const idx = rules.findIndex((r) => r.id === rule.id);
   if (idx >= 0) rules[idx] = rule; else rules.push(rule);
   rules.sort((a, b) => a.priority - b.priority);
@@ -306,12 +354,16 @@ function removeRule(id) {
   const idx = rules.findIndex((r) => r.id === id);
   if (idx < 0) return { ok: false, errors: [`规则不存在: ${id}`] };
   rules.splice(idx, 1);
+  if (DEFAULT_RULES_BY_ID.has(id)) removedBuiltins.add(id); // 内置删除进墓碑（加载合并不复活）
   saveRules(rules);
   return { ok: true };
 }
 
 function resetRules() {
-  rules = DEFAULT_RULES.slice();
+  // 与初始加载同口径排序（2026-10-18 修复：DEFAULT_RULES 书写顺序不再强依赖优先级，
+  // 否则 reset 后 upsert 的 sort 会让规则顺序漂移、rulesVersion 误变）；墓碑一并清空
+  removedBuiltins.clear();
+  rules = DEFAULT_RULES.slice().sort((a, b) => a.priority - b.priority);
   saveRules(rules);
   return { ok: true, count: rules.length };
 }

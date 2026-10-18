@@ -13,7 +13,7 @@
 //   （CAD 导出的设计姿态通常是使用姿态）。Z 向受力 ≈ 层间受力（最弱方向）。
 // ============================================================
 
-const TAXONOMY_VERSION = 'v6'; // v6（2026-10-16 曼波删减令）：移除低温环境/80°C 以上高温档（t120/t120p）/抗冲击/耐磨——超出机队常规能力的档位与冗余项退场
+const TAXONOMY_VERSION = 'v7'; // v7（2026-10-18 曼波令）：新增「材料特性」组（自润滑/含纤维等 → 耗材选择策略）；环境工况移除「食品接触」（FDM 无认证耗材可选，提示无实义）
 
 /** 选项：{ id, label }；bool/number 字段无 options */
 const groups = [
@@ -308,6 +308,32 @@ const groups = [
     ],
   },
   {
+    id: 'material_trait',
+    title: '材料特性',
+    tooltip: '件对耗材的物性要求（自润滑/含纤维等）——直接映射耗材选择策略（优先/排除哪类材料），不直接改切片参数',
+    fields: [
+      {
+        id: 'material_traits',
+        type: 'multi',
+        title: '材料特性',
+        formTitle: '材料特性',
+        tooltip: '可多选。特性决定「优先挑哪类耗材」：自润滑→PA 系、含纤维→CF 增强、高耐磨→PA/PETG、导电→碳系；导电与电气绝缘互斥（硬拦截），含纤维+绝缘为软警告',
+        options: [
+          { id: 'self_lubricating', label: '自润滑/低摩擦' },
+          { id: 'fiber_reinforced', label: '含纤维增强' },
+          { id: 'wear_resistant', label: '高耐磨' },
+          { id: 'conductive', label: '导电/抗静电' },
+        ],
+        mapsHint: [
+          'self_lubricating → 优先 PA 系（自润滑、滑动配合面友好）',
+          'fiber_reinforced → 优先 CF 增强系（高刚性/尺寸稳定；提示硬化喷嘴抗磨）',
+          'wear_resistant → 耐磨序列 PA>PETG>PLA，优先 PA/PETG',
+          'conductive → 碳系增强导电（CF 系）；与电气绝缘硬冲突',
+        ],
+      },
+    ],
+  },
+  {
     id: 'environment',
     title: '环境工况',
     tooltip: '使用环境对材料的老化影响',
@@ -359,14 +385,6 @@ const groups = [
         formTitle: '防水密封',
         tooltip: '需要气密/水密或密封配合（O 圈、垫片场合）。层缝是渗漏路径',
         mapsHint: ['墙数≥4、层高 0.16 提致密；提示密封面抛光/涂封 + 必要时换 PETG'],
-      },
-      {
-        id: 'food_contact',
-        type: 'bool',
-        title: '食品接触',
-        formTitle: '食品接触',
-        tooltip: '会接触食品（厨房用具等）。FDM 层缝藏菌、多数耗材无食品认证——提示级',
-        mapsHint: ['提示：层缝易藏菌需后处理/表面涂层；材料层无认证耗材可选，风险自行确认'],
       },
     ],
   },
@@ -536,6 +554,19 @@ const CONFLICTS = [
     when: { electrical_insulation: [true] },
     materialMatch: /CF|碳/i,
     message: '电气绝缘件禁用碳纤增强材料（碳纤维导电），请换普通 PLA/PETG/ABS',
+  },
+  // 材料特性 × 电气绝缘（2026-10-18）：选项间互斥（非材料串），不需要 materialMatch
+  {
+    id: 'conductive-vs-insulation',
+    level: 'block',
+    when: { electrical_insulation: [true], material_traits: ['conductive'] },
+    message: '导电/抗静电需求与电气绝缘互斥（导电需碳系填料，绝缘禁碳）——请二选一或转人工评审',
+  },
+  {
+    id: 'fiber-vs-insulation',
+    level: 'warn',
+    when: { electrical_insulation: [true], material_traits: ['fiber_reinforced'] },
+    message: '含纤维增强与电气绝缘冲突风险：机队现有纤维增强均为碳纤（导电），确需绝缘请人工确认玻纤方案',
   },
   {
     id: 'creep-vs-pla',
