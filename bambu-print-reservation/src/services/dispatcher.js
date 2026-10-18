@@ -328,7 +328,7 @@ class Dispatcher {
   }
 
   bindPrinterEvents() {
-    printerManager.on('jobEvent', ({ printer, event }) => {
+    printerManager.on('jobEvent', ({ printer, event, prevState }) => {
       const task = this.printing.get(printer.id);
       if (event === 'finish') {
         if (task) this.completeTask(task, printer);
@@ -358,13 +358,20 @@ class Dispatcher {
         // 放行前先按失败收尾（写回「排队中」+ 重排/重试通道），再触发下一轮匹配
         const ghost = this.printing.get(printer.id);
         if (ghost) {
-          // 幽灵收尾同样尊重人工取消码（直回空闲但残留取消码时不当失败重排）
-          if (isHumanCancelFailReason(printer.failReason)) {
+          // 终态清态 ≠ 打印中断（2026-10-19 P1S 真单假失败）：新任务刚下发时，上一单的
+          // FINISH/FAILED 会先清回 IDLE，再进 PREPARE→RUNNING（P1S 实测间隔 28s）。
+          // 旧逻辑把这次 IDLE 当幽灵失败，开打 9s 就发「打印异常」卡并回滚排队。
+          const prev = String(prevState || '').toUpperCase();
+          const terminalClear = prev === 'FINISH' || prev === 'FAILED';
+          if (terminalClear) {
+            console.log(`[分发] ${printer.name} ${prev}→IDLE 为上一单终态清除（非中断），任务 ${ghost.applicationNo || ghost.recordId} 继续观察`);
+          } else if (isHumanCancelFailReason(printer.failReason)) {
+            // 幽灵收尾同样尊重人工取消码（直回空闲但残留取消码时不当失败重排）
             this.humanTerminateTask(ghost, printer).catch((err) =>
               console.error('[分发] 人工终止收尾失败:', err.message)
             );
           } else {
-            console.warn(`[分发] 打印机 ${printer.name} 由打印中直回空闲且无完成事件，按失败收尾幽灵任务: ${ghost.applicationNo || ghost.recordId}`);
+            console.warn(`[分发] 打印机 ${printer.name} 由${prev || '首报文'}直回空闲且无完成事件，按失败收尾幽灵任务: ${ghost.applicationNo || ghost.recordId}`);
             this.failTask(ghost, printer, '打印机回空闲且无完成事件').catch((err) =>
               console.error('[分发] 幽灵任务收尾失败:', err.message)
             );

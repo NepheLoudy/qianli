@@ -553,3 +553,11 @@
 - **审查修复（分发正确性）**：①自动切片改**审批快照参数优先**，缓存签名含机型/材料/勾选/参数（规则库演进不改已审批口径、重试不串档）；②份数清零挪到「开打成功之后」——上传/下发失败重试不再把 4 份单静默缩成 1 份；③产物 object 数≠请求份数即报错（排布失败不静默少打）；④自动匹配与 dispatch 双重排除「printing 在册」打印机；⑤回执丢失自愈不顶替已有在册任务的机器、跳过已取消任务；⑥老世代 P1/A1 project_file 补 `ams_mapping`（多料件不乱取槽）。
 - **P0 实锤修复（部署后回捞生产错误日志发现）**：`_patchCommandTopic` 的日志插值引用未定义的 `model`，ReferenceError 被 try 吞掉——自能力矩阵重构起 H2D/X1C 的命令 topic 从未真正切到 `device/{SN}/request`（灯控/温度/开打命令发到 report 会被新固件静默忽略，只回显不执行）。改为 `this.config.model`，并加回归单测（X1/H2→request、P1/A1→report）。
 - **测试**：25 套全绿（新增 auth 2 项、份数护栏 1 项、compactLayers 1 项、命令 topic 回归 1 项；实跑 P1S 4 份黄金件 4 object / 回读 94.3% pass）。部署：`npm run push`（纯 SFTP）。
+
+### v57 热修37 · 2026-10-19 · 随本提交落地 · fix
+
+**P1S 开打 9 秒「打印异常」假失败修复（FINISH→IDLE 终态清除被误判幽灵中断）**
+
+- **实况（曼波截图 R20261019-003 滑台_PETG_1h7m.gcode.3mf）**：审批直发 P1S 后 9 秒收到「打印失败：打印机回空闲且无完成事件」异常卡并回滚排队，但机器实际正常在打（8%、剩余 61 分钟）；33 秒后回执丢失自愈又补记回「打印中」。日志序列实锤：`project_file 下发 → P1S 任务变迁 FINISH→IDLE (idle) → 9s 后失败收尾 → 28s 后 PREPARE→RUNNING (start)`——即新任务刚下发时，**上一单的 FINISH 终态先清回 IDLE**，被 `resolveJobEvent` 的通用「非空闲→IDLE = idle」视为打印中断。
+- **修复**：dispatcher 的 idle 分支读取事件里的 `prevState`——只有**从打印态（RUNNING/PRINTING/PREPARE/PAUSE 等）回空闲**才按幽灵失败收尾；`FINISH/FAILED → IDLE` 是上一单终态清除（新任务还在装载窗口），只记日志并继续观察；空 prevState（重启首报文）维持原幽灵判定。真实中断（打印中直回空闲）与首报文幽灵收尾行为不变。
+- **测试**：dispatcher-manual-race 新增 6b 两断言（FINISH→IDLE 后任务仍在 printing、不写回排队中）；25 套测试全绿。部署后需真实单再验一次卡面不再误报。

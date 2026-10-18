@@ -159,6 +159,17 @@ function taskOf(rid, appNo) {
     dispatcher.queue.some((t) => t.recordId === 'rGhost' && t.nextMatchAt > Date.now()),
     JSON.stringify(dispatcher.queue.map((t) => t.recordId)));
 
+  console.log('\n== 6b. FINISH→IDLE 终态清除不算幽灵失败（2026-10-19 P1S 真单假失败） ==');
+  calls.tableWrites.length = 0;
+  const keep = { recordId: 'rKeep', applicationNo: '2026K', fileToken: 'tok_k', fileSource: 'mirror', startedAt: Date.now() };
+  dispatcher.printing.set(1, keep);
+  listeners.jobEvent({ printer: PRINTER, event: 'idle', prevState: 'FINISH' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('上一单 FINISH 清回 IDLE：新任务仍在 printing（不误判失败）',
+    dispatcher.printing.get(1)?.recordId === 'rKeep', JSON.stringify([...dispatcher.printing.keys()]));
+  check('终态清除不写回排队中', !calls.tableWrites.some((w) => w.id === 'rKeep'), JSON.stringify(calls.tableWrites));
+  dispatcher.printing.delete(1);
+
   console.log('\n== 7. 状态白名单放行：「已通过」单人工直发照常工作 ==');
   reservationRecords = [
     { record_id: 'rOK', fields: { 申请编号: '2026OK', 申请状态: '已通过', 切片文件: [{ name: 'ok.3mf', file_token: 'tok_ok' }] } },
