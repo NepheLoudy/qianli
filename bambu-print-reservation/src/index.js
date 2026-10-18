@@ -17,7 +17,8 @@ const reservationStore = require('./services/reservationStore');
 const processRules = require('./services/processRules');
 const dispatcher = require('./services/dispatcher');
 const printerManager = require('./printer/manager');
-const printerOverrides = require('./services/printerOverrides');
+const { BAMBU_FILAMENT_PRESETS } = require('./printer/client');
+const FlashforgeClient = require('./printer/flashforge');
 // 指令唯一出口：hub 经 POST /api/chat/command 转发（对话铁律——本仓不消费消息事件）
 const { executeCommand } = require('./services/chatService');
 
@@ -1134,37 +1135,50 @@ app.post('/api/printers/:id/light', requireUser('reviewer'), async (req, res) =>
   }
 });
 
-// AMS/外挂料信息手动覆盖（admin，2026-10-17 曼波令）：打印机上报料名/颜色不准或空白时
-// 人工修正，持久化后观察台/预约页/审批对话框/分发匹配同口径生效。
-// body { slot, type?, colorHex? }——字段 null（或空串）恢复该字段自动，两项皆 null=恢复整槽
-app.post('/api/printers/:id/ams-override', requireUser('admin'), async (req, res) => {
+// 料信息写入选项（观察台编辑弹窗用）：拓竹=预设码表；C5P=21 料/24 色盘；AD5M 无料站
+app.get('/api/printers/:id/ams-options', requireUser(), (req, res) => {
+  const pid = parseInt(req.params.id);
+  const p = findApiPrinter(pid);
+  if (!p) return res.status(404).json({ error: '打印机不存在' });
+  if (p.brand === 'flashforge') {
+    const station = String(p.model || '').toUpperCase().includes('CREATOR');
+    return res.json({
+      supported: station,
+      materials: station ? FlashforgeClient.FILAMENT_MATERIALS : [],
+      colors: station ? FlashforgeClient.FILAMENT_COLORS : null,
+      note: station
+        ? 'Creator 5 料站调色板（远程写入打印机本地；固件 1.9.9 实测该命令暂空转，成败以状态回读为准）'
+        : 'AD5M 系列打印机没有料站/料信息字段（仅左右进料口），无处可写',
+    });
+  }
+  return res.json({
+    supported: true,
+    materials: Object.keys(BAMBU_FILAMENT_PRESETS),
+    colors: null,
+    note: '拓竹 AMS/外挂槽位——远程写入打印机本地（回执 + 状态回读双重验证）',
+  });
+});
+
+// 料信息远程写入（admin，2026-10-17 曼波令「编辑=覆盖打印机本地数据，不是本地显示层」）：
+// body { slot, type, colorHex }；成败如实回报（reflected=状态回读已体现目标值）
+app.post('/api/printers/:id/ams-setting', requireUser('admin'), async (req, res) => {
   try {
     const pid = parseInt(req.params.id);
     const p = findApiPrinter(pid);
     if (!p) return res.status(404).json({ error: '打印机不存在' });
     const body = req.body || {};
     const slot = typeof body.slot === 'string' ? body.slot.trim() : '';
+    const type = typeof body.type === 'string' ? body.type.trim() : '';
+    const hex = String(body.colorHex || '').replace(/^#/, '').toUpperCase();
     if (!slot) return res.status(400).json({ error: 'slot 必填（槽位名）' });
-    const patch = {};
-    if ('type' in body) {
-      patch.type = body.type == null ? null : String(body.type).trim().slice(0, 40);
-      if (patch.type === '') patch.type = null; // 空串视同恢复自动，防空白覆盖
-    }
-    if ('colorHex' in body) {
-      if (body.colorHex == null) patch.colorHex = null;
-      else {
-        const hex = String(body.colorHex).replace(/^#/, '');
-        if (!/^[0-9a-fA-F]{6}$/.test(hex)) return res.status(400).json({ error: 'colorHex 必须是 6 位十六进制（如 1B1B1B）' });
-        patch.colorHex = hex.toUpperCase();
-      }
-    }
-    if (!Object.keys(patch).length) return res.status(400).json({ error: 'type/colorHex 至少提供一个（null=恢复自动）' });
-    const saved = printerOverrides.setFor(pid, slot, patch);
-    console.log(`[料信息] ${p.name} 槽「${slot}」手动覆盖更新:`, JSON.stringify(saved));
-    res.json({ success: true, slot, overrides: saved });
+    if (!type) return res.status(400).json({ error: '料名必填' });
+    if (!/^[0-9A-F]{6}$/.test(hex)) return res.status(400).json({ error: '颜色须为 6 位十六进制' });
+    const result = await printerManager.setAmsFilament(pid, slot, type, hex);
+    console.log(`[料信息] ${p.name} 槽「${slot}」→ ${type}/${hex} 回读${result.reflected ? '确认' : '未确认'}${result.noAck ? '（无回执）' : ''}`);
+    res.json({ success: true, slot, type, colorHex: hex, reflected: result.reflected, noAck: result.noAck });
   } catch (err) {
-    console.error('料信息覆盖失败:', err);
-    res.status(500).json({ error: err.message });
+    console.error('料信息写入失败:', err.message);
+    res.status(400).json({ error: err.message });
   }
 });
 

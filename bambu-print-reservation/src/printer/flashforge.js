@@ -51,6 +51,33 @@ const POLL_MS = Number(process.env.FLASHFORGE_POLL_MS || 5000);
 // 单次 HTTP 超时：打印机半死时轮询不能挂死引擎
 const HTTP_TIMEOUT_MS = 8000;
 
+// Creator 5 料站调色板（2026-10-17 官方协议档案实锤，Creator 5 Filament Palette）：
+// msConfig_cmd 的 mt 必须逐字命中 21 料名、rgb 必须带 # 且精确匹配 24 色（大小写敏感，
+// 不匹配会静默存成 #FFFFFF）——写入前本地校验，避免静默白化。AD5M（A5P）无料站概念。
+const FILAMENT_MATERIALS = [
+  'PLA', 'PETG', 'PLA-CF', 'PETG-CF', 'ABS', 'ASA', 'SILK', 'PET-CF', 'PAHT-CF', 'S-PAHT',
+  'S-Multi', 'PA-CF', 'HIPS', 'PVA', 'TPU-90A', 'TPU-95A', 'TPU-64D', 'PC', 'PA', 'PC-ABS', 'PPS-CF',
+];
+const FILAMENT_COLORS = [
+  '#FFFFFF', '#FFF245', '#DEF578', '#21CC3D', '#167A4B', '#156682', '#24E4A0', '#7BD9F0',
+  '#4CAAF8', '#2E54DD', '#48358C', '#A341F7', '#F435F6', '#D5B4DE', '#FA6173', '#F82D29',
+  '#805003', '#F9903B', '#FCEBD7', '#D5C5A1', '#B17C38', '#8C8C89', '#BEBEBE', '#1B1B1B',
+];
+
+/** 料名/颜色校验并归一为调色板规范串（纯函数，单测覆盖）：mt 原样大写、rgb 取色盘规范大小写 */
+function normalizeMatlChoice(type, colorHex) {
+  const mt = String(type || '').trim().toUpperCase();
+  if (!FILAMENT_MATERIALS.includes(mt)) {
+    throw new Error(`料名「${type}」不在 Creator 5 调色板（21 料）：${FILAMENT_MATERIALS.join(' / ')}`);
+  }
+  const raw = `#${String(colorHex || '').replace(/^#/, '').toUpperCase()}`;
+  const rgb = FILAMENT_COLORS.find((c) => c.toUpperCase() === raw);
+  if (!rgb) {
+    throw new Error(`颜色 ${raw} 不在 Creator 5 调色板（24 色）——固件会把非色盘值静默存成 #FFFFFF，请从色盘选择`);
+  }
+  return { mt, rgb };
+}
+
 class FlashforgeClient {
   constructor(printerConfig) {
     this.config = printerConfig;
@@ -270,6 +297,18 @@ class FlashforgeClient {
   async resumePrint() { return this.sendCommand('jobCtl_cmd', { jobID: '', action: 'continue' }); }
   async stopPrint() { return this.sendCommand('jobCtl_cmd', { jobID: '', action: 'cancel' }); }
 
+  /**
+   * 写料站槽位料信息（Creator 5 系列 msConfig_cmd，2026-10-17 协议档案线格式：
+   * {cmd,args:{slot(1-4), mt(21 料逐字), rgb(# 前缀 24 色精确匹配)}}；调色板校验在
+   * normalizeMatlChoice 内。⚠ 实测固件 1.9.9 对该命令「回 Success 但空转」——
+   * 调用方必须用 /detail 回读判定成败，不得以回执当真。
+   */
+  async setMatlSlot(slotId, type, colorHex) {
+    const { mt, rgb } = normalizeMatlChoice(type, colorHex);
+    await this.sendCommand('msConfig_cmd', { slot: Number(slotId), mt, rgb });
+    return { mt, rgb };
+  }
+
   /** 腔灯（5M Pro 内置 LED；基础款 5M 无硬件但同样接受命令） */
   async lightControl(on) {
     return this.sendCommand('lightControl_cmd', { status: on ? 'open' : 'close' });
@@ -373,3 +412,6 @@ const GCODE_STATE_TEXT = {
 module.exports = FlashforgeClient;
 module.exports.STATUS_MAP = STATUS_MAP;
 module.exports.GCODE_STATE_MAP = GCODE_STATE_TEXT;
+module.exports.FILAMENT_MATERIALS = FILAMENT_MATERIALS;
+module.exports.FILAMENT_COLORS = FILAMENT_COLORS;
+module.exports.normalizeMatlChoice = normalizeMatlChoice;

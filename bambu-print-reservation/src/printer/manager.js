@@ -2,7 +2,6 @@ const config = require('../config');
 const PrinterClient = require('./client');
 const FlashforgeClient = require('./flashforge');
 const bitableApi = require('../feishu/bitable');
-const printerOverrides = require('../services/printerOverrides');
 
 /**
  * 机型 → 品牌适配层分派（2026-10-14 纯内网批）：拓竹走 MQTT(bambu-link)，闪铸走
@@ -239,9 +238,7 @@ class PrinterManager {
       printError: status.printError || 0,
       failReason: status.failReason || 0,
       deviceInfo: typeof client.getDeviceInfo === 'function' ? client.getDeviceInfo() : null,
-      // 料信息手动覆盖（2026-10-17 曼波令）：管理员在观察台修正料名/颜色后，
-      // 状态层与 API 层同口径生效（分发匹配/审批对话框/观察台一致）
-      ams: printerOverrides.applyOverrides(client.getAmsTrays(), printerOverrides.getFor(printerId)),
+      ams: client.getAmsTrays(),
     });
 
     // 关键变迁 → jobEvent（dispatcher 用它触发匹配、播报用它与完成/失败）；
@@ -308,8 +305,6 @@ class PrinterManager {
       const client = this.clients[p.id];
       return {
         ...p,
-        // 料信息手动覆盖读取时再合并一次（管理员编辑后不等下一轮状态报文即刻生效）
-        ams: printerOverrides.applyOverrides(p.ams, printerOverrides.getFor(p.id)),
         stateStale: client ? client.isStateStale() : true,
         // 最后一条 state 报文的毫秒时间戳（0=从未收到）——观察台离线标注展示
         // 「最后 HH:MM」快照时间用（2026-10-17 X1C 掉网案）
@@ -368,6 +363,54 @@ class PrinterManager {
       activeTask: state.activeTask ? { recordId: state.activeTask.recordId, applicationNo: state.activeTask.applicationNo } : null,
       rawState: client ? client.getState() : null,
     };
+  }
+
+  /**
+   * 料信息远程写入（2026-10-17 曼波令「编辑=覆盖打印机本地数据」，不做本地显示层遮罩）：
+   *   拓竹 → ams_filament_setting（AMS/外挂槽 2026-10-17 真机闭环验证）；
+   *   C5P  → msConfig_cmd（实测固件 1.9.9 回 success 但空转——回读不变时如实 reflected:false）；
+   *   A5P  → 无料站概念，拒绝（AD5M 无料信息字段）。
+   * 成败口径：回执失败即抛错；回执通过仍以状态回读为准（固件可能「受理但忽略」）。
+   * @returns {{ reflected: boolean, noAck: boolean }} reflected=状态已体现目标值
+   */
+  async setAmsFilament(printerId, slot, type, colorHex) {
+    const client = this.clients[printerId];
+    const st = this.printerStates[printerId];
+    if (!client || !st) throw new Error('打印机未注册');
+    if (client.isStateStale()) throw new Error('打印机离线/失联——无法写入料信息（先恢复连接）');
+    let ack = null;
+    if (st.brand === 'flashforge') {
+      const m = /^槽(\d+)$/.exec(String(slot || '').trim());
+      if (!m) throw new Error(`该闪铸机型无料站槽位「${slot}」（AD5M 系列无料站概念）`);
+      if (typeof client.setMatlSlot !== 'function') throw new Error('该机型不支持料信息写入');
+      ack = await client.setMatlSlot(Number(m[1]), type, colorHex); // 调色板校验在 client 内
+    } else {
+      if (typeof client.setAmsFilament !== 'function') throw new Error('该机型不支持料信息写入');
+      ack = await client.setAmsFilament({ slot, type, colorHex });
+    }
+    const reflected = await this._waitTrayReflect(printerId, slot, type, colorHex, 12000);
+    return { reflected, noAck: Boolean(ack && ack.noAck) };
+  }
+
+  /** 料信息写入回读：轮询状态直到槽位 type/colorHex 与目标一致（或超时） */
+  async _waitTrayReflect(printerId, slot, type, colorHex, timeoutMs) {
+    const client = this.clients[printerId];
+    const norm = (v) => String(v || '').toUpperCase().replace(/[\s_]+/g, '-');
+    const wantType = norm(type);
+    const wantColor = String(colorHex || '').replace(/^#/, '').toUpperCase().slice(0, 6);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const tray = client && typeof client.getAmsTrays === 'function'
+        ? client.getAmsTrays().find((t) => t.slot === slot)
+        : null;
+      if (tray
+        && norm(tray.type) === wantType
+        && String(tray.colorHex || '').toUpperCase().slice(0, 6) === wantColor) {
+        return true;
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+    return false;
   }
 
   async uploadFileToPrinter(printerId, buffer, fileName) {

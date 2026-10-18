@@ -207,7 +207,7 @@ function staleNoteHtml(p) {
 function trayHtml(t) {
   const sw = t.colorHex ? `<span class="swatch" style="background:#${esc(t.colorHex)}"></span>` : '';
   const remain = t.remain != null && t.remain > 0 ? ` · 余 ${Math.round(t.remain)}%` : '';
-  return `<div class="tray${t.active ? ' active' : ''}" title="${t.active ? '当前供料槽' : ''}">${sw}<b>${esc(t.slot)}</b>${remain}<br>${esc(t.type || '—')}${t.overridden ? ' ✏️' : ''}</div>`;
+  return `<div class="tray${t.active ? ' active' : ''}" title="${t.active ? '当前供料槽' : ''}">${sw}<b>${esc(t.slot)}</b>${remain}<br>${esc(t.type || '—')}</div>`;
 }
 
 function amsSection(p) {
@@ -221,60 +221,96 @@ function amsSection(p) {
 }
 
 /**
- * AMS/外挂料信息手动编辑（admin，2026-10-17 曼波令）：弹窗按槽位修正料名/颜色。
- * 「自动」勾选=清除该槽覆盖（恢复打印机上报值）；保存走 POST /ams-override 持久化，
- * 观察台/预约页/审批对话框/分发匹配同源生效。用 <dialog> 独立于 5s 轮询重绘。
+ * 料信息写入打印机（admin，2026-10-17 曼波令：编辑=远程覆盖打印机本地数据，不是本地显示）。
+ * 弹窗按品牌取选项（GET /ams-options）：拓竹=预设料表+任意色；C5P=21 料/24 色盘下拉；
+ * A5P=无料站说明。保存走 POST /ams-setting，按「回执+回读」如实报每槽成败。
+ * 用 <dialog> 独立于 5s 轮询重绘。
  */
-function openAmsEditor(id) {
+async function openAmsEditor(id) {
   if (!IS_ADMIN) return toast('仅管理员可修改料信息');
   const p = (FLEET || []).find((x) => x.id === id);
   if (!p || !(p.ams || []).length) return toast('该机暂无料站信息可编辑');
+  let opts = null;
+  try {
+    const r = await fetch(`/api/printers/${id}/ams-options`);
+    if (r.ok) opts = await r.json();
+  } catch { /* 取不到按不支持处理 */ }
+  if (!opts) return toast('❌ 读取料信息选项失败');
   const dlg = document.createElement('dialog');
   dlg.style.cssText = 'min-width:560px;max-width:92vw;background:var(--card);color:var(--txt);border:1px solid var(--line2);border-radius:8px;padding:16px 18px;font:13px/1.5 "Segoe UI","Microsoft YaHei",sans-serif';
-  dlg.innerHTML = `<h3 style="margin:0 0 4px;font-size:15px">✏️ ${esc(p.name)} 料信息手动修正</h3>
-    <div class="detail" style="margin-bottom:10px">打印机上报不准/空白时在此修正；勾「自动」= 清除该槽覆盖恢复上报值。保存后分发匹配与各页面同源生效。</div>
-    <table style="width:100%;border-collapse:collapse">
-      <thead><tr style="text-align:left;color:var(--dim);font-size:12px">
-        <th style="padding:4px 6px">槽位</th><th style="padding:4px 6px">料名</th><th style="padding:4px 6px">颜色</th><th style="padding:4px 6px">自动</th></tr></thead>
-      <tbody>${p.ams.map((t) => `<tr data-slot="${esc(t.slot)}">
-        <td style="padding:4px 6px;white-space:nowrap"><b>${esc(t.slot)}</b>${t.active ? ' <span class="detail">◀</span>' : ''}</td>
-        <td style="padding:4px 6px"><input class="amsType" value="${esc(t.type || '')}" placeholder="如 PLA" style="width:140px"></td>
-        <td style="padding:4px 6px"><input class="amsColor" type="color" value="#${/^[0-9a-fA-F]{6}$/.test(String(t.colorHex || '')) ? esc(t.colorHex) : '888888'}" style="width:46px;height:26px;padding:0;border:1px solid var(--line2);background:none"></td>
-        <td style="padding:4px 6px"><input class="amsAuto" type="checkbox" ${t.overridden ? '' : 'checked'} title="勾选=恢复打印机上报值"></td>
-      </tr>`).join('')}</tbody>
-    </table>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
-      <button class="mini" onclick="this.closest('dialog').close()">取消</button>
-      <button class="ok" data-id="${p.id}" onclick="saveAmsOverrides(this)">保存</button>
-    </div>`;
+  const colors = Array.isArray(opts.colors) ? opts.colors : null;
+  const rowsHtml = (p.ams || []).map((t) => {
+    const curType = String(t.type || '').toUpperCase();
+    const curHex = String(t.colorHex || '').toUpperCase();
+    const typeCell = opts.supported
+      ? `<select class="amsType">${(opts.materials || []).map((m) => {
+          const on = m.toUpperCase() === curType || (!opts.materials.some((x) => x.toUpperCase() === curType) && m === opts.materials[0]);
+          return `<option value="${esc(m)}" ${on ? 'selected' : ''}>${esc(m)}</option>`;
+        }).join('')}</select>`
+      : '<span class="detail">—</span>';
+    const colorCell = !opts.supported
+      ? '<span class="detail">—</span>'
+      : colors
+        ? `<select class="amsColor">${colors.map((c) => {
+            const on = c.replace('#', '').toUpperCase() === curHex;
+            return `<option value="${esc(c)}" ${on ? 'selected' : ''}>${esc(c)}</option>`;
+          }).join('')}</select>`
+        : `<input class="amsColor" type="color" value="#${/^[0-9a-fA-F]{6}$/.test(curHex) ? esc(curHex) : '888888'}">`;
+    return `<tr data-slot="${esc(t.slot)}">
+      <td style="padding:4px 6px;white-space:nowrap"><b>${esc(t.slot)}</b>${t.active ? ' <span class="detail">◀</span>' : ''}</td>
+      <td style="padding:4px 6px">${typeCell}</td>
+      <td style="padding:4px 6px">${colorCell}</td>
+    </tr>`;
+  }).join('');
+  dlg.innerHTML = `<h3 style="margin:0 0 4px;font-size:15px">✏️ ${esc(p.name)} 料信息写入打印机</h3>
+    <div class="detail" style="margin-bottom:10px">${esc(opts.note || '')}</div>
+    ${opts.supported
+      ? `<table style="width:100%;border-collapse:collapse">
+          <thead><tr style="text-align:left;color:var(--dim);font-size:12px">
+            <th style="padding:4px 6px">槽位</th><th style="padding:4px 6px">料名</th><th style="padding:4px 6px">颜色</th></tr></thead>
+          <tbody>${rowsHtml}</tbody></table>
+        <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px">
+          <button class="mini" onclick="this.closest('dialog').close()">取消</button>
+          <button class="ok" data-id="${p.id}" onclick="saveAmsSettings(this)">写入打印机</button>
+        </div>`
+      : `<div style="display:flex;justify-content:flex-end;margin-top:14px">
+          <button class="mini" onclick="this.closest('dialog').close()">关闭</button>
+        </div>`}`;
   document.body.appendChild(dlg);
   dlg.addEventListener('close', () => dlg.remove());
   dlg.showModal();
 }
 
-async function saveAmsOverrides(btn) {
+async function saveAmsSettings(btn) {
   const dlg = btn.closest('dialog');
   const id = Number(btn.dataset.id);
   const rows = [...dlg.querySelectorAll('tbody tr')];
   let ok = 0;
-  let fail = 0;
+  let unref = 0;
+  const errs = [];
   for (const tr of rows) {
     const slot = tr.dataset.slot;
-    const auto = tr.querySelector('.amsAuto').checked;
-    const body = auto
-      ? { slot, type: null, colorHex: null }
-      : { slot, type: tr.querySelector('.amsType').value.trim(), colorHex: tr.querySelector('.amsColor').value.replace(/^#/, '') };
-    const res = await fetch(`/api/printers/${id}/ams-override`, {
+    const typeEl = tr.querySelector('.amsType');
+    const colorEl = tr.querySelector('.amsColor');
+    if (!typeEl || !colorEl) continue;
+    const body = { slot, type: typeEl.value, colorHex: String(colorEl.value).replace(/^#/, '') };
+    const res = await fetch(`/api/printers/${id}/ams-setting`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).catch(() => null);
-    if (res && res.ok) ok++;
-    else fail++;
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (res && res.ok && data.reflected) ok++;
+    else if (res && res.ok) unref++;
+    else errs.push(`${slot}: ${data.error || '写入失败'}`);
   }
   dlg.close();
-  toast(fail ? `⚠️ 已保存 ${ok} 槽，${fail} 槽失败（见服务端日志）` : `✅ 已保存 ${ok} 槽料信息`);
-  setTimeout(loadFleet, 600);
+  const parts = [];
+  if (ok) parts.push(`✅ ${ok} 槽已写入并回读确认`);
+  if (unref) parts.push(`⚠️ ${unref} 槽打印机会受理但状态未变化（固件未落实该命令）`);
+  if (errs.length) parts.push(`❌ ${errs.slice(0, 3).join('；')}`);
+  toast(parts.join('，') || '未修改');
+  setTimeout(loadFleet, 800);
 }
 
 function camSection(p) {
@@ -416,7 +452,7 @@ function controlPanelHtml(p) {
         <span class="swatch" style="width:18px;height:18px;background:#${esc(t.colorHex || '333')}"></span>
         <b>${esc(t.slot)}</b>${t.active ? ' <span style="color:var(--ok)">◀</span>' : ''}
       </div>
-      <div class="detail" style="margin-top:2px">${esc(t.type || '空')}${t.overridden ? ' <span title="手动覆盖（✏️ 编辑料信息可改）">✏️</span>' : ''}</div>
+      <div class="detail" style="margin-top:2px">${esc(t.type || '空')}</div>
       ${remain != null ? `<div class="pbar" style="height:4px;margin-top:3px"><div style="width:${Math.min(100, remain)}%"></div></div><div class="detail">剩余 ${remain}%</div>` : ''}
       <div style="margin-top:4px"><button class="mini" ${idle && !t.active ? '' : 'disabled'} title="${idle ? '切到此槽进料' : '非空闲态/当前槽不可切'}"
         onclick="cmdPost(${p.id},'ams/switch',{amsId:${switchArgs.amsId},trayId:${switchArgs.trayId}},'切到 ${esc(t.slot)} 进料？（先退旧料再进新料）')">切此槽</button></div></div>`;
@@ -426,7 +462,7 @@ function controlPanelHtml(p) {
   const amsMeta = amsU
     ? `<span class="detail">${amsU.humidity != null ? `湿度 ${amsU.humidity}/5${amsU.humidityRaw != null ? `（${amsU.humidityRaw}%）` : ''}` : ''}${amsU.temp != null ? ` · 内温 ${amsU.temp}°` : ''}${amsU.dryTime > 0 ? ` · 🔥 烘干中 剩 ${amsU.dryTime} 分钟` : ''}</span>`
     : '';
-  const amsEditBtn = IS_ADMIN ? ` <button class="mini" onclick="openAmsEditor(${p.id})" title="手动修正料名/颜色——分发匹配与各页面同源生效">✏️ 编辑料信息</button>` : '';
+  const amsEditBtn = IS_ADMIN ? ` <button class="mini" onclick="openAmsEditor(${p.id})" title="远程写入打印机本地料信息（AMS/外挂槽）——回执+状态回读双重验证">✏️ 编辑料信息</button>` : '';
   const amsSection = `<div class="panel"><h4>📦 AMS 耗材 ${amsMeta || (hum != null ? `<span class="detail">湿度 ${hum}/5</span>` : '')}${amsEditBtn}</h4>
     <div class="opts" style="display:flex;gap:6px;flex-wrap:wrap">${trayCards}</div></div>`;
 

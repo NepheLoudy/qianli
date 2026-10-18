@@ -7,6 +7,30 @@ const tls = require('tls');
 const { Readable } = require('stream');
 const RtpsSession = require('./rtsps');
 
+// 拓竹 AMS/外挂料信息写入预设表（2026-10-17 曼波令「编辑料信息=远程写打印机」）：
+// ams_filament_setting 的 tray_info_idx 必须是有效预设 id（固件按预设取名称/温度），
+// 通用 99 系为社区实绩（GFL99/GFG99/GFB99/GFU99/GFC99/GFS99/GFL98/GFB98），
+// PETG-CF 用 GFG50（X1C 外挂槽实机观察值）。未知料型直接拒绝，避免固件侧错档。
+const BAMBU_FILAMENT_PRESETS = {
+  PLA: { idx: 'GFL99', min: 190, max: 230 },
+  'PLA-CF': { idx: 'GFL98', min: 190, max: 230 },
+  PETG: { idx: 'GFG99', min: 220, max: 260 },
+  'PETG-CF': { idx: 'GFG50', min: 240, max: 270 },
+  ABS: { idx: 'GFB99', min: 240, max: 270 },
+  ASA: { idx: 'GFB98', min: 240, max: 270 },
+  TPU: { idx: 'GFU99', min: 200, max: 250 },
+  PC: { idx: 'GFC99', min: 250, max: 270 },
+  PVA: { idx: 'GFS99', min: 190, max: 230 },
+};
+
+function normalizeFilamentType(type) {
+  return String(type || '').toUpperCase().replace(/[\s_]+/g, '-').replace(/-+/g, '-');
+}
+function resolveFilamentPreset(type) {
+  const key = normalizeFilamentType(type);
+  return BAMBU_FILAMENT_PRESETS[key] ? { key, ...BAMBU_FILAMENT_PRESETS[key] } : null;
+}
+
 // gcodeState（打印机上报的 gcode_state）→ 统一中文状态
 // RUNNING 是 H2 新固件的「打印执行中」态（2026-10-16 真机实测：H2D 打print时上报 RUNNING
 // 而非 PRINTING；此前未收录被兜底成「空闲」——会把正在打印的机器误标为空闲/可派单）
@@ -534,6 +558,74 @@ class PrinterClient {
     if (!this.client || !this.connected) throw new Error('打印机未连接');
     const sequenceId = ++this.projectSeq;
     return this._sendChecked({ print: { sequence_id: sequenceId, command: 'stop', param: '' } }, sequenceId);
+  }
+
+  /**
+   * 写 AMS/外挂槽料信息到打印机本地（2026-10-17 曼波令：编辑=远程覆盖打印机数据，
+   * 不是本地显示层遮罩）。协议：print.ams_filament_setting（OpenBambuAPI + 社区实绩），
+   * 2026-10-17 X1C/H2D 真机闭环验证（写入→回执 success→状态回读→还原）：
+   *   - **必带 slot_id**：缺了它外挂槽「无回执且不生效」（AMS 槽侥幸生效——本轮实锤）；
+   *   - 槽位映射：AMS 槽 = ams_id 单元/tray_id 槽位/slot_id 同 tray_id；单外挂机型
+   *     = ams_id 255 / tray_id 254（全局索引）；H2D 双外挂 = 各为独立虚拟单元
+   *     （vir_slot id 254/255 → ams_id 同值、tray_id 0，Bambuddy 抓包口径）；
+   *   - tray_color 必须大写 RRGGBBAA（小写会被固件清零且回 success）；
+   *   - 回执 result=fail 会由 _sendChecked 抛错；回执丢失按超时返回 noAck，
+   *     交由调用方以状态回读判定（固件可能「受理但忽略」）。
+   */
+  async setAmsFilament({ slot, type, colorHex }) {
+    if (!this.client || !this.connected) throw new Error('打印机未连接');
+    const tray = this.getAmsTrays().find((t) => t.slot === slot);
+    if (!tray) throw new Error(`未找到槽位「${slot}」`);
+    const preset = resolveFilamentPreset(type);
+    if (!preset) {
+      throw new Error(`不支持的料类型「${type}」——可选：${Object.keys(BAMBU_FILAMENT_PRESETS).join(' / ')}`);
+    }
+    const hex = String(colorHex || '').replace(/^#/, '').toUpperCase();
+    if (!/^[0-9A-F]{6}$/.test(hex)) throw new Error('颜色须为 6 位十六进制');
+    let amsId;
+    let trayId;
+    let slotId;
+    if (tray.external) {
+      const vir = this.state && this.state.raw && this.state.raw.print ? this.state.raw.print.vir_slot : null;
+      if (Array.isArray(vir) && vir.length > 1) {
+        // H2D 双外挂：每个外挂槽是独立虚拟 AMS 单元（254=左 / 255=右）
+        amsId = Number(tray.amsId) >= 254 ? Number(tray.amsId) : 254;
+        trayId = 0;
+      } else {
+        // 单外挂（X1C/P1S/A1）：全局 tray_id=254
+        amsId = 255;
+        trayId = 254;
+      }
+      slotId = 0;
+    } else {
+      amsId = Number(tray.amsId) || 0;
+      trayId = Number(tray.trayId) || 0;
+      slotId = trayId;
+    }
+    const sequenceId = ++this.projectSeq;
+    const payload = {
+      print: {
+        sequence_id: sequenceId,
+        command: 'ams_filament_setting',
+        ams_id: amsId,
+        tray_id: trayId,
+        slot_id: slotId,
+        tray_info_idx: preset.idx,
+        tray_type: preset.key,
+        tray_sub_brands: '',
+        tray_color: `${hex}FF`,
+        nozzle_temp_min: preset.min,
+        nozzle_temp_max: preset.max,
+      },
+    };
+    try {
+      await this._sendChecked(payload, sequenceId);
+      return { ack: true };
+    } catch (err) {
+      // 回执超时（bambu-link 10s）不算失败：部分固件不回执，交由状态回读判定
+      if (/timeout/i.test(err.message || '')) return { ack: false, noAck: true };
+      throw err;
+    }
   }
 
   /**
@@ -1119,3 +1211,5 @@ class PrinterClient {
 module.exports = PrinterClient;
 module.exports.GCODE_STATE_MAP = GCODE_STATE_MAP;
 module.exports.decodeNozzleTemp = decodeNozzleTemp;
+module.exports.BAMBU_FILAMENT_PRESETS = BAMBU_FILAMENT_PRESETS;
+module.exports.resolveFilamentPreset = resolveFilamentPreset;
