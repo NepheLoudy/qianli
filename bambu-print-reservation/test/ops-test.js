@@ -69,14 +69,27 @@ check('存储损坏隔离:坏文件改名留档,不再静默覆盖', () => {
   assert.equal(quarantined.length, 1, '应留下 .corrupt- 隔离件供人工抢救');
 });
 
-// ---------- 审批拦未切片 ----------
+// ---------- 审批未切片：拓竹自动切片放行 / 指定闪铸拦截 ----------
 
-check('审批通过 stl/step 被拦截(带切片指引),3mf 放行', async () => {
+check('审批通过：stl/step 放行（分发链自动切片）；指定闪铸机时拦截', async () => {
   const stl = submitFile('bracket.stl');
-  await assert.rejects(() => reservationService.approveReservation(stl.id, 'A', ''), /切片为 3mf/, 'stl 审批应拦截');
-  assert.equal(store.get(stl.id).status, '待审批', '拦截后状态不变');
+  const a1 = await reservationService.approveReservation(stl.id, 'A', '');
+  assert.equal(a1.status, '排队中', 'stl 应放行（拓竹分发链自动切片）');
   const step = submitFile('part.step');
-  await assert.rejects(() => reservationService.approveReservation(step.id, 'A', ''), /切片为 3mf/);
+  const a2 = await reservationService.approveReservation(step.id, 'A', '');
+  assert.equal(a2.status, '排队中', 'step 应放行（拓竹分发链自动切片）');
+  // 指定闪铸机 → 未切片模型当场拦截（闪铸需预先切好 gcode）
+  const cfg = require('../src/config');
+  const ff = (cfg.printers || []).find((p) => /AD5|5M|CREATOR/i.test(p.model || ''));
+  if (ff) {
+    const stl2 = submitFile('bracket2.stl');
+    await assert.rejects(
+      () => reservationService.approveReservation(stl2.id, 'A', '', { assignedPrinter: ff.name }),
+      /闪铸机型/,
+      '指定闪铸机时未切片模型应拦截'
+    );
+    assert.equal(store.get(stl2.id).status, '待审批', '拦截后状态不变');
+  }
   const mf = submitFile('done.3mf');
   const after = await reservationService.approveReservation(mf.id, 'A', '');
   assert.equal(after.status, '排队中', '3mf 正常通过');

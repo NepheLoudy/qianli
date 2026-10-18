@@ -101,9 +101,14 @@ class ReservationService {
     if (reservation.status !== config.status.PENDING_REVIEW) {
       throw new Error(`预约当前状态「${reservation.status}」，仅待审批单可审批`);
     }
-    // 未切片文件闸：需求链路单（stl/step）审批通过会直接驱动真机打裸文件——拦截
+    // 未切片文件闸（2026-10-18 改造，曼波令「模型勾选份数要自动排版」）：拓竹目标改由
+    // 分发链自动切片（份数=盘内多件一次成型）；闪铸目标仍需预先切好 gcode——指定闪铸
+    // 机时当场拦，其余放行（分发时刻 autoSlice 按勾选参数与份数切片）
     if (isUnslicedFile(reservation)) {
-      throw new Error(`「${reservation.fileName}」${UNSLICED_HINT}`);
+      const target = dispatch.assignedPrinter ? config.printers.find((p) => p.name === dispatch.assignedPrinter) : null;
+      if (target && (require('../printer/manager').brandOf(target.model) || 'bambu') === 'flashforge') {
+        throw new Error(`「${reservation.fileName}」是未切片模型——${target.name} 为闪铸机型，需预先切好 gcode 再提交（拓竹机型可审批后自动切片）`);
+      }
     }
 
     // 分发配置硬校验（指定即权威，但不放行明显无效值）

@@ -48,8 +48,11 @@ const STATUS_MAP = {
 const STATE_STALE_MS = Number(process.env.PRINTER_STATE_STALE_MS || 3 * 60 * 1000);
 // /detail 轮询间隔：状态观察 UI 的数据新鲜度下限（闪铸无推送，只能轮询）
 const POLL_MS = Number(process.env.FLASHFORGE_POLL_MS || 5000);
-// 单次 HTTP 超时：打印机半死时轮询不能挂死引擎
+// 单次 HTTP 超时：打印机半死时轮询不能挂死引擎（仅 /detail 等轻请求；上传/开打见下方专用值）
 const HTTP_TIMEOUT_MS = 8000;
+// 上传/开打专用超时（2026-10-18 A5P `terminated` 实案：1MB gcode 上传被 8s 掐断）
+const UPLOAD_TIMEOUT_MS = Number(process.env.FF_UPLOAD_TIMEOUT_MS || 120 * 1000);
+const PRINT_TIMEOUT_MS = Number(process.env.FF_PRINT_TIMEOUT_MS || 60 * 1000);
 
 // Creator 5 料站调色板（2026-10-17 官方协议档案实锤，Creator 5 Filament Palette）：
 // msConfig_cmd 的 mt 必须逐字命中 21 料名、rgb 必须带 # 且精确匹配 24 色（大小写敏感，
@@ -334,6 +337,9 @@ class FlashforgeClient {
   /**
    * 上传打印文件到打印机 /data（gcode/gx/3mf）。printNow=false 仅上传，
    * 打印动作走 startFile（分发引擎两步式：先传后打，失败可重试不重传）。
+   * 超时（2026-10-18 A5P 实案 `terminated` 修复）：**不能用 8s 轮询超时**——1MB gcode
+   * 走嵌式 HTTP 分分钟超过 8s，被 AbortSignal 掐断即报「terminated」、分发失败重试；
+   * 上传独立 120s（FF_UPLOAD_TIMEOUT_MS 可调），大文件也有余量
    */
   async uploadBuffer(buffer, fileName, { printNow = false, levelingBeforePrint = false } = {}) {
     const form = new FormData();
@@ -345,28 +351,34 @@ class FlashforgeClient {
       printNow: printNow ? 'true' : 'false',
       levelingBeforePrint: levelingBeforePrint ? 'true' : 'false',
     };
-    const res = await this.rawFetch('/uploadGcode', { method: 'POST', headers, body: form });
+    const res = await this.rawFetch('/uploadGcode', { method: 'POST', headers, body: form }, UPLOAD_TIMEOUT_MS);
     const text = await res.text();
     let data = null;
     try { data = JSON.parse(text); } catch { /* 非 JSON 响应按原文报错 */ }
-    if (!res.ok || (data && data.code && Number(data.code) >= 400)) {
-      throw new Error(`uploadGcode 失败(HTTP ${res.status}): ${text.slice(0, 200)}`);
+    // code!==0 一律失败（2026-10-18 A5P：busy=code:2，旧判据 >=400 会当成功继续开打）
+    if (!res.ok || (data && data.code != null && Number(data.code) !== 0)) {
+      const msg = (data && data.message) || text.slice(0, 200);
+      const busyHint = Number(data && data.code) === 2
+        ? '（打印机忙碌：屏幕可能停在打印完成/弹窗页——请在打印机屏幕上点掉后重试）'
+        : '';
+      throw new Error(`uploadGcode 失败(HTTP ${res.status}): ${msg}${busyHint}`);
     }
     return data;
   }
 
-  /** 打印 /data 里已有的文件（分发引擎 uploadBuffer 后调用） */
+  /** 打印 /data 里已有的文件（分发引擎 uploadBuffer 后调用）——开打指令同样给长超时
+   *  （固件要解析 gcode 并启动，8s 轮询口径不够；2026-10-18 A5P 实案） */
   async startFile(fileName, { levelingBeforePrint = false } = {}) {
     return this.postJson('/printGcode', {
       ...this.auth,
       fileName,
       levelingBeforePrint: levelingBeforePrint ? 'true' : 'false',
-    });
+    }, PRINT_TIMEOUT_MS);
   }
 
-  /** 远端文件清单（/gcodeList，观察台/分发去重用） */
+  /** 远端文件清单（/gcodeList，观察台/分发去重用）——清单可能较大，放宽到 20s */
   async listFiles() {
-    const data = await this.postJson('/gcodeList', this.auth);
+    const data = await this.postJson('/gcodeList', this.auth, 20000);
     return (data && data.gcodeFileList) || [];
   }
 
@@ -393,8 +405,15 @@ class FlashforgeClient {
     try { data = JSON.parse(text); } catch {
       throw new Error(`闪铸 ${pathname} 响应非 JSON (HTTP ${res.status}): ${text.slice(0, 120)}`);
     }
-    if (!res.ok || (data && data.code && Number(data.code) >= 400)) {
-      throw new Error(`闪铸 ${pathname} 失败 (HTTP ${res.status}): ${(data && data.message) || text.slice(0, 120)}`);
+    // 2026-10-18 A5P 实案：闪铸的业务失败码不止 >=400——「Printer is busy」是 **code:2**，
+    // 旧判据（>=400）把它当成功放行（上传被拒却继续开打）。一律 code!==0 视为失败，
+    // 并给 busy 附人话（固件在「打印完成」页时拒绝上传，屏幕点掉即恢复）
+    if (!res.ok || (data && data.code != null && Number(data.code) !== 0)) {
+      const msg = (data && data.message) || text.slice(0, 120);
+      const busyHint = Number(data && data.code) === 2
+        ? '（打印机忙碌：屏幕可能停在打印完成/弹窗页——请在打印机屏幕上点掉后重试）'
+        : '';
+      throw new Error(`闪铸 ${pathname} 失败 (HTTP ${res.status}): ${msg}${busyHint}`);
     }
     return data;
   }

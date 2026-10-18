@@ -215,9 +215,9 @@ function renderPending(list) {
       ${params ? `<div class="qline"><span class="lbl">参数</span>${params}${paramEntries.length > 10 ? ` <span class="detail">…共 ${paramEntries.length} 项</span>` : ''}</div>` : ''}
       ${rules ? `<div class="qline"><span class="lbl">依据</span><span class="detail">${rules}</span></div>` : ''}
       ${hist ? `<div class="qline"><span class="lbl">轨迹</span><span class="detail">${hist}</span></div>` : ''}
-      ${unsliced ? '<div class="qline" style="color:var(--warn)">⚠️ 未切片模型——切片后重新提交才能分发（3mf / gcode）</div>' : ''}
+      ${unsliced ? '<div class="qline" style="color:var(--warn)">⚠️ 未切片模型——审批通过后服务端按份数自动切片并排盘（仅拓竹机型；闪铸需预先切好 gcode）</div>' : ''}
       <div class="actions">
-        <button class="ok" ${unsliced ? 'disabled title="未切片模型：请先切片（拓竹 3mf / 闪铸 gcode）后重新提交"' : ''} onclick="review('${esc(r.id)}','approve')">✅ 通过并分发</button>
+        <button class="ok" onclick="review('${esc(r.id)}','approve')">✅ 通过并分发</button>
         <button class="bad" onclick="review('${esc(r.id)}','reject')">❌ 驳回</button>
         <button class="mini" onclick="openPreview('${esc(r.id)}')" title="3D 预览 + Z 轴截面 + 切片参数回读校验">🔍 预览 / 切片核对</button>
       </div>

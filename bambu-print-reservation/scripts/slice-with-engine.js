@@ -70,6 +70,10 @@ if (!model || !output || !fs.existsSync(model)) {
 const machineName = argOf('--machine') || 'Bambu Lab H2D 0.4 nozzle';
 const processName = argOf('--process') || '0.20mm Standard @BBL H2D';
 const filamentName = argOf('--filament') || 'Bambu PLA Basic @BBL H2D';
+// --copies N（2026-10-18 曼波令：模型单份数 → 盘内多件自动排布）：同一模型文件重复传入
+// N 次，Orca CLI 按原生排布逻辑自动排开（2026-10-18 实测：4 份=4 object、段数 4 倍、
+// XY 跨 41.6mm=2×2；有无 --arrange 输出一致，故不依赖该标志）
+const copies = Math.max(1, Math.min(50, Number(argOf('--copies')) || 1));
 const paramsJson = argOf('--params');
 // 参数来源：--params 显式 → stdin；两者皆空（后台/服务调用常见）默认 {}——
 // 此前空 stdin 会 JSON.parse('') 崩（2026-10-15 生产首跑实锤：脚本方式运行 stdin 恒空）
@@ -159,16 +163,17 @@ const filamentFile = path.join(workdir, 'filament.json');
 fs.writeFileSync(machineFile, JSON.stringify(machineCfg, null, 2));
 fs.writeFileSync(processFile, JSON.stringify(processCfg, null, 2));
 fs.writeFileSync(filamentFile, JSON.stringify(filamentCfg, null, 2));
-console.log(`[切片桥] 配置就绪：${machineName} / ${processName} / ${filamentName}`);
+console.log(`[切片桥] 配置就绪：${machineName} / ${processName} / ${filamentName}${copies > 1 ? ` / ${copies} 件/盘` : ''}`);
 console.log(`[切片桥] 引擎覆盖 ${applied.length} 项: ${applied.join(' ') || '（无——全基座）'}`);
 
 // ---------- PowerShell 桥调用 ----------
 const psFile = path.join(workdir, 'run.ps1');
 const logFile = path.join(workdir, 'cli.log');
+const modelArgs = Array.from({ length: copies }, () => `'${path.resolve(model)}'`).join(' ');
 const ps = [
   `$p = '${ORCA_EXE}'`,
   `Set-Location '${workdir}'`,
-  `& $p --logfile cli-detail.log --debug 3 --load-settings 'machine.json;process.json' --load-filaments 'filament.json' --slice 0 --export-3mf '${path.resolve(output)}' '${path.resolve(model)}' 2>&1 | Out-File cli.log`,
+  `& $p --logfile cli-detail.log --debug 3 --load-settings 'machine.json;process.json' --load-filaments 'filament.json' --slice 0 --export-3mf '${path.resolve(output)}' ${modelArgs} 2>&1 | Out-File cli.log`,
   `exit $LASTEXITCODE`,
 ].join('\r\n');
 fs.writeFileSync(psFile, ps, 'utf8');

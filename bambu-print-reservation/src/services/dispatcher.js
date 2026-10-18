@@ -10,6 +10,7 @@ const printerManager = require('../printer/manager');
 const reservationService = require('./reservation');
 const reservationStore = require('./reservationStore');
 const slicerExtract = require('./slicerExtract');
+const autoSlice = require('./autoSlice');
 
 const isUnslicedFile = (r) => isUnslicedFileName(r && r.fileName);
 const plaza = require('./plaza');
@@ -76,6 +77,7 @@ function buildLocalTask(reservation) {
     fileToken: null, // 本地文件不走飞书下载
     machineModel: (reservation.embeddedParams && reservation.embeddedParams.machineModel) || null, // 内嵌目标机型（品牌路由权威，2026-10-16）
     materialType: reservation.materialType,
+    selection: reservation.selection || {}, // 模型单自动切片用（勾选 → 引擎参数）
     color: reservation.color,
     assignedPrinter: reservation.assignedPrinter,
     isUrgent: reservation.isUrgent,
@@ -881,10 +883,21 @@ class Dispatcher {
       const remoteName = `print_${task.recordId}.${srcExt}`;
       if (await checkCancelled('上传')) return;
       let buffer = await loadTaskFile(task);
+      // 模型单自动切片（2026-10-18 曼波令）：需求链路单（stl/step）按勾选参数与审批份数
+      // 在分发时刻自动切片——份数 = 盘内多件（Orca 原生排布、一次成型），此后按已切片单走
+      // 上传；盘已含全部份数 → 关闭续件（remaining=0）
+      let autoSliced = null;
+      if (isUnslicedFileName(task.fileName || '') && isLocalTask(task)) {
+        autoSliced = await autoSlice.ensureSliced(task, printer);
+        buffer = autoSliced.buffer;
+        task.remaining = 0;
+        const fitNote = autoSliced.fit ? `，回读拟合 ${autoSliced.fit.weightedScore}%（${autoSliced.fit.verdict}）` : '';
+        console.log(`[分发] ${task.recordId} 模型单自动切片：${autoSliced.copies} 件/盘（${autoSliced.objects} object${fitNote}）`);
+      }
       // 切片元数据（用料清单/板型/内嵌机型，2026-10-16 曼波真单批）：分发时刻现读文件——
       // 对老单（提交时未提取）同样生效；读不出回落提交时快照 embeddedParams
       let fileMeta = task.embeddedParams || null;
-      if (/\.3mf$/i.test(task.fileName || '')) {
+      if (autoSliced || /\.3mf$/i.test(task.fileName || '')) {
         try {
           fileMeta = { ...(fileMeta || {}), ...slicerExtract.extractFrom3mf(buffer) };
         } catch (err) {
@@ -893,7 +906,7 @@ class Dispatcher {
       }
       // 闪铸目标 + 3mf 工程文件（2026-10-16 曼波真机反馈批）：Orca 工程 .gcode.3mf（拿闪铸机子
       // 切的）内嵌 flashforge gcode——闪铸固件只吃裸 gcode，必须提取后按 .gcode 上传
-      const effBrand = brandForFileWithMeta(task.fileName, (fileMeta && fileMeta.machineModel) || task.machineModel);
+      const effBrand = autoSliced ? 'bambu' : brandForFileWithMeta(task.fileName, (fileMeta && fileMeta.machineModel) || task.machineModel);
       let uploadName = remoteName;
       if (effBrand === 'flashforge' && /\.3mf$/i.test(task.fileName || '')) {
         try {
