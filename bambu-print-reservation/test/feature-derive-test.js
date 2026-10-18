@@ -4,7 +4,7 @@
  */
 const assert = require('assert');
 const { deriveFeatures, holeAxis } = require('../src/services/featureDerive');
-const { fitRules, median } = require('../src/services/ruleFitter');
+const { fitRules, lofoEvaluate, median } = require('../src/services/ruleFitter');
 
 let failures = 0;
 function check(name, fn) {
@@ -136,6 +136,43 @@ check('拟合：样本不足返回空并注明', () => {
   ], {});
   assert.strictEqual(candidates.length, 0);
   assert.ok(String(stats.note).includes('样本不足'));
+});
+
+// ---------- LOFO 跨家族评估（2026-10-18 P0） ----------
+check('LOFO：按家族留出评估（families/folds/候选 gain 结构）', () => {
+  // 三个家族：A/B 都有 Z 孔且孔补偿 0.2；C 无孔、补偿 0.1 —— 留出 C 时规则应在 C 上不生效（fired 小）
+  const mk = (family, holesZ, comp) => ({
+    family,
+    spatial: Array.from({ length: holesZ }, (_, i) => ({ tool: 'hole_rim', type: 'circle', c: [i, 1, 1], n: [0, 0, 1], r: 2 })),
+    model: { features: null },
+    selection: {},
+    slice: { extraction: { params: { xyHoleComp: comp }, diff: { xyHoleComp: comp } } },
+  });
+  const samples = [
+    mk('famA', 1, 0.2), mk('famA', 2, 0.2), mk('famB', 1, 0.2), mk('famB', 2, 0.2),
+    mk('famC', 0, 0.1), mk('famC', 0, 0.1),
+  ];
+  const r = lofoEvaluate(deriveFeatures, samples, {});
+  assert.equal(r.families, 3);
+  assert.ok(r.folds >= 2, '至少两折可评估');
+  assert.ok(Array.isArray(r.candidates));
+  const hit = r.candidates.find((c) => c.feature === 'holes_z' && c.param === 'xyHoleComp');
+  if (hit) {
+    assert.ok(hit.fired >= 1, '留出族里规则应有触发点');
+    assert.ok(Number.isFinite(hit.lofoMae) && Number.isFinite(hit.baselineMae), '应给出 LOFO 与基线 MAE');
+  }
+  // fitRules 默认附带 lofo 统计；opts.lofo=false 时不附带
+  const withLofo = fitRules(deriveFeatures, samples, {});
+  assert.ok(withLofo.stats.lofo && withLofo.stats.lofo.families === 3, 'fitRules 应附 LOFO 体检');
+  const noLofo = fitRules(deriveFeatures, samples, { lofo: false });
+  assert.equal(noLofo.stats.lofo, undefined, 'lofo:false 不评估');
+});
+
+check('LOFO：家族不足时明确说明（不瞎评估）', () => {
+  const samples = [1, 2, 3].map(() => ({ family: 'only', spatial: [], selection: {}, model: {}, slice: { extraction: { params: { wallLoops: 3 } } } }));
+  const r = lofoEvaluate(deriveFeatures, samples, {});
+  assert.equal(r.families, 1);
+  assert.ok(String(r.note).includes('家族不足'));
 });
 
 process.exit(failures ? 1 : 0);

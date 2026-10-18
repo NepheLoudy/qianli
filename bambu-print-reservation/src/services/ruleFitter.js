@@ -30,6 +30,15 @@ function isNumericParam(name) {
   return typeof v === 'number';
 }
 
+/** 样本 → 专家参数（diff 优先，回退全量提取；无效样本返回 null） */
+function expertOf(sample) {
+  const ext = sample && sample.slice && sample.slice.extraction;
+  if (!ext || !ext.params) return null;
+  const expert = { ...ext.params };
+  if (ext.diff) Object.assign(expert, ext.diff); // diff = 专家显式覆盖（更权威）
+  return expert;
+}
+
 /**
  * 主入口。
  * @param {Function} deriveFeatures featureDerive.deriveFeatures
@@ -44,11 +53,9 @@ function fitRules(deriveFeatures, samples, opts = {}) {
   // ① 样本 → { feat, expertParams }（expertParams = diff 优先，回退全量提取）
   const rows = [];
   for (const s of (Array.isArray(samples) ? samples : [])) {
-    const ext = s && s.slice && s.slice.extraction;
-    if (!ext || !ext.params) continue;
+    const expert = expertOf(s);
+    if (!expert) continue;
     const feat = deriveFeatures(s.spatial || [], s.model && s.model.features, s.selection || {});
-    const expert = { ...ext.params };
-    if (ext.diff) Object.assign(expert, ext.diff); // diff = 专家显式覆盖（更权威）
     rows.push({ feat, expert });
   }
   if (rows.length < minSamples) {
@@ -109,10 +116,76 @@ function fitRules(deriveFeatures, samples, opts = {}) {
     unique.push(c);
   }
 
-  return {
-    candidates: unique,
-    stats: { samples: rows.length, features: featureKeys.size, candidates: unique.length },
-  };
+  const stats = { samples: rows.length, features: featureKeys.size, candidates: unique.length };
+  // LOFO 跨家族泛化体检（2026-10-18 P0；样本带 family 时；不阻塞主拟合）
+  if (opts.lofo !== false) {
+    try { stats.lofo = lofoEvaluate(deriveFeatures, samples, { ...opts, lofo: false }); }
+    catch (err) { stats.lofoNote = `LOFO 评估失败: ${err.message}`; }
+  }
+  return { candidates: unique, stats };
 }
 
-module.exports = { fitRules, median };
+/**
+ * LOFO（留一家族出）评估（2026-10-18 P0 防泄漏）：按样本 family 分组，逐族留出——
+ * 用其余族跑 fitRules 产候选，在留出族上测候选规则的预测误差，并与「训练侧全局中位
+ * 基线」对比（gain>0 = 规则在未见家族上比裸中位数更准）。输出跨族泛化数字，
+ * 供待审池候选排序/阈值判断；不替代主拟合（主拟合仍全量样本）。
+ */
+function lofoEvaluate(deriveFeatures, samples, opts = {}) {
+  const list = (Array.isArray(samples) ? samples : []).map((s, i) => ({
+    s,
+    family: String((s && s.family) || `fam-unknown-${i}`),
+  }));
+  const families = [...new Set(list.map((x) => x.family))];
+  if (families.length < 2) return { families: families.length, folds: 0, note: '家族不足（<2），无法 LOFO 评估' };
+  const paramNames = Object.keys(BASELINE_FOR_FIT).filter(isNumericParam);
+  const acc = new Map(); // `${feature}|${param}` → 累计误差
+  let folds = 0;
+  for (const held of families) {
+    const trainS = list.filter((x) => x.family !== held).map((x) => x.s);
+    const testS = list.filter((x) => x.family === held).map((x) => x.s);
+    if (!trainS.length || !testS.length) continue;
+    let fitted;
+    try { fitted = fitRules(deriveFeatures, trainS, { ...opts, minSamples: Math.min(2, Number(opts.minSamples) || 3), lofo: false }); }
+    catch { continue; }
+    // 训练侧全局中位（基线预测）
+    const base = {};
+    for (const P of paramNames) {
+      base[P] = median(trainS.map((s) => { const e = expertOf(s); return e ? Number(e[P]) : NaN; }).filter(Number.isFinite));
+    }
+    for (const c of fitted.candidates) {
+      const F = c.stats.feature;
+      const P = c.stats.param;
+      const minF = (c.when[`feat.${F}`] && Number(c.when[`feat.${F}`].min)) || 1;
+      const key = `${F}|${P}`;
+      const cur = acc.get(key) || { feature: F, param: P, fired: 0, errSum: 0, baseErrSum: 0 };
+      for (const s of testS) {
+        const feat = deriveFeatures(s.spatial || [], s.model && s.model.features, s.selection || {});
+        const fv = Number(feat[F]);
+        if (!(Number.isFinite(fv) && fv >= minF)) continue;
+        const expert = expertOf(s);
+        const ev = expert ? Number(expert[P]) : NaN;
+        if (!Number.isFinite(ev)) continue;
+        cur.fired += 1;
+        cur.errSum += Math.abs(Number(c.set[P]) - ev);
+        if (Number.isFinite(base[P])) cur.baseErrSum += Math.abs(base[P] - ev);
+      }
+      acc.set(key, cur);
+    }
+    folds += 1;
+  }
+  const candidates = [...acc.values()]
+    .filter((c) => c.fired > 0)
+    .map((c) => ({
+      feature: c.feature,
+      param: c.param,
+      fired: c.fired,
+      lofoMae: Math.round((c.errSum / c.fired) * 1000) / 1000,
+      baselineMae: Math.round((c.baseErrSum / c.fired) * 1000) / 1000,
+      gain: Math.round(((c.baseErrSum - c.errSum) / c.fired) * 1000) / 1000,
+    }))
+    .sort((a, b) => (b.gain || 0) - (a.gain || 0));
+  return { families: families.length, folds, candidates };
+}
+
+module.exports = { fitRules, lofoEvaluate, median, expertOf };

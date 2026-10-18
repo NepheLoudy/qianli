@@ -17,6 +17,25 @@ const taxonomy = require('./taxonomy');
 const FILE = process.env.TRAINING_SAMPLES_FILE || path.join(__dirname, '..', '..', '.training-samples.json');
 const FILES_DIR = process.env.TRAINING_FILES_DIR || 'C:/home/qianli/bambu-data/training/files';
 
+/** 几何家族 id（2026-10-18 LOFO 防泄漏）：几何特征量化签名——同一件的重复提交/多次标注
+ *  归同族。量化：bbox 0.1mm、体积 1cm³、孔数、曲面占比整数——浮点噪声不拆族；
+ *  特征缺失（老样本）退化为文件名族，宁粗勿细（同族误并只是少分一组，不会造成泄漏） */
+function familyOf(features, fallbackName) {
+  const f = features || {};
+  if (f.bbox && Number(f.bbox.x) > 0) {
+    const sig = [
+      Math.round(Number(f.bbox.x) * 10),
+      Math.round(Number(f.bbox.y) * 10),
+      Math.round(Number(f.bbox.z) * 10),
+      Math.round((Number(f.volume) || 0) / 1000),
+      Number(f.holes && f.holes.count) || 0,
+      Math.round(Number(f.curvedPct) || 0),
+    ].join('|');
+    return 'fam-' + crypto.createHash('md5').update(sig).digest('hex').slice(0, 10);
+  }
+  return 'fam-name-' + String(fallbackName || 'unknown').toLowerCase().trim();
+}
+
 function load() {
   try {
     if (!fs.existsSync(FILE)) return [];
@@ -112,6 +131,8 @@ const trainingStore = {
       sourceRecordId: String(input.sourceRecordId || '').slice(0, 64),
       // 机型隔离（2026-10-12 曼波：多品牌机队，工艺链路按机型隔离；几何链路全机通用）
       machine: String(input.machine || '').trim(),
+      // 几何家族 id（2026-10-18 LOFO 防泄漏）：同件多次提交/多标注归同族，拟合评估按族留出
+      family: familyOf(input.model && input.model.features, input.model && input.model.originalName),
       notes: String(input.notes || '').slice(0, 500),
       // 人工标注（金标准）
       selection,
@@ -159,7 +180,10 @@ const trainingStore = {
     return this.setOutcome(s.id, outcome);
   },
 
-  list() { return load().slice().reverse(); },
+  list() {
+    // 老样本（family 字段上线前）按特征即时派生族 id——非破坏性，不写回
+    return load().slice().reverse().map((s) => (s.family ? s : { ...s, family: familyOf(s.model && s.model.features, s.model && s.model.originalName) }));
+  },
   get(id) { return load().find((s) => s.id === id) || null; },
 
   /** 回填打印结果（学习信号的奖励通道：成功/失败/问题样本要分开对待） */
@@ -229,3 +253,4 @@ const trainingStore = {
 };
 
 module.exports = trainingStore;
+module.exports.familyOf = familyOf;

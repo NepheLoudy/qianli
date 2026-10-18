@@ -42,6 +42,12 @@ check('份数钳制：≥1 且 ≤50', () => {
   assert.equal(clampCopies(999), 50);
 });
 
+check('H2C 兼容降级：按 H2D 档切片并明示差异（不静默）', () => {
+  const h2c = resolveSliceProfiles('H2C', 'PLA');
+  assert.equal(h2c.machine, 'Bambu Lab H2D 0.4 nozzle');
+  assert.ok(h2c.notes.some((n) => n.includes('H2C')), '应标注 H2C 兼容降级说明');
+});
+
 check('闪铸机型拒绝自动切片（诚实失败）', () => {
   assert.throws(() => resolveSliceProfiles('Creator 5 Pro', 'PLA'), /仅支持拓竹机型/);
   assert.throws(() => resolveSliceProfiles('AD5M Pro', 'PLA'), /仅支持拓竹机型/);

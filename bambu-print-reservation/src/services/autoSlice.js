@@ -41,9 +41,12 @@ function runBridge(args) {
   });
 }
 
-/** 机型 → 切片桥档位（2026-10-18 档名实核；H2C 等无档机型由桥报「档位文件不存在」） */
+/** 机型 → 切片桥档位（2026-10-18 档名实核；H2C 无官方档 → H2D 兼容降级并明示） */
 const PROFILE_RULES = [
   { match: /H2D|H2S/i, machine: 'Bambu Lab H2D 0.4 nozzle', process: '0.20mm Standard @BBL H2D' },
+  // H2C（README 已记录 Orca 2.4.2 未带该机器档）：按 H2D 兼容档切片——同家族运动/挤出结构，
+  // 差异（腔体/喷头配置）在产物回读与人工审批里兜底；诚实标注不静默
+  { match: /H2C/i, machine: 'Bambu Lab H2D 0.4 nozzle', process: '0.20mm Standard @BBL H2D', note: 'Orca 2.4.2 无 H2C 机器档——按 H2D 兼容档切片，尺寸/挤出差异需人工复核' },
   { match: /X1/i, machine: 'Bambu Lab X1 Carbon 0.4 nozzle', process: '0.20mm Standard @BBL X1C' },
   { match: /P1/i, machine: 'Bambu Lab P1S 0.4 nozzle', process: '0.20mm Standard @BBL X1C' },
   { match: /A1/i, machine: 'Bambu Lab A1 0.4 nozzle', process: '0.20mm Standard @BBL A1' },
@@ -82,7 +85,7 @@ function resolveSliceProfiles(model, materialType) {
   const hit = PROFILE_RULES.find((r) => r.match.test(m));
   if (!hit) throw new Error(`机型「${model}」没有对应的 Orca 机器档（自动切片暂不支持）`);
   const mat = normalizeMaterial(materialType);
-  return { machine: hit.machine, process: hit.process, filament: mat.profile, notes: [mat.note].filter(Boolean) };
+  return { machine: hit.machine, process: hit.process, filament: mat.profile, notes: [hit.note || '', mat.note].filter(Boolean) };
 }
 
 function clampCopies(quantity) {
