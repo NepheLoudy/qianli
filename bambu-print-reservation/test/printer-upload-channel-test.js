@@ -7,7 +7,7 @@
 // 在 client.js 加载前把 basic-ftp 替换成 mock（client.js 顶层 require basic-ftp）
 const basicFtpPath = require.resolve('basic-ftp');
 class MockFTPSClient {
-  constructor() { MockFTPSClient.instances.push(this); }
+  constructor(timeout) { this.timeout = timeout; MockFTPSClient.instances.push(this); }
   async access(opts) {
     MockFTPSClient.accessCalls.push(opts);
     if (MockFTPSClient.accessShouldFail) throw new Error('mock access fail');
@@ -151,6 +151,9 @@ function makeClient(model) {
     assert.strictEqual(opts.password, '12345678');
     assert.strictEqual(opts.secure, 'implicit');
     assert.strictEqual(opts.secureOptions.rejectUnauthorized, false);
+    // 2026-10-19 实锤：2.37MB 自动切片上传耗时 29.6s——控制通道 15s 会误判超时；
+    // 放宽到 ≥120s（Client(timeout) 同时管连接与传输期控制通道空闲）
+    assert.ok(MockFTPSClient.instances[0].timeout >= 120000, `控制通道超时应 ≥120s，实际 ${MockFTPSClient.instances[0].timeout}`);
   });
 
   await test('FTPS 连接失败时不残留客户端', async () => {

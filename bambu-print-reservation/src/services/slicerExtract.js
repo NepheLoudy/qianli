@@ -40,7 +40,9 @@ const BAMBU_PARAM_MAP = {
   xy_hole_compensation: { param: 'xyHoleComp', num: true },
   xy_contour_compensation: { param: 'xyContourComp', num: true },
   enable_support: { param: 'supportType', enum: { '1': 'auto', 'true': 'auto', '0': 'none', 'false': 'none' } },
-  ironing_type: { param: 'ironing', enum: { none: 'false' } }, // 其余任何非 none 值 → true
+  // Orca 2.4 的关闭值是 "no ironing"（不是 "none"）——只认 none 会把默认关闭误判成开启，
+  // 回读拟合白扣一项（2026-10-19 R20261019-004 实锤）
+  ironing_type: { param: 'ironing', enum: { none: 'false', 'no ironing': 'false' } }, // 其余任何非关闭值 → true
   brim_type: { param: 'brim', enum: { none: 'false', no_brim: 'false' } }, // 其余非空值 → true
 };
 

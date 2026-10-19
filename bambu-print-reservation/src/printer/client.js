@@ -76,7 +76,12 @@ const BED_TYPE_TOKENS = {
 // 文件传输超时：挂起的上传会把分发引擎的串行匹配段永久卡死
 const SFTP_TIMEOUT_MS = 120 * 1000;
 const FTP_TIMEOUT_MS = 60 * 1000;
-const FTPS_TIMEOUT_MS = 90 * 1000;
+// 外圈总超时 vs 控制通道空闲超时（2026-10-19 自动切片上传实锤）：basic-ftp 的
+// Client(timeout) 是**控制通道**超时，传输期间固件可能几十秒不吭声——原 15s 会把
+// 2.37MB 的自动切片 3mf（实测上传 29.6s）误判为 Timeout (control socket)。
+// 控制通道放宽到 120s，外圈总超时 300s 兜住超大件/多份盘。
+const FTPS_TIMEOUT_MS = Number(process.env.FTPS_UPLOAD_TIMEOUT_MS || 300 * 1000);
+const FTPS_CONTROL_TIMEOUT_MS = Number(process.env.FTPS_CONTROL_TIMEOUT_MS || 120 * 1000);
 
 // 失联判定窗口（PRINTER_STATE_STALE_MS 可配，默认 3 分钟）：超过该时长未收到任何
 // state 报文即视为失联。幽灵空闲防护——bambu-link 从不 emit 'disconnect'，
@@ -901,10 +906,10 @@ class PrinterClient {
     let client = this.ftpsClient || (await this.connectFTPS());
     try {
       return await fn(client);
-    } catch (err) {
-      // 出错视为连接已坏：关闭置空强制下轮重连
+    } finally {
+      // 用完即关（2026-10-19）：P1/A1 嵌入式 FTP 对空闲控制连接不友好（会静默失效），
+      // 复用旧连接会让下一次操作先空等一个控制超时；每次重连 ~1s 可接受
       this.disconnectFTPS();
-      throw err;
     }
   }
 
@@ -1028,7 +1033,7 @@ class PrinterClient {
   }
 
   async connectFTPS() {
-    const client = new FTPSClient(15000);
+    const client = new FTPSClient(FTPS_CONTROL_TIMEOUT_MS);
     // P1/A1 老固件 PASV 主机修补（P1S 实锤，2026-10-18 R20261018-003 上传失败根因）：
     // 老固件的嵌入式 FTP 在 PASV 应答里把数据连接主机写成 0,0,0,0（"与控制连接同一主机"
     // 的旧写法），basic-ftp 的严格比对（FTP bounce 防护）会因此拒绝数据连接 →
@@ -1081,6 +1086,7 @@ class PrinterClient {
     if (!client) {
       client = await this.connectFTPS();
     }
+    const t0 = Date.now();
     try {
       await new Promise((resolve, reject) => {
         const timer = setTimeout(() => {
@@ -1094,10 +1100,10 @@ class PrinterClient {
           (err) => { clearTimeout(timer); reject(err); }
         );
       });
-    } catch (err) {
-      // 出错视为连接已坏：关闭置空强制下轮重连
+      console.log(`[打印机] ${this.config.name} FTPS 上传完成 ${Math.round(buffer.length / 1024)}KB / ${((Date.now() - t0) / 1000).toFixed(1)}s → ${remotePath}`);
+    } finally {
+      // 用完即关（2026-10-19）：避免空闲控制连接被固件静默丢弃后复用空等
       this.disconnectFTPS();
-      throw err;
     }
   }
 

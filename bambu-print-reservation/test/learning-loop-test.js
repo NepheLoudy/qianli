@@ -123,6 +123,12 @@ check('提取：project_settings.config → 参数映射（含 %/枚举清洗）
   assert.ok(!('supportFillet' in r.params), '白名单外键不应出现');
 });
 
+check('ironing_type "no ironing"（Orca 2.4 关闭值）→ false，不再把默认关闭误判为开启', () => {
+  assert.equal(extractFrom3mf(make3mf({ ironing_type: 'no ironing' })).params.ironing, 'false');
+  assert.equal(extractFrom3mf(make3mf({ ironing_type: 'none' })).params.ironing, 'false');
+  assert.equal(extractFrom3mf(make3mf({ ironing_type: 'top' })).params.ironing, 'true');
+});
+
 check('diff：与 baseline 有差异的参数进候选草稿，无差异不进', () => {
   const buf = make3mf({ layer_height: '0.2', wall_loops: '2', sparse_infill_density: '20%', sparse_infill_pattern: 'cubic' }); // = baseline
   const r = extractFrom3mf(buf);

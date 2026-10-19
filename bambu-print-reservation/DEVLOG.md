@@ -561,3 +561,18 @@
 - **实况（曼波截图 R20261019-003 滑台_PETG_1h7m.gcode.3mf）**：审批直发 P1S 后 9 秒收到「打印失败：打印机回空闲且无完成事件」异常卡并回滚排队，但机器实际正常在打（8%、剩余 61 分钟）；33 秒后回执丢失自愈又补记回「打印中」。日志序列实锤：`project_file 下发 → P1S 任务变迁 FINISH→IDLE (idle) → 9s 后失败收尾 → 28s 后 PREPARE→RUNNING (start)`——即新任务刚下发时，**上一单的 FINISH 终态先清回 IDLE**，被 `resolveJobEvent` 的通用「非空闲→IDLE = idle」视为打印中断。
 - **修复**：dispatcher 的 idle 分支读取事件里的 `prevState`——只有**从打印态（RUNNING/PRINTING/PREPARE/PAUSE 等）回空闲**才按幽灵失败收尾；`FINISH/FAILED → IDLE` 是上一单终态清除（新任务还在装载窗口），只记日志并继续观察；空 prevState（重启首报文）维持原幽灵判定。真实中断（打印中直回空闲）与首报文幽灵收尾行为不变。
 - **测试**：dispatcher-manual-race 新增 6b 两断言（FINISH→IDLE 后任务仍在 printing、不写回排队中）；25 套测试全绿。部署后需真实单再验一次卡面不再误报。
+
+### v57 热修38 · 2026-10-19 · 随本提交落地 · fix
+
+**自动切片 3mf 上传 P1S 超时修复（2.37MB / 29.6s > 15s 控制通道超时）**
+
+- **实况（曼波 STEP 单 R20261019-004 相机支座.step）**：切片成功（1 object、回读 94.3% pass），但三次分发均报 `FTPS(990) 上传失败（Timeout (control socket)）`。切片产物 2.37MB，从部署机用 120s 超时实测上传耗时 **29.6s**；原 `new FTPSClient(15000)` 的 15s 是**控制通道**空闲超时，传输期间固件不吭声就被误判——此前 R-003 的原始 3mf 仅 486KB，未暴露。
+- **修复**：控制通道超时 15s → 120s（`FTPS_CONTROL_TIMEOUT_MS` 可配），外圈总超时 90s → 300s（`FTPS_UPLOAD_TIMEOUT_MS` 可配，兜住多份大盘）；FTPS 会话改为**用完即关**（P1/A1 嵌入式 FTP 对空闲控制连接不友好，复用会空等超时）；上传完成日志带 KB/耗时。桩测补控制通道超时 ≥120s 断言。
+- **验证**：部署机真实上传 2.37MB 切片 29.6s 成功并删除；修复后重发 R-004 正常开打。
+
+### v57 热修39 · 2026-10-19 · 随本提交落地 · fix
+
+**切片回读 ironing 假差异修复（"no ironing" 未识别 → 94.3% 变 100%）**
+
+- R20261019-004 切片产物实测 `project_settings.config` 的 `ironing_type = "no ironing"`（Orca 2.4 的关闭值），而提取枚举只认 `"none"`，导致默认关闭被误判为开启，回读拟合白扣一项（94.3% / 12-13）。补 `"no ironing" → false`，同一文件回读 **100%（13/13）**；learning-loop 补三项枚举断言（no ironing/none/top）。
+- 该单切片实测：1 object、220 层、z 0.2–44mm、PLA、纹理 PEI 板、支撑 tree(auto)、0.2mm 层高——与审批快照参数一致。
