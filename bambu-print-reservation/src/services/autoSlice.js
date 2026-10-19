@@ -19,6 +19,7 @@ const { spawn } = require('child_process');
 const processRules = require('./processRules');
 const paramFit = require('./paramFit');
 const slicerExtract = require('./slicerExtract');
+const modelOrient = require('./modelOrient');
 const { capabilitiesFor } = require('../printer/capabilities');
 
 const SLICE_DIR = process.env.AUTO_SLICE_DIR || path.join(os.tmpdir(), 'bambu-auto-slices');
@@ -93,28 +94,42 @@ function clampCopies(quantity) {
   return Math.max(1, Math.min(MAX_COPIES, Math.floor(Number(quantity) || 1)));
 }
 
-/** STEP/STP → 临时 STL（Orca CLI 对 CAD 网格化格式支持不稳，先经 occt 转网格） */
-async function ensureStlPath(sourcePath, fileName) {
-  if (!/\.(step|stp)$/i.test(fileName || '')) return sourcePath;
-  const parsed = await require('../utils/stepMesh').parseCadToParsed(fs.readFileSync(sourcePath), fileName);
-  if (parsed.error) throw new Error(`STEP 解析失败：${parsed.error}`);
-  fs.mkdirSync(SLICE_DIR, { recursive: true });
-  const out = path.join(SLICE_DIR, `cad-${Date.now()}-${Math.round(Math.random() * 1e6)}.stl`);
-  const { positions, faces, triangles } = parsed;
-  const buf = Buffer.alloc(84 + 50 * triangles);
-  buf.writeUInt32LE(triangles, 80);
-  for (let t = 0; t < triangles; t++) {
-    const off = 84 + t * 50;
-    const pts = [faces[t * 3], faces[t * 3 + 1], faces[t * 3 + 2]].map((i) => [positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]]);
-    const u = [pts[1][0] - pts[0][0], pts[1][1] - pts[0][1], pts[1][2] - pts[0][2]];
-    const w = [pts[2][0] - pts[0][0], pts[2][1] - pts[0][1], pts[2][2] - pts[0][2]];
-    const n = [u[1] * w[2] - u[2] * w[1], u[2] * w[0] - u[0] * w[2], u[0] * w[1] - u[1] * w[0]];
-    const l = Math.hypot(n[0], n[1], n[2]) || 1;
-    n.forEach((v, j) => buf.writeFloatLE(v / l, off + j * 4));
-    pts.forEach((p, j) => p.forEach((v, k) => buf.writeFloatLE(v, off + 12 + j * 12 + k * 4)));
+/**
+ * 解析模型 → 自动摆向 → 临时 STL（Orca CLI 对 CAD 格式支持不稳，统一走网格）。
+ * 摆向规则（2026-10-19 曼波实锤补全 directionStrategy）：
+ *   · 用户放置过（placement 四元数）→ 按用户朝向烘焙，不再自动改向；
+ *   · directionStrategy=keep → 保持原朝向；
+ *   · 其余（auto/avoid-z-load）→ 24 轴向搜索接触/支撑最优摆向；
+ *   · 原始 STL 且无需改向 → 直接复用源文件，不无谓重写。
+ * @returns {{path:string, orientation:object|null}}
+ */
+async function prepareModelPath(sourcePath, fileName, params = {}, placement = null) {
+  let parsed;
+  if (/\.(step|stp)$/i.test(fileName || '')) {
+    parsed = await require('../utils/stepMesh').parseCadToParsed(fs.readFileSync(sourcePath), fileName);
+    if (parsed.error) throw new Error(`STEP 解析失败：${parsed.error}`);
+  } else if (/\.stl$/i.test(fileName || '')) {
+    parsed = require('./modelFeatures').parseStl(fs.readFileSync(sourcePath));
+    if (parsed.error) throw new Error(`STL 解析失败：${parsed.error}`);
+  } else {
+    return { path: sourcePath, orientation: null }; // obj 等格式直通（由桥自行处理）
   }
-  fs.writeFileSync(out, buf);
-  return out;
+  let orientation;
+  if (Array.isArray(placement) && placement.length === 4) {
+    parsed = modelOrient.applyQuaternion(parsed, placement);
+    orientation = { changed: true, placement: true, note: '按用户放置朝向切片（尊重手动摆向）' };
+  } else {
+    orientation = modelOrient.chooseOrientation(parsed, { strategy: params.directionStrategy });
+    if (orientation.changed) parsed = modelOrient.applyOrientation(parsed, orientation);
+  }
+  if (/\.stl$/i.test(fileName || '') && !orientation.changed) {
+    return { path: sourcePath, orientation };
+  }
+  const normalized = modelOrient.normalize(parsed);
+  fs.mkdirSync(SLICE_DIR, { recursive: true });
+  const out = path.join(SLICE_DIR, `oriented-${Date.now()}-${Math.round(Math.random() * 1e6)}.stl`);
+  modelOrient.writeBinaryStl(normalized, out);
+  return { path: out, orientation };
 }
 
 /** 产物元信息：盘内 object 数（= 份数）+ 内嵌切片参数提取 */
@@ -133,7 +148,7 @@ function inspectOutput(outPath) {
  * 切片一次（模型单自动切片核心）。份数 = 盘内件数（Orca 原生排布）。
  * @returns {{ok, outPath, copies, objects, fit, profiles, log}}
  */
-async function sliceModel({ sourcePath, fileName, model, materialType, selection, params, quantity, outDir }) {
+async function sliceModel({ sourcePath, fileName, model, materialType, selection, params, quantity, outDir, placement = null }) {
   const profiles = resolveSliceProfiles(model, materialType);
   const applied = params ? { params, blocked: false, errors: [] } : processRules.applyRules(selection || {}, { material: materialType || '' });
   if (applied.blocked) throw new Error(`勾选存在硬冲突，无法自动切片：${(applied.errors || []).join('；')}`);
@@ -141,14 +156,20 @@ async function sliceModel({ sourcePath, fileName, model, materialType, selection
   const dir = outDir || SLICE_DIR;
   fs.mkdirSync(dir, { recursive: true });
   const outPath = path.join(dir, `${Date.now()}-${Math.round(Math.random() * 1e6)}.gcode.3mf`);
-  const stlPath = await ensureStlPath(sourcePath, fileName);
-  const args = [BRIDGE, stlPath, outPath,
+  const prepared = await prepareModelPath(sourcePath, fileName, applied.params || {}, placement);
+  if (prepared.orientation && prepared.orientation.note) profiles.notes.push(prepared.orientation.note);
+  const args = [BRIDGE, prepared.path, outPath,
     '--machine', profiles.machine,
     '--process', profiles.process,
     '--filament', profiles.filament,
     '--params', JSON.stringify(applied.params || {}),
     '--copies', String(copies)];
-  const r = await runBridge(args);
+  let r;
+  try {
+    r = await runBridge(args);
+  } finally {
+    if (prepared.path !== sourcePath) { try { fs.unlinkSync(prepared.path); } catch { /* 已不存在 */ } }
+  }
   const log = `${r.out}${r.stderr}`.trim();
   if (r.timedOut) throw new Error(`自动切片超时（${Math.round(SLICE_TIMEOUT_MS / 60000)} 分钟）`);
   if (!fs.existsSync(outPath) || fs.statSync(outPath).size === 0) {
@@ -162,7 +183,7 @@ async function sliceModel({ sourcePath, fileName, model, materialType, selection
     throw new Error(`自动切片排布核对失败：请求 ${copies} 件/盘，产物只有 ${objects} 件（切片器未正确复制排盘）——请人工切片后上传 gcode.3mf`);
   }
   const fit = extraction && extraction.params ? paramFit.compare(applied.params || {}, extraction.params) : null;
-  return { ok: true, outPath, copies, objects, fit, profiles, log };
+  return { ok: true, outPath, copies, objects, fit, profiles, orientation: prepared.orientation, log };
 }
 
 /** 分发链入口：按任务份数切片（盘内多件），产物缓存（同单同份数同源文件同参数复用，重试不重切） */
@@ -182,6 +203,8 @@ async function ensureSliced(task, printer) {
       material: task.materialType || '',
       selection: task.selection || {},
       params: params || {},
+      placement: task.placement || null,
+      orient: 'v2', // 摆向算法版本（2026-10-19 引入自动摆向）——旧缓存自动失效
     }))
     .digest('hex')
     .slice(0, 10);
@@ -208,6 +231,7 @@ async function ensureSliced(task, printer) {
     params,
     quantity: copies,
     outDir: SLICE_DIR,
+    placement: task.placement || null,
   });
   fs.copyFileSync(result.outPath, cachePath);
   fs.writeFileSync(metaPath, JSON.stringify({

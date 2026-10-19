@@ -79,6 +79,7 @@ function buildLocalTask(reservation) {
     materialType: reservation.materialType,
     selection: reservation.selection || {}, // 模型单自动切片用（勾选 → 引擎参数）
     processParams: reservation.processParams || null, // 审批快照（自动切片口径锁定，规则库演进不影响已审批单）
+    placement: reservation.placement || null, // 放置四元数（用户手动摆向 → 切片尊重，不再自动改向）
     color: reservation.color,
     assignedPrinter: reservation.assignedPrinter,
     isUrgent: reservation.isUrgent,

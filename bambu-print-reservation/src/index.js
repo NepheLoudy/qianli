@@ -840,6 +840,7 @@ app.post('/api/reservations/:id/slice-preview', requireUser('reviewer', 'admin')
       params: rec.processParams || undefined, // 审批快照参数优先（规则库演进不改变已审批口径）
       quantity: rec.quantity || 1,
       outDir: path.join(autoSlice.SLICE_DIR, 'preview'),
+      placement: rec.placement || null, // 用户手动放置 → 尊重其朝向（不自动改向）
     });
     const AdmZipMod = require('adm-zip');
     const buf = fs.readFileSync(r.outPath);
