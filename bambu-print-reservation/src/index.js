@@ -563,6 +563,21 @@ app.post('/api/training/samples', requireUser(), upload.fields([
       } catch { /* 不阻塞 */ }
     }
 
+    // 专家摆向标签（2026-10-19 学习回路）：人工放置优先；3mf 对象变换为弱标签
+    let orientation = placement ? { quaternion: placement, source: 'placement' } : null;
+    if (!orientation && modelBuf && /\.3mf$/i.test(modelFile.originalname || '')) {
+      try {
+        const ex = require('./services/orientationExtract').extractOrientationFrom3mf(modelBuf);
+        if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
+      } catch { /* 提取失败不阻塞入库 */ }
+    }
+    if (!orientation && sliceFile && /\.3mf$/i.test(sliceFile.originalname || '') && sliceFile.size <= 50 * 1024 * 1024) {
+      try {
+        const ex = require('./services/orientationExtract').extractOrientationFrom3mf(fs.readFileSync(sliceFile.path));
+        if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
+      } catch { /* 提取失败不阻塞入库 */ }
+    }
+
     const sample = require('./services/trainingStore').create({
       createdBy: req.user.displayName,
       notes: body.notes,
@@ -571,6 +586,7 @@ app.post('/api/training/samples', requireUser(), upload.fields([
       confidence: (() => { const v = Number(body.confidence); return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null; })(),
       spatial,
       placement,      // 放置平面四元数（2026-10-16：Place on Face 累计旋转；未放置为 null）
+      orientation,    // 专家摆向标签（学习回路）
       materialType: body.materialType,
       fit,
       model: {
@@ -596,6 +612,43 @@ app.post('/api/training/samples', requireUser(), upload.fields([
 app.get('/api/training/samples', requireUser(), (req, res) => {
   const store = require('./services/trainingStore');
   res.json({ samples: store.list(), stats: store.stats() });
+});
+
+// ---------- 摆向策略学习回路（2026-10-19 曼波令：几何特征→切片方式进学习网络） ----------
+// audit：样本库体检（多少条有专家摆向标签/几何/outcome）；
+// fit：跑拟合（24 候选 × 权重网格 + 按家族 LOFO），只写 candidate；
+// adopt：人工采纳后 autoSlice 才使用（candidate 不生效）。
+app.get('/api/training/orientation/audit', requireUser('reviewer', 'admin'), (req, res) => {
+  try {
+    const samples = require('./services/trainingStore').list();
+    const fitter = require('./services/orientationFitter');
+    res.json({
+      audit: fitter.auditSamples(samples),
+      policy: require('./services/orientationPolicyStore').getSnapshot(),
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+app.post('/api/training/orientation/fit', requireUser('reviewer', 'admin'), async (req, res) => {
+  try {
+    const samples = require('./services/trainingStore').list();
+    const fitter = require('./services/orientationFitter');
+    const result = await fitter.fitOrientationPolicy(samples, req.body || {});
+    const saved = result.policy
+      ? require('./services/orientationPolicyStore').saveCandidate(result.policy, result.stats)
+      : null;
+    res.json({ ...result, saved });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+app.post('/api/training/orientation/adopt', requireUser('admin'), (req, res) => {
+  try {
+    res.json(require('./services/orientationPolicyStore').adopt());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // 打印结果回填（学习信号奖励通道）：审阅者及以上——outcome 是训练权重来源，

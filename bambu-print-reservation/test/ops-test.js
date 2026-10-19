@@ -255,6 +255,8 @@ check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源
   zip.addFile('Metadata/slice_info.config', Buffer.from('<?xml version="1.0"?><config><plate><filament id="1" tray_info_idx="GFA00" type="PLA" color="#26A69A" used_m="10" used_for_object="true"/></plate></config>'));
   // 切片导出件无网格：加最小 gcode 让「几何特征估计」路径可跑（2026-10-16）
   zip.addFile('Metadata/plate_1.gcode', Buffer.from('; total layer number: 50\n; max_z_height: 10.0\nG1 X0 Y0 Z0.2\nG1 X20 Y15 E1\nG1 X0 Y0\n'));
+  // 专家摆向弱标签：3mf 对象矩阵（绕 Z 90°）——2026-10-19 学习回路
+  zip.addFile('Metadata/model_settings.config', Buffer.from('<config><object id="1"><metadata key="matrix" value="0 -1 0 0 1 0 0 0 0 0 1 0 0 0 0 1"/></object></config>'));
   const f = path.join(os.tmpdir(), `bambu-test-sample-${process.pid}.3mf`);
   fs.writeFileSync(f, zip.toBuffer());
   const record = {
@@ -271,6 +273,11 @@ check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源
   assert.ok(s.slice && s.slice.extraction && s.slice.extraction.params, '内嵌切片参数已提取');
   assert.equal(s.slice.extraction.bedType, 'High Temp Plate');
   assert.ok(s.model && s.model.storedPath && s.slice.storedPath === s.model.storedPath, '3mf 同产物归档去重（模型即切片）');
+  assert.ok(s.orientation && s.orientation.source === '3mf-model-settings', '3mf 对象矩阵提取为专家摆向弱标签');
+  // Place on Face 人工标签优先于 3mf 矩阵
+  const s2 = createSampleFromReservation({ ...record, id: 'R20261016-998', placement: [0, 0, 0.707107, 0.707107] }, '测试审批人');
+  assert.equal(s2.orientation.source, 'placement', '人工放置优先作为强标签');
+  assert.deepEqual(s2.orientation.quaternion, [0, 0, 0.707107, 0.707107]);
   const back = trainingStore.setOutcomeBySource('R20261016-999', { status: '成功', recordedBy: '测试' });
   assert.ok(back && back.outcome.status === '成功', '按源单回填 outcome');
   try { fs.unlinkSync(f); } catch { /* 已不存在 */ }

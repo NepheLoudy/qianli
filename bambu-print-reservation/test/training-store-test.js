@@ -45,6 +45,7 @@ check('正常录入：id 递增、选择与特征与切片参数三方合成', (
   const s1 = store.create({
     createdBy: '曼波', notes: '测试样本',
     selection: { hole_comp_z: true, load_direction: ['Z'] },
+    orientation: { quaternion: [0, 0, 0, 1], source: 'placement' },
     model: { originalName: 'part.stl', buffer: Buffer.from('model-data'), features: FEATURES },
     slice: { originalName: 'part.gcode.3mf', buffer: Buffer.from('slice-data'), extraction: { source: 'gcode', params: { layerHeight: 0.2 }, diff: { layerHeight: 0.2 }, estMinutes: 30 } },
   });
@@ -52,6 +53,7 @@ check('正常录入：id 递增、选择与特征与切片参数三方合成', (
   assert.equal(s1.selection.hole_comp_z, true);
   assert.equal(s1.model.features.ok, true);
   assert.equal(s1.slice.extraction.estMinutes, 30);
+  assert.deepEqual(s1.orientation, { quaternion: [0, 0, 0, 1], source: 'placement', note: '' });
   assert.equal(s1.createdBy, '曼波');
   // 归档文件落盘
   const fs = require('fs');

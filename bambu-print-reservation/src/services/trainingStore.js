@@ -144,6 +144,17 @@ const trainingStore = {
       spatial: Array.isArray(input.spatial) ? input.spatial.slice(0, 200) : [],
       // 放置平面四元数（2026-10-16）：标注坐标在放置后的朝向帧里，此值即换算桥
       placement: Array.isArray(input.placement) && input.placement.length === 4 ? input.placement.map(Number) : null,
+      // 专家摆向标签（2026-10-19 学习回路）：quaternion=[x,y,z,w] + 来源。
+      // 预约的 Place on Face 是人工强标签；专家 3mf 变换是弱标签；烘焙型切片无标签。
+      orientation: (() => {
+        const o = input.orientation;
+        if (!o || !Array.isArray(o.quaternion) || o.quaternion.length !== 4 || o.quaternion.some((v) => !Number.isFinite(Number(v)))) return null;
+        return {
+          quaternion: o.quaternion.map(Number),
+          source: String(o.source || 'unknown').slice(0, 32),
+          note: o.note ? String(o.note).slice(0, 200) : '',
+        };
+      })(),
       materialType: String(input.materialType || '').trim(),
       // 自动几何特征（原样存档；ok:false 也存——负样本也是数据）
       model: modelRec ? { ...modelRec, features: input.model.features || null } : null,

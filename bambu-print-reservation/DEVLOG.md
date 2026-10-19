@@ -586,3 +586,14 @@
 - **实测（同一 STEP 重切）**：新摆向 220 层 / 高 44mm / 回读 100%，支撑挤出 **929（5.5%）**、总挤出 17007（原 28771，-41%）、文件 363KB（原 2.32MB）；支撑面积 3487→100mm²、接触 600→3863mm²。
 - **集成**：审批预览与分发日志带摆向说明（底面积/支撑面积/高度前后对比）；`model-orient-test` 5 断言（放倒、keep、放置优先、四元数、STL 往返）；全量 26 套测试全绿。
 - **放置优先实锤**：R-004 存档带 Place on Face 四元数 `[0,0.707107,0,-0.707107]`——旧切片链未消费该字段，才按 CAD 原始朝向直切；生产预览现按放置烘焙（158 层 / 高 31.6mm / 回读 100%），支撑挤出 24.4%（原 44.4%）。无放置单的支撑优先自动摆向另验证：220 层 / 高 44mm / 支撑挤出 5.5%（929/17007）。
+
+### v57 热修41 · 2026-10-19 · 随本提交落地 · feat
+
+**几何特征 → 摆向进入学习回路（标签 / 策略拟合 / 执行三层落地）**
+
+- **样本层**：新增 `orientationExtract`（3mf model_settings.matrix / 3dmodel build transform → 四元数）；训练样本新增 `orientation` 标签（`{quaternion, source}`）——预约 Place on Face 为人工强标签，专家 3mf 变换为弱标签；审批入库与标注工房都落库。旧纯切片 3mf（几何烘焙、无矩阵）如实无标签。
+- **策略层**：新增 `orientationFitter`——对带标签样本生成 24 候选度量，用权重网格（接触/支撑/高度 + 最低接触比）学 top-1 摆向选择，按几何家族 LOFO 验证；样本 <6 或家族 <3 明确 insufficient，不编造策略；产出写 `orientationPolicyStore` 的 candidate，人工 adopt 后才生效。
+- **执行层**：`modelOrient` 接受学习策略（归一化指标加权），autoSlice 用「审批快照显式策略 → 已采纳策略 → 冷启动启发式」；缓存签名带策略版本；用户手动放置仍最高优先。
+- **接口**：`GET /api/training/orientation/audit`、`POST /api/training/orientation/fit`（candidate）、`POST /api/training/orientation/adopt`（admin）；CLI `scripts/fit-orientation.js`。
+- **样本库现状（真实）**：10 条 / 8 家族，全部是已切片 3mf，`orientation`/`placement` 标签 **0 条**——本轮拟合返回 insufficient，摆向仍走冷启动；已补齐新样本的标签链路，后续 STEP/STL + Place on Face 单会自动积累。
+- 测试新增 `orientation-learn-test` 5 断言（矩阵提取/体检/不足门/合成 9 样本 LOFO/策略执行），全量 **27 套全绿**。

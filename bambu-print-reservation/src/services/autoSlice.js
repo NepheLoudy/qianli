@@ -20,6 +20,7 @@ const processRules = require('./processRules');
 const paramFit = require('./paramFit');
 const slicerExtract = require('./slicerExtract');
 const modelOrient = require('./modelOrient');
+const orientationPolicyStore = require('./orientationPolicyStore');
 const { capabilitiesFor } = require('../printer/capabilities');
 
 const SLICE_DIR = process.env.AUTO_SLICE_DIR || path.join(os.tmpdir(), 'bambu-auto-slices');
@@ -103,7 +104,7 @@ function clampCopies(quantity) {
  *   · 原始 STL 且无需改向 → 直接复用源文件，不无谓重写。
  * @returns {{path:string, orientation:object|null}}
  */
-async function prepareModelPath(sourcePath, fileName, params = {}, placement = null) {
+async function prepareModelPath(sourcePath, fileName, params = {}, placement = null, policy = null) {
   let parsed;
   if (/\.(step|stp)$/i.test(fileName || '')) {
     parsed = await require('../utils/stepMesh').parseCadToParsed(fs.readFileSync(sourcePath), fileName);
@@ -119,7 +120,7 @@ async function prepareModelPath(sourcePath, fileName, params = {}, placement = n
     parsed = modelOrient.applyQuaternion(parsed, placement);
     orientation = { changed: true, placement: true, note: '按用户放置朝向切片（尊重手动摆向）' };
   } else {
-    orientation = modelOrient.chooseOrientation(parsed, { strategy: params.directionStrategy });
+    orientation = modelOrient.chooseOrientation(parsed, { strategy: params.directionStrategy, policy });
     if (orientation.changed) parsed = modelOrient.applyOrientation(parsed, orientation);
   }
   if (/\.stl$/i.test(fileName || '') && !orientation.changed) {
@@ -156,7 +157,9 @@ async function sliceModel({ sourcePath, fileName, model, materialType, selection
   const dir = outDir || SLICE_DIR;
   fs.mkdirSync(dir, { recursive: true });
   const outPath = path.join(dir, `${Date.now()}-${Math.round(Math.random() * 1e6)}.gcode.3mf`);
-  const prepared = await prepareModelPath(sourcePath, fileName, applied.params || {}, placement);
+  // 摆向策略：审批快照里显式携带优先，其次已采纳的学习策略，最后冷启动启发式
+  const activePolicy = (applied.params && applied.params.orientationPolicy) || orientationPolicyStore.getActive();
+  const prepared = await prepareModelPath(sourcePath, fileName, applied.params || {}, placement, activePolicy);
   if (prepared.orientation && prepared.orientation.note) profiles.notes.push(prepared.orientation.note);
   const args = [BRIDGE, prepared.path, outPath,
     '--machine', profiles.machine,
@@ -205,6 +208,7 @@ async function ensureSliced(task, printer) {
       params: params || {},
       placement: task.placement || null,
       orient: 'v2', // 摆向算法版本（2026-10-19 引入自动摆向）——旧缓存自动失效
+      policy: ((params && params.orientationPolicy) || orientationPolicyStore.getActive() || {}).version || 'cold-start',
     }))
     .digest('hex')
     .slice(0, 10);

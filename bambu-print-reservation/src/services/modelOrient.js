@@ -106,26 +106,40 @@ function chooseOrientation(parsed, opts = {}) {
     return { ...IDENTITY, ...current, changed: false, note: '保持原始朝向（directionStrategy=keep）' };
   }
   const candidates = allOrientations().map((o) => ({ ...o, ...metricsFor(parsed, o) }));
-  // 支撑优先（2026-10-19 曼波反馈定口径）：先保证床面接触足够（≥ 最大接触的 35%），
-  // 再在这些候选里选**需支撑面积最小**的——最大接触面未必最好（R-004：120×44 面
-  // 接触 5290mm² 但支撑 1944mm²；120×31.5 面接触 3863mm²、支撑仅 100mm²）。
-  const maxContact = Math.max(...candidates.map((c) => c.contact));
-  const minContact = Math.max(50, maxContact * 0.35);
-  const eligible = candidates.filter((c) => c.contact >= minContact);
-  eligible.sort((a, b) => a.support - b.support || b.contact - a.contact || a.height - b.height);
-  const best = eligible[0] || candidates[0];
-  // 已经零支撑且床面接触够用（≥200mm²）就不折腾
-  if (current.support === 0 && current.contact >= 200) {
+  let best;
+  if (opts.policy && opts.policy.weights) {
+    // 学习策略（orientationFitter 产出）：候选度量归一化后按学到的权重打分；
+    // 接触不足下限由 policy.minContactRatio 控制。这是「几何特征→取舍」的认知层。
+    const maxContact = Math.max(1e-6, ...candidates.map((c) => c.contact));
+    const maxSupport = Math.max(1, ...candidates.map((c) => c.support));
+    const maxHeight = Math.max(1e-6, ...candidates.map((c) => c.height));
+    const minContact = Number(opts.policy.minContactRatio) || 0;
+    const scoreOf = (c) => (opts.policy.weights.contact || 0) * (c.contact / maxContact)
+      - (opts.policy.weights.support || 0) * (c.support / maxSupport)
+      - (opts.policy.weights.height || 0) * (c.height / maxHeight);
+    const eligible = candidates.filter((c) => c.contact / maxContact >= minContact);
+    best = (eligible.length ? eligible : candidates).reduce((a, b) => (scoreOf(b) > scoreOf(a) ? b : a));
+  } else {
+    // 冷启动启发式（无学习策略时兜底）：接触≥最大接触 35% 后优先支撑最少
+    const maxContact = Math.max(...candidates.map((c) => c.contact));
+    const minContact = Math.max(50, maxContact * 0.35);
+    const eligible = candidates.filter((c) => c.contact >= minContact);
+    eligible.sort((a, b) => a.support - b.support || b.contact - a.contact || a.height - b.height);
+    best = eligible[0] || candidates[0];
+  }
+  const policyTag = opts.policy && opts.policy.version ? `学习策略 ${opts.policy.version} · ` : '';
+  // 冷启动专用的「零支撑且接触够用就不折腾」；有学习策略时交给策略判断
+  if (!opts.policy && current.support === 0 && current.contact >= 200) {
     return { ...IDENTITY, ...current, changed: false, note: '原始朝向已零支撑且接触充足（未改向）' };
   }
-  const improved = best.support < current.support * 0.8 || best.contact > current.contact * 1.5;
+  const improved = opts.policy ? true : (best.support < current.support * 0.8 || best.contact > current.contact * 1.5);
   if (!improved) {
     return { ...IDENTITY, ...current, changed: false, note: '原始朝向已较优（未改向）' };
   }
   return {
     ...best,
     changed: true,
-    note: `自动摆向：底面 ${Math.round(best.contact)}mm²（原 ${Math.round(current.contact)}mm²），支撑面 ${Math.round(best.support)}mm²（原 ${Math.round(current.support)}mm²），高 ${best.height.toFixed(1)}mm（原 ${current.height.toFixed(1)}mm）`,
+    note: `${policyTag}自动摆向：底面 ${Math.round(best.contact)}mm²（原 ${Math.round(current.contact)}mm²），支撑面 ${Math.round(best.support)}mm²（原 ${Math.round(current.support)}mm²），高 ${best.height.toFixed(1)}mm（原 ${current.height.toFixed(1)}mm）`,
   };
 }
 

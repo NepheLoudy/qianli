@@ -386,6 +386,16 @@ function createSampleFromReservation(record, reviewer) {
   let features = record.modelFeatures || null;
   let featureSource = 'auto'; // 3mf 直通：几何特征全自动（含网格→网格分析；切片导出件无网格→gcode 估计）
   let slice = null;
+  // 专家摆向标签（2026-10-19 学习回路）：Place on Face 四元数优先；3mf 有对象变换则弱标签
+  let orientation = null;
+  if (Array.isArray(record.placement) && record.placement.length === 4) {
+    orientation = { quaternion: record.placement.map(Number), source: 'placement' };
+  } else if (is3mf) {
+    try {
+      const ex = require('./orientationExtract').extractOrientationFrom3mf(buf);
+      if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
+    } catch { /* 提取失败不影响入库 */ }
+  }
   if (is3mf) {
     let extraction = null;
     try { extraction = require('./slicerExtract').extractFrom3mf(buf); } catch { /* 提取失败仍入库 */ }
@@ -420,6 +430,8 @@ function createSampleFromReservation(record, reviewer) {
     ...(is3mf ? { featureSource, confidence: AUTO_FEATURE_CONFIDENCE } : {}), // featureSource: 'auto'（网格分析）| 'gcode-estimate'（切片件估计）
     selection: record.selection || {},
     spatial: record.spatial || [],
+    placement: record.placement || null,
+    orientation, // 专家摆向标签（学习回路）
     materialType: record.materialType || '',
     model: { originalName: record.fileName || 'model', buffer: buf, features },
     slice,
