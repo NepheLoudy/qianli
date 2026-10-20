@@ -258,6 +258,22 @@ function buildJobFailedCard(task, printer, reason) {
   };
 }
 
+/** 人工取消卡（2026-10-19 曼波令）：标题/配色与「打印异常」区分——取消不是故障，
+ *  不再写「请检查断料/堵头，处理后会重新排队」（取消不重排）。 */
+function buildJobCancelledCard(task, printer, reason) {
+  return {
+    config: { wide_screen_mode: true, enable_forward: true },
+    elements: [
+      { tag: 'markdown', content: `**⏹ 打印已取消**: ${printer ? `${printer.name}（${printer.model}）` : ''}` },
+      { tag: 'hr' },
+      { tag: 'markdown', content: `${buildAtTag(task.applicant?.id)} **任务**: ${taskBrief(task)}` },
+      { tag: 'markdown', content: `**原因**: ${reason || '人工取消'}` },
+      { tag: 'markdown', content: '🧰 人工取消不会自动重发；如需继续打印，请在预约页面使用「复刻」重新提交' },
+    ],
+    header: { template: 'grey', title: { content: '⏹ 打印已取消', tag: 'plain_text' } },
+  };
+}
+
 /** 缺料提醒 */
 function buildMaterialMissingCard(waitingCount, needs) {
   return {
@@ -299,6 +315,7 @@ module.exports = {
   buildApprovedQueuedCard,
   buildJobFinishCard,
   buildJobFailedCard,
+  buildJobCancelledCard,
   buildMaterialMissingCard,
   sendTextToUser,
 };

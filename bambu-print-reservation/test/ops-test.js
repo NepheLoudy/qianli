@@ -134,22 +134,30 @@ check('备份:四 JSON 快照落盘,轮转清超期文件', () => {
   require('../src/services/authStore').register({ username: 'bkop', password: 'secret1', displayName: '备份播种' });
   processRules.upsertRule({ id: 'bk-seed', priority: 300, when: { load_magnitude: ['light'] }, set: { wallLoops: 2 }, reason: '备份播种规则' });
   require('../src/services/ruleSuggestions').add({ when: { load_magnitude: ['light'] }, set: { wallLoops: 2 }, reason: '备份播种建议' });
-  const r = backup.runBackup(new Date('2026-10-06T03:30:00Z'));
+  // 用「两天前」而非固定 2026-10-06：轮转按 Date.now()-14d 计算，固定日期跨过保留期后
+  // 会把刚生成的快照当过期删掉（2026-10-20 测试到期实锤）
+  const now = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+  now.setUTCHours(3, 30, 0, 0);
+  const stamp = now.toISOString().slice(0, 10);
+  const r = backup.runBackup(now);
   assert.equal(r.copied.length, 4, `应复制 4 个文件,实际: ${r.copied.join(',')}（跳过 ${r.skipped.join(',')}）`);
   const files = fs.readdirSync(backup.BACKUP_DIR);
   assert.ok(files.some((f) => f.endsWith('-reservations.json')), '预约快照应存在');
   assert.ok(files.some((f) => f.endsWith('-auth-users.json')), '账号快照应存在');
-  // 造一个 20 天前的旧快照 → 轮转清除
-  const old = path.join(backup.BACKUP_DIR, '2026-09-10-reservations.json');
+  // 造一个 30 天前的旧快照 → 轮转清除
+  const oldStamp = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const old = path.join(backup.BACKUP_DIR, `${oldStamp}-reservations.json`);
   fs.writeFileSync(old, 'x');
-  backup.runBackup(new Date('2026-10-06T03:30:00Z'));
+  backup.runBackup(now);
   assert.ok(!fs.existsSync(old), '超期快照应被轮转清除');
-  assert.ok(fs.existsSync(path.join(backup.BACKUP_DIR, '2026-10-06-reservations.json')), '当日快照保留');
+  assert.ok(fs.existsSync(path.join(backup.BACKUP_DIR, `${stamp}-reservations.json`)), '当日快照保留');
 });
 
 check('备份:同日重跑覆盖不膨胀', () => {
-  backup.runBackup(new Date('2026-10-06T15:00:00Z'));
-  const sameDay = fs.readdirSync(backup.BACKUP_DIR).filter((f) => f.startsWith('2026-10-06')).length;
+  const later = new Date(Date.now() - 2 * 24 * 3600 * 1000);
+  later.setUTCHours(15, 0, 0, 0);
+  backup.runBackup(later);
+  const sameDay = fs.readdirSync(backup.BACKUP_DIR).filter((f) => f.startsWith(later.toISOString().slice(0, 10))).length;
   assert.equal(sameDay, 4, '同日 4 文件不因重跑翻倍');
 });
 

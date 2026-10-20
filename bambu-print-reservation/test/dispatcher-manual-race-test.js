@@ -37,6 +37,7 @@ const stubs = {
   },
   [path.join(ROOT, 'src/feishu/bot.js')]: {
     sendMessage: async () => ({}),    buildJobFailedCard: () => ({}),
+    buildJobCancelledCard: () => ({}),
     buildQueueCard: () => ({}),
     buildMaterialMissingCard: () => ({}),
   },
@@ -169,6 +170,32 @@ function taskOf(rid, appNo) {
     dispatcher.printing.get(1)?.recordId === 'rKeep', JSON.stringify([...dispatcher.printing.keys()]));
   check('终态清除不写回排队中', !calls.tableWrites.some((w) => w.id === 'rKeep'), JSON.stringify(calls.tableWrites));
   dispatcher.printing.delete(1);
+
+  console.log('\n== 6c. 人工停机意图：failed 事件直接按取消收尾（不回排队，2026-10-19 曼波令） ==');
+  calls.tableWrites.length = 0;
+  const stopped = { recordId: 'rStop', applicationNo: '2026S', fileToken: 'tok_s', fileSource: 'mirror' };
+  dispatcher.printing.set(1, stopped);
+  dispatcher.markHumanStop(1, '控制台停止');
+  check('停机意图写入任务（随状态落盘，重启仍有效）', stopped.humanStopRequested === true, JSON.stringify(stopped));
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 0 }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('人工停机任务已移出 printing', dispatcher.printing.get(1)?.recordId !== 'rStop', JSON.stringify([...dispatcher.printing.keys()]));
+  check('状态直接写「已取消」（不是排队中）',
+    calls.tableWrites.some((w) => w.id === 'rStop' && w.fields['申请状态'] === '已取消'),
+    JSON.stringify(calls.tableWrites));
+  check('人工停机不进入重排队列', !dispatcher.queue.some((t) => t.recordId === 'rStop'),
+    JSON.stringify(dispatcher.queue.map((t) => t.recordId)));
+
+  console.log('\n== 6d. 停止确认后立即收尾（不等事件）：finalizeHumanStop ==');
+  calls.tableWrites.length = 0;
+  const fin = { recordId: 'rFin', applicationNo: '2026F', fileToken: 'tok_f', fileSource: 'mirror' };
+  dispatcher.printing.set(1, fin);
+  const finId = await dispatcher.finalizeHumanStop(1, '控制台停止');
+  check('finalizeHumanStop 返回被取消单号', finId === 'rFin', String(finId));
+  check('立即写回已取消且移出 printing',
+    dispatcher.printing.get(1)?.recordId !== 'rFin'
+    && calls.tableWrites.some((w) => w.id === 'rFin' && w.fields['申请状态'] === '已取消'),
+    JSON.stringify({ writes: calls.tableWrites, printing: [...dispatcher.printing.keys()] }));
 
   console.log('\n== 7. 状态白名单放行：「已通过」单人工直发照常工作 ==');
   reservationRecords = [

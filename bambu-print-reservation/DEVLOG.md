@@ -597,3 +597,13 @@
 - **接口**：`GET /api/training/orientation/audit`、`POST /api/training/orientation/fit`（candidate）、`POST /api/training/orientation/adopt`（admin）；CLI `scripts/fit-orientation.js`。
 - **样本库现状（真实）**：10 条 / 8 家族，全部是已切片 3mf，`orientation`/`placement` 标签 **0 条**——本轮拟合返回 insufficient，摆向仍走冷启动；已补齐新样本的标签链路，后续 STEP/STL + Place on Face 单会自动积累。
 - 测试新增 `orientation-learn-test` 5 断言（矩阵提取/体检/不足门/合成 9 样本 LOFO/策略执行），全量 **27 套全绿**。
+
+### v57 热修42 · 2026-10-20 · 随本提交落地 · fix
+
+**人工取消直接落「已取消」，不再闪排队中（R20261019-004 实况）**
+
+- **实况**：曼波令停 P1S 后，系统停止指令没有 0300-400C fail_reason（R-004 的 failed 事件 failReason=0），dispatcher 走 failTask → 单据先回「排队中」，再靠手动取消才落「已取消」。
+- **设计**：新增「人工停机意图」——停止端点在下发前 `markHumanStop`（同步写 task.humanStopRequested，随状态文件落盘），`failed/idle/finish` 事件看到标记直接 `humanTerminateTask`（本地单落已取消、不重排、不进 givenUp）；停止确认生效后 `finalizeHumanStop` **立即收尾**，不等后续事件；停止指令失败/机器未响应则清除标记，避免把后续真实失败误判为人工取消。
+- **打印机屏幕/外部客户端取消**：继续认 fail_reason 0300-400C（50348044）；failed 事件新增 failReason 日志，后续实测到变体码可直接补码表。
+- **卡片**：人工取消改用新 `buildJobCancelledCard`（灰色「⏹ 打印已取消」，不再写「请检查断料/堵头，处理后会重新排队」，取消不重排）。
+- 测试：dispatcher-manual-race 新增 6c/6d（标记 failed 不收尾、finalize 立即取消），24 断言；全量 27 套全绿。

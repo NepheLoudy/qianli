@@ -21,6 +21,9 @@ const plaza = require('./plaza');
 // 系统就再发一次，与人循环对抗）。本系统自己发的 stop 不会走到此判（dequeue 先释放
 // printing 映射，failed 事件找不到在册任务）。
 const HUMAN_CANCEL_FAIL_CODES = new Set([50348044]); // 0x0300400C；后续实测到变体码再补
+// 系统自己发起的停止（控制台/页面）没有 0300-400C 码：用「停机意图」标记兜住——
+// 标记随任务落盘（humanStopRequested），重启后 failed/idle 事件仍按取消收尾
+const HUMAN_STOP_TTL_MS = 3 * 60 * 1000;
 function isHumanCancelFailReason(code) {
   return HUMAN_CANCEL_FAIL_CODES.has(Number(code) || 0);
 }
@@ -281,6 +284,7 @@ class Dispatcher {
     this.lastMaterialRemind = 0;  // 缺料提醒节流
     this.matching = false;        // 匹配过程串行化
     this.givenUp = new Map();     // 重试耗尽退出的任务（recordId → task，供 /print-dispatch 人工恢复）
+    this.humanStops = new Map();  // printerId → {at, reason}：系统发起的停止意图（failed/idle 事件消费）
     this.inFlight = [];           // 分发进行中的任务（已出队未入 printing；落盘携带，重启重回队列）
     this.dispatching = new Set(); // 正在分发中的 printerId（人工指定 vs 自动匹配互斥闸门；
                                   // 刻意不持久化——崩溃后清零重新评估，残留锁才危险）
@@ -332,16 +336,29 @@ class Dispatcher {
     printerManager.on('jobEvent', ({ printer, event, prevState }) => {
       const task = this.printing.get(printer.id);
       if (event === 'finish') {
-        if (task) this.completeTask(task, printer);
+        const humanStop = this.consumeHumanStop(printer.id);
+        if (task && (humanStop || task.humanStopRequested)) {
+          console.log(`[分发] ${printer.name} 人工停止后收到完成态（${humanStop ? humanStop.reason : '停机标记'}）→ 按取消收尾`);
+          this.humanTerminateTask(task, printer).catch((err) =>
+            console.error('[分发] 人工终止收尾失败:', err.message)
+          );
+        } else if (task) {
+          this.completeTask(task, printer);
+        }
       } else if (event === 'failed') {
+        const humanStop = this.consumeHumanStop(printer.id);
         if (task) {
-          // 2026-10-16 曼波令：机器端人工取消（0300-400C 系列）不重发——
-          // 其余失败（机械/挤出/AMS 等）维持既有「失败重排」通道
-          if (isHumanCancelFailReason(printer.failReason)) {
+          const humanFlag = Boolean(task.humanStopRequested);
+          // 2026-10-16 曼波令：机器端人工取消（0300-400C 系列）不重发——其余失败维持重排。
+          // 2026-10-19：系统自己发的停止没有该码（R-004 实况 failed 直接回排队中），
+          // 以 humanStops/humanStopRequested 标记同样按取消收尾。
+          if (humanStop || humanFlag || isHumanCancelFailReason(printer.failReason)) {
+            console.log(`[分发] ${printer.name} 人工停止（${humanStop ? humanStop.reason : humanFlag ? '停机标记' : `fail_reason=${printer.failReason}`}）→ 按取消收尾，不回排队`);
             this.humanTerminateTask(task, printer).catch((err) =>
               console.error('[分发] 人工终止收尾失败:', err.message)
             );
           } else {
+            console.log(`[分发] ${printer.name} 打印失败（failReason=${printer.failReason || 0}）→ 自动重排`);
             this.failTask(task, printer, '打印机上报失败状态');
           }
         }
@@ -358,13 +375,20 @@ class Dispatcher {
         // printing.set 会静默覆盖、旧任务永久丢追踪（表格停在假「打印中」）。
         // 放行前先按失败收尾（写回「排队中」+ 重排/重试通道），再触发下一轮匹配
         const ghost = this.printing.get(printer.id);
+        const humanStop = this.consumeHumanStop(printer.id);
         if (ghost) {
           // 终态清态 ≠ 打印中断（2026-10-19 P1S 真单假失败）：新任务刚下发时，上一单的
           // FINISH/FAILED 会先清回 IDLE，再进 PREPARE→RUNNING（P1S 实测间隔 28s）。
           // 旧逻辑把这次 IDLE 当幽灵失败，开打 9s 就发「打印异常」卡并回滚排队。
           const prev = String(prevState || '').toUpperCase();
           const terminalClear = prev === 'FINISH' || prev === 'FAILED';
-          if (terminalClear) {
+          if (humanStop || ghost.humanStopRequested) {
+            // 系统发起的停止：直回空闲也按人工取消收尾（不回排队）
+            console.log(`[分发] ${printer.name} 人工停止（${humanStop ? humanStop.reason : '停机标记'}）→ 直回空闲按取消收尾`);
+            this.humanTerminateTask(ghost, printer).catch((err) =>
+              console.error('[分发] 人工终止收尾失败:', err.message)
+            );
+          } else if (terminalClear) {
             console.log(`[分发] ${printer.name} ${prev}→IDLE 为上一单终态清除（非中断），任务 ${ghost.applicationNo || ghost.recordId} 继续观察`);
           } else if (isHumanCancelFailReason(printer.failReason)) {
             // 幽灵收尾同样尊重人工取消码（直回空闲但残留取消码时不当失败重排）
@@ -556,6 +580,56 @@ class Dispatcher {
   /** 记录是否已在本引擎登记过（含排队/打印中/已完成；审批对账用于跳过已知实例） */
   isKnown(recordId) {
     return this.known.has(recordId);
+  }
+
+  /** 该打印机是否有引擎在册任务（停止端点判断是否要打「人工停机」标记） */
+  hasPrintingTask(printerId) {
+    return this.printing.has(Number(printerId));
+  }
+
+  /**
+   * 标记「人工停机意图」（2026-10-19 曼波令：手动取消直接落已取消，不回排队）。
+   * 系统发起的停止没有 0300-400C fail_reason，单靠码表会误走 failTask；标记同时
+   * 写进 task.humanStopRequested（随状态文件落盘，重启后仍能按取消收尾）。
+   */
+  markHumanStop(printerId, reason = '人工停止') {
+    const key = Number(printerId);
+    this.humanStops.set(key, { at: Date.now(), reason: String(reason || '人工停止') });
+    const task = this.printing.get(key);
+    if (task) task.humanStopRequested = true;
+    this.persistState();
+  }
+
+  /** 停止指令未生效时撤销标记，避免把后续真实失败误判成人工取消 */
+  clearHumanStop(printerId) {
+    const key = Number(printerId);
+    this.humanStops.delete(key);
+    const task = this.printing.get(key);
+    if (task) task.humanStopRequested = false;
+    this.persistState();
+  }
+
+  consumeHumanStop(printerId) {
+    const key = Number(printerId);
+    const hit = this.humanStops.get(key);
+    this.humanStops.delete(key);
+    if (!hit) return null;
+    return Date.now() - hit.at <= HUMAN_STOP_TTL_MS ? hit : null;
+  }
+
+  /**
+   * 系统停止确认后立即按人工取消收尾（2026-10-19 曼波令）：不依赖打印机后续
+   * failed/idle 事件（事件可能丢失/延迟）——停机制令确认生效即落「已取消」。
+   * 事件先到也无妨：humanTerminateTask 幂等，第二次找不到在册任务直接返回。
+   */
+  async finalizeHumanStop(printerId, reason = '人工停止') {
+    const key = Number(printerId);
+    const task = this.printing.get(key);
+    if (!task) { this.clearHumanStop(key); return null; }
+    const printer = printerManager.getPrinterState(key) || { id: key, name: `打印机${key}`, model: '' };
+    await this.humanTerminateTask(task, printer);
+    this.clearHumanStop(key);
+    return task.recordId;
   }
 
   /**
@@ -1114,7 +1188,7 @@ class Dispatcher {
 
     announce(
       `终止卡 ${task.recordId}`,
-      require('../feishu/bot').buildJobFailedCard(
+      require('../feishu/bot').buildJobCancelledCard(
         task,
         printer,
         '任务已被人工取消（打印机屏幕或控制台均可）——系统不会自动重发；如需继续打印，请在预约页面使用「复刻」重新提交'

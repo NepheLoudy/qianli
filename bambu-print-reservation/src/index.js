@@ -1344,22 +1344,35 @@ app.post('/api/printers/:id/stop', requireUser('admin'), async (req, res) => {
       return st ? String(st.gcodeState || '').toUpperCase() : '';
     };
     const before = readState();
-    if (!gone.includes(before)) {
+    const tracked = dispatcher.hasPrintingTask(id);
+    if (!gone.includes(before) && !tracked) {
       return res.json({ success: true, wasPrinting: false, stopped: true, state: printerManager.getPrinterState(id)?.status || '', note: '机器当前未处于打印状态，无需停止' });
     }
-    await printerManager.stopPrintOnPrinter(id);
+    // 人工停机意图：系统停止没有 0300-400C 码，标记后 failed/idle 事件按「已取消」收尾
+    dispatcher.markHumanStop(id, '控制台停止');
+    try {
+      await printerManager.stopPrintOnPrinter(id);
+    } catch (err) {
+      dispatcher.clearHumanStop(id); // 指令没发出去，别把后续真实失败误判成人工取消
+      throw err;
+    }
     // 状态验证：≤10s 内离开打印/暂停/准备态视为已停止（H2 状态转换慢是已知特性）
     let stopped = false;
     for (let i = 0; i < 5; i++) {
       await new Promise((r) => setTimeout(r, 2000));
       if (!gone.includes(readState())) { stopped = true; break; }
     }
+    if (!stopped) dispatcher.clearHumanStop(id); // 机器未响应停止，撤销意图
     const st = printerManager.getPrinterState(id);
+    // 停止确认生效 → 立即按人工取消落「已取消」（不等后续 failed/idle 事件）
+    const cancelledRecordId = stopped ? await dispatcher.finalizeHumanStop(id, '控制台停止') : null;
     res.json({
       success: true,
       wasPrinting: true,
       stopped,
       state: st ? st.status : '',
+      cancelled: Boolean(cancelledRecordId),
+      recordId: cancelledRecordId || undefined,
       note: stopped ? undefined : '指令被机器受理但状态未变化——请查看机器屏幕（固件可能未响应停止指令）',
     });
   } catch (err) {
