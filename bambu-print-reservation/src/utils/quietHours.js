@@ -6,12 +6,12 @@ const crypto = require('crypto');
 // 晚间静默（播报时段限制）
 //
 // 窗口 [QUIET_HOURS_START, QUIET_HOURS_END)（Asia/Shanghai，默认 02:00–09:00）
-// 内，群播/私聊通知不直接发送，统一积压到 end 整点按入队顺序原样补发。
-// 积压形态：payload（gatePayload）——一次性事件通知（排队/开始/完成/失败卡、
-// 缺料提醒、预约审批提醒、审批结果通知）在积压时已构建完毕，落盘的是事件
-// 发生时刻的快照，补发原样发出（「挤压要为挤压之后的事情负责」：打印机
-// 控制、写表、队列匹配照常进行，只有消息延后；补发内容为事发快照，队列
-// 实况以 /print 指令查询为准）。
+// 内，群播/私聊通知不直接发送。**2026-10-20 曼波令：打印预约播报（本项目全部
+// webhook-card：预约审批提醒/审批结果/排队/完成/失败/缺料）静默期直接丢弃，
+// 不再积压到早晨补发**——半夜的排队/完成卡到白天已过时，补发只会制造噪音；
+// 实时状态以预约页/ `/print-*` 指令为准。非 webhook-card 的 DM 等载荷仍按旧
+// 口径积压（本项目当前未使用）；任务型 gateTask 也保留积压语义。
+// 旧版本落下的 webhook-card 积压会在加载时清掉（不补发）。
 //
 // 不受限：对话/指令回复（chatService 回复 /print-* 指令）——交互回路。
 //
@@ -109,7 +109,15 @@ function loadBacklog() {
   try {
     if (fs.existsSync(BACKLOG_FILE)) {
       const data = JSON.parse(fs.readFileSync(BACKLOG_FILE, 'utf-8'));
-      return Array.isArray(data.items) ? data.items : [];
+      const items = Array.isArray(data.items) ? data.items : [];
+      // 2026-10-20 新策略：打印预约群播不再补发——把旧版本落下的 webhook-card
+      // 积压清掉（DM/任务型条目保留）
+      const usable = items.filter((it) => !(it.type === 'payload' && it.name === 'webhook-card'));
+      if (usable.length !== items.length) {
+        console.log(`[晚间静默] 丢弃旧打印播报积压 ${items.length - usable.length} 条（新策略不补发）`);
+        saveBacklog(usable);
+      }
+      return usable;
     }
   } catch (err) {
     console.warn('[晚间静默] 读取积压文件失败（按空处理）:', err.message);
@@ -154,10 +162,16 @@ async function gateTask(name, fireKey, run, label = name) {
 
 /**
  * 一次性通知载荷闸门：非静默返回 false（调用方照常直接发送）；
- * 静默窗口内载荷落盘积压并返回 true（调用方跳过发送）。
+ * 静默窗口内打印预约群播（webhook-card）直接丢弃返回 true；其他载荷积压补发。
  */
-function gatePayload(name, payload, label = name) {
+function gatePayload(name, payload, label = name, opts = {}) {
   if (!inQuietHours()) return false;
+  // 2026-10-20 曼波令：打印预约播报静默期不补发。webhook-card 覆盖本项目全部群播；
+  // opts.drop 供未来调用方显式声明「一次性、过期不补」。
+  if (opts.drop || name === 'webhook-card') {
+    console.log(`[晚间静默] ${label} 静默窗口内丢弃（打印预约播报不补发）`);
+    return true;
+  }
   const items = loadBacklog();
   items.push({ id: crypto.randomUUID(), type: 'payload', name, payload, queuedAt: new Date().toISOString() });
   saveBacklog(items);
