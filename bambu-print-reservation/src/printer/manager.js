@@ -240,7 +240,8 @@ class PrinterManager {
     const event = resolveJobEvent(prevState, status.gcodeState, Boolean(prev.activeTask));
     if (event) {
       console.log(`[打印机管理] ${prev.name} 任务变迁: ${prevState || '(首报文)'} → ${status.gcodeState} (${event})`);
-      this.notifyListeners('jobEvent', { printer: this.printerStates[printerId], event, prevState, gcodeState: status.gcodeState });
+      // rawStatus（热修47）：闪铸机端取消指纹（canceling/cancel）随事件透传给分发引擎
+      this.notifyListeners('jobEvent', { printer: this.printerStates[printerId], event, prevState, gcodeState: status.gcodeState, rawStatus: status.rawStatus });
     }
   }
 

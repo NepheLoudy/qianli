@@ -197,6 +197,23 @@ function taskOf(rid, appNo) {
     && calls.tableWrites.some((w) => w.id === 'rFin' && w.fields['申请状态'] === '已取消'),
     JSON.stringify({ writes: calls.tableWrites, printing: [...dispatcher.printing.keys()] }));
 
+  console.log('\n== 6e. 闪铸机端屏幕取消：idle+rawStatus canceling/cancel 按取消收尾（2026-10-23 热修47） ==');
+  for (const raw of ['canceling', 'cancel']) {
+    calls.tableWrites.length = 0;
+    const screen = { recordId: 'rScreen' + raw, applicationNo: '2026N', fileToken: 'tok_n', fileSource: 'mirror' };
+    dispatcher.printing.set(1, screen);
+    dispatcher.queue.length = 0;
+    listeners.jobEvent({ printer: { ...PRINTER, failReason: 0 }, event: 'idle', rawStatus: raw });
+    await new Promise((r) => setTimeout(r, 30));
+    check(`[${raw}] 机端取消任务已移出 printing`, dispatcher.printing.get(1)?.recordId !== 'rScreen' + raw,
+      JSON.stringify([...dispatcher.printing.keys()]));
+    check(`[${raw}] 状态写「已取消」（不是排队中）`,
+      calls.tableWrites.some((w) => w.id === 'rScreen' + raw && w.fields['申请状态'] === '已取消'),
+      JSON.stringify(calls.tableWrites));
+    check(`[${raw}] 不重排进队列（不与人循环对抗）`, !dispatcher.queue.some((t) => t.recordId === 'rScreen' + raw),
+      JSON.stringify(dispatcher.queue.map((t) => t.recordId)));
+  }
+
   console.log('\n== 7. 状态白名单放行：「已通过」单人工直发照常工作 ==');
   reservationRecords = [
     { record_id: 'rOK', fields: { 申请编号: '2026OK', 申请状态: '已通过', 切片文件: [{ name: 'ok.3mf', file_token: 'tok_ok' }] } },

@@ -28,6 +28,15 @@ function isHumanCancelFailReason(code) {
   return HUMAN_CANCEL_FAIL_CODES.has(Number(code) || 0);
 }
 
+// 闪铸机端取消指纹（2026-10-23 热修47，R20261022-006 实案）：固件屏幕取消会经历
+// canceling → cancel → ready 原始态，归一后折进 IDLE 触发 idle 事件——事件携带的
+// rawStatus 落在其中即是「人在机器上取消了」，按人工取消收尾而非幽灵失败重发。
+// 5s 轮询若两个态都错过（瞬发取消）则退回幽灵通道，属已知边界。
+const MACHINE_CANCEL_RAW_STATUSES = new Set(['canceling', 'cancel']);
+function isMachineCancelRawStatus(raw) {
+  return MACHINE_CANCEL_RAW_STATUSES.has(String(raw || '').toLowerCase());
+}
+
 /**
  * 文件格式 → 品牌适配（2026-10-14 双品牌纯内网批，纯函数单测覆盖）：
  * gcode/g/gx（FlashPrint/Orca 闪铸 profile 产物）→ 闪铸；其余（Bambu Studio 3mf
@@ -333,7 +342,7 @@ class Dispatcher {
   }
 
   bindPrinterEvents() {
-    printerManager.on('jobEvent', ({ printer, event, prevState }) => {
+    printerManager.on('jobEvent', ({ printer, event, prevState, rawStatus }) => {
       const task = this.printing.get(printer.id);
       if (event === 'finish') {
         const humanStop = this.consumeHumanStop(printer.id);
@@ -392,6 +401,13 @@ class Dispatcher {
             console.log(`[分发] ${printer.name} ${prev}→IDLE 为上一单终态清除（非中断），任务 ${ghost.applicationNo || ghost.recordId} 继续观察`);
           } else if (isHumanCancelFailReason(printer.failReason)) {
             // 幽灵收尾同样尊重人工取消码（直回空闲但残留取消码时不当失败重排）
+            this.humanTerminateTask(ghost, printer).catch((err) =>
+              console.error('[分发] 人工终止收尾失败:', err.message)
+            );
+          } else if (isMachineCancelRawStatus(rawStatus)) {
+            // 闪铸机端屏幕取消（热修47）：canceling/cancel 原始态即人工意图，
+            // 按取消收尾——此前走幽灵失败重发，与人循环对抗直到重试耗尽
+            console.log(`[分发] ${printer.name} 机端人工取消（原始态 ${rawStatus}）→ 按取消收尾，不回排队`);
             this.humanTerminateTask(ghost, printer).catch((err) =>
               console.error('[分发] 人工终止收尾失败:', err.message)
             );

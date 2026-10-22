@@ -645,3 +645,12 @@
 - **争议**：曼波「A1mini 已换 PLA 为何没生效」——直订机器 MQTT 实证：机端上报 `vt_tray tray_type:PLA/color:000000`，监测台同显 PLA·000000，链路端到端一致；「没生效」实为机器侧时差（外挂料架料型随 RFID/进料确认才更新上报，第三方料盘 tag_uid 全零=无标签，料型来自机端手动告知），非同步链路故障。
 - **改进**：manager.updateState 对 ams 槽位料型/颜色变化打 `[料位] <机名>: 旧 → 新` 审计日志（全机型覆盖，含外挂料架）——机端换料→监测台时延从此翻日志可测，双向同步争议不再靠猜。
 - 全量 28 套测试全绿，已 `npm run push` 上线。
+
+### v57 热修47 · 2026-10-23 · 随本提交落地 · fix
+
+**闪铸机端屏幕取消识别（不再与人循环对抗）——C5P R20261022-006 实案**
+
+- **实案**：曼波在 C5P 屏幕上手动取消 R-006，系统走「PRINTING→IDLE 无完成事件=幽灵中断」通道失败收尾→回排队→重发指令，人再取消、系统再发，循环到重试 3 次耗尽才停（givenUp+排队中）。根因：热修42 的人工取消识别只覆盖控制台停机（标记）与拓竹机端取消（0300-400C 码），闪铸机端取消只有光秃秃 IDLE 事件，被当异常中断对抗到死。
+- **指纹**：闪铸固件屏幕取消经历 `canceling → cancel → ready` 原始态（协议状态全集）——flashforge `getPrintStatus` 透出 `rawStatus`，manager 随 jobEvent 透传；dispatcher idle 收尾链新增分支：rawStatus 落在 canceling/cancel 即机端人工取消，按 `humanTerminateTask` 收尾（已取消、不重排、不进 givenUp）。
+- **已知边界**：5s 轮询若把 canceling/cancel 两个态都错过（瞬发取消）则退回幽灵通道——取消是机械动作（头抬升/热床下降）通常跨多个轮询周期，实测 C5P canceling 可采样。
+- 测试：dispatcher-manual-race 6e（canceling/cancel 两态 × 移出 printing/写已取消/不重排 6 断言），30 断言全绿；全量 28 套全绿，已上线。

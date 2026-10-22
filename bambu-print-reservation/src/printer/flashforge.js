@@ -216,6 +216,9 @@ class FlashforgeClient {
     return {
       gcodeState,
       status: GCODE_STATE_TEXT[gcodeState] || '空闲',
+      // 机端原始态（热修47）：canceling/cancel 是「人在屏幕上取消」的指纹——归一后
+      // 已被折进 IDLE，dispatcher 幽灵收尾靠它区分「人工取消」和「断电幽灵」
+      rawStatus: String(this.state.status || ''),
       // printProgress 0..1 → 百分比
       progress: Math.round((Number(this.state.printProgress) || 0) * 100),
       // estimatedTime = 剩余秒数
