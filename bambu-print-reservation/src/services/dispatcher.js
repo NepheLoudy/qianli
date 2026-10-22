@@ -1008,7 +1008,11 @@ class Dispatcher {
       await printerManager.uploadFileToPrinter(printer.id, buffer, uploadName);
 
       if (await checkCancelled('下发')) return;
-      const amsFrame = buildAmsMapping(task, printer, fileMeta);
+      // 开打帧 AMS 映射仅拓竹消费（startProjectOnPrinter 闪铸分支只 startFile）——
+      // A5P 这类无料站机型不再空跑映射，避免误报「回落 AMS0 槽 0」（2026-10-22 曼波反馈）
+      const amsFrame = printer.brand === 'flashforge'
+        ? { amsMapping2: [], amsMapping: [] }
+        : buildAmsMapping(task, printer, fileMeta);
       // 无 AMS 机型（P1S/A1mini 仅外挂槽，2026-10-18 P1S 首单排障）：use_ams 置 false——
       // 否则固件按 AMS 供料解析找不到槽位；有 AMS（非外挂槽）的机型维持全局配置
       const hasAms = (printer.ams || []).some((t) => !t.external);

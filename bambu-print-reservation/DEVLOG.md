@@ -616,3 +616,14 @@
 - **新策略**：`gatePayload` 对 `webhook-card` **直接丢弃**（日志记「静默窗口内丢弃（打印预约播报不补发）」），不写积压；`dm-text` 等非群播载荷仍保留积压语义，`gateTask` 不变；加载旧积压时自动清掉遗留的 webhook-card 条目（DM/任务保留）。`opts.drop` 供未来一次性通知显式复用。
 - 测试新增 `quiet-hours-test` 4 断言（群播不落盘/DM 仍积压/旧积压清理/窗口前置），全量 28 套全绿。
 - **部署状态**：当前开发机不在实验室网段（192.168.31.57 ping/SSH/API 均不可达），本版已提交、待网络恢复后 `npm run push` 上线。
+
+### v57 热修44 · 2026-10-22 · 随本提交落地 · fix
+
+**机端↔监测台双向同步及时化 + A5P 假 AMS 清理（曼波令「互相覆盖都应该及时支持」）**
+
+- **实况**：R20261022-004 分发 A5P 时日志报「用料 PETG 无匹配，回落 AMS0 槽 0」——A5P 是闪铸单喷头机根本没有 AMS；且闪铸 5M 系 `getAmsTrays` 把「余量约Xg」塞进 `type` 字段，监测台当料名渲染、分发映射当材料匹配，两处全被污染。
+- **闪铸不开打帧映射**：`dispatcher.dispatchTask` 按 `printer.brand` 分流——闪铸目标直接给空 amsFrame（`startProjectOnPrinter` 闪铸分支只 `startFile`，Bambu 口径的 ams_mapping 本就不消费），误导日志与空跑计算一并消失；拓竹路径行为不变（ops-test 20 断言仍绿）。
+- **余量与料名分离**：闪铸 5M 系料盘改出 `remain`（克数取整）+ `remainUnit:'g'`，`type` 恒空——机端本来就不上报料名/颜色，不冒充；观察台 tray 卡按克数展示「余量约 Xg」（区分 AMS 百分比进度条）、未知料显「未知料」；主页打印机卡 AMS 摘要同口径（`进料口·余量约912g`）。
+- **闪铸隐藏「切此槽」死按钮**：`amsChangeFilament` 仅拓竹实现，闪铸料卡不再渲染必然报错的切槽按钮。
+- **轮询提速**：主页 `index.html` 列表+打印机轮询 15s→5s（对齐观察台节奏），机端换料/改料、进度变化最快 5s 内可见；拓竹机端变更本就走 MQTT 推送实时入库，双向闭环：机端改→推送→页面 5s 内刷新，监测台改→`ams_filament_setting`/`msConfig_cmd` 写入+12s 状态回读（C5P 固件空转如实报「未落实」，A5P 无料站如实拒绝）。
+- 测试：flashforge-client 断言改锁新语义（type 空/remain 克数/remainUnit），28 套全绿；已 `npm run push` 上线（部署机 SSH 健康检查偶发 ECONNRESET，HTTP /api/health 验证服务正常）。

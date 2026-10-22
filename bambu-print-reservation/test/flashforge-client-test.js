@@ -99,9 +99,12 @@ const DETAIL = { code: 0, detail: DETAIL_INNER };
     const trays = c.getAmsTrays();
     assert.strictEqual(trays.length, 2);
     assert.strictEqual(trays[0].slot, '左进料口');
-    assert.ok(trays[0].type.includes('851'), '左口余量估计随条目展示: ' + trays[0].type);
+    // 2026-10-22 曼波反馈「A5P 没有 AMS」：余量走独立克数字段，不冒充材料类型
+    assert.strictEqual(trays[0].type, '', '5M 系无机端料名，type 不得装余量字符串');
+    assert.strictEqual(trays[0].remain, 851, '左口余量克数: ' + trays[0].remain);
+    assert.strictEqual(trays[0].remainUnit, 'g');
     assert.strictEqual(trays[1].slot, '右进料口');
-    assert.ok(trays[1].type.includes('912'), '右口余量估计随条目展示: ' + trays[1].type);
+    assert.strictEqual(trays[1].remain, 912, '右口余量克数: ' + trays[1].remain);
     assert.strictEqual(trays[1].active, true);
     await c.disconnect();
     // 单口机型（5M 基础款无 left 字段）→ 单条「进料口」
@@ -110,6 +113,7 @@ const DETAIL = { code: 0, detail: DETAIL_INNER };
     const t1 = single.getAmsTrays();
     assert.strictEqual(t1.length, 1);
     assert.strictEqual(t1[0].slot, '进料口');
+    assert.strictEqual(t1[0].remain, 912);
   });
 
   await ok('cameraUrl：优先 /detail 下发，回退 8080 出厂默认', async () => {

@@ -450,15 +450,18 @@ function controlPanelHtml(p) {
       ? { amsId: Number.isInteger(t.amsId) ? t.amsId : 254, trayId: 0 }
       : { amsId: 0, trayId: m ? Number(m[1]) : 0 };
     const remain = t.remain != null && t.remain > 0 ? Math.round(t.remain) : null;
+    const remainG = remain != null && t.remainUnit === 'g'; // 闪铸 5M 系：克数余量（无机端料名）
     return `<div class="tray${t.active ? ' active' : ''}" style="min-width:124px">
       <div style="display:flex;align-items:center;gap:6px">
         <span class="swatch" style="width:18px;height:18px;background:#${esc(t.colorHex || '333')}"></span>
         <b>${esc(t.slot)}</b>${t.active ? ' <span style="color:var(--ok)">◀</span>' : ''}
       </div>
-      <div class="detail" style="margin-top:2px">${esc(t.type || '空')}</div>
-      ${remain != null ? `<div class="pbar" style="height:4px;margin-top:3px"><div style="width:${Math.min(100, remain)}%"></div></div><div class="detail">剩余 ${remain}%</div>` : ''}
-      <div style="margin-top:4px"><button class="mini" ${idle && !t.active ? '' : 'disabled'} title="${idle ? '切到此槽进料' : '非空闲态/当前槽不可切'}"
-        onclick="cmdPost(${p.id},'ams/switch',{amsId:${switchArgs.amsId},trayId:${switchArgs.trayId}},'切到 ${esc(t.slot)} 进料？（先退旧料再进新料）')">切此槽</button></div></div>`;
+      <div class="detail" style="margin-top:2px">${esc(t.type || (remainG ? '未知料' : '空'))}</div>
+      ${remain != null ? (remainG
+        ? `<div class="detail">余量约 ${remain}g</div>`
+        : `<div class="pbar" style="height:4px;margin-top:3px"><div style="width:${Math.min(100, remain)}%"></div></div><div class="detail">剩余 ${remain}%</div>`) : ''}
+      ${p.brand === 'flashforge' ? '' : `<div style="margin-top:4px"><button class="mini" ${idle && !t.active ? '' : 'disabled'} title="${idle ? '切到此槽进料' : '非空闲态/当前槽不可切'}"
+        onclick="cmdPost(${p.id},'ams/switch',{amsId:${switchArgs.amsId},trayId:${switchArgs.trayId}},'切到 ${esc(t.slot)} 进料？（先退旧料再进新料）')">切此槽</button></div>`}</div>`;
   }).join('') : '<span class="detail">无料站信息</span>';
   // AMS 单元级数据（2026-10-16 全量排查）：湿度双值/AMS 内温/烘干倒计时
   const amsU = Array.isArray(p.amsUnits) ? p.amsUnits[0] : null;

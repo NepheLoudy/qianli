@@ -1226,7 +1226,12 @@ async function loadPrinters() {
     const staleIdle = p.stateStale && ['空闲', '已完成'].includes(p.status);
     const statusHtml = esc(p.status) + (p.stateStale ? '<span class="staleTag">失联</span>' : '');
     const color = staleIdle ? '#98a4b0' : (ST[p.status] || '#5b6ee1');
-    const ams = (p.ams || []).filter(t => t.type).map(t => `${esc(t.type)}${t.colorHex ? '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:' + esc(t.colorHex) + ';vertical-align:middle"></span>' : ''}`).join('、') || '—';
+    // 料位摘要：有料名显料名+色块；闪铸 5M 系无机端料名，按克数余量展示（不冒充材料）
+    const ams = (p.ams || []).map(t => {
+      if (t.type) return `${esc(t.type)}${t.colorHex ? '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:' + esc(t.colorHex) + ';vertical-align:middle"></span>' : ''}`;
+      if (t.remain != null && t.remainUnit === 'g') return `${esc(t.slot)}·余量约${t.remain}g`;
+      return '';
+    }).filter(Boolean).join('、') || '—';
     // 双喷头（H2D 等，2026-10-16）：左右喷嘴 + 料源（左=外挂料盘 / 右=AMS）
     const nozzles = Array.isArray(p.nozzles) && p.nozzles.length >= 2
       ? `<div class="detail">${p.nozzles.map(nz => `${nz.side === 'left' ? '左(外挂料盘)' : nz.side === 'right' ? '右(AMS)' : '喷头' + (nz.id + 1)}:${nz.temp != null ? nz.temp + '°' : '—'}${nz.active ? '(当前)' : ''}`).join(' · ')}</div>`
@@ -1280,7 +1285,9 @@ async function printerCtl(id, action, confirmText) {
   loadAnnotator(); // 录入台常显：首屏即给出 3D 标注引导（v56 复查批）
   renderSelSummary();
   if (ME) { await loadList(); loadPrinters(); }
-  setInterval(() => { if (ME) { loadList(); loadPrinters(); } }, 15000);
+  // 5s 轮询（2026-10-22 曼波令「机端↔监测台双向变更都要及时」）：与观察台同节奏，
+  // 机端改料/换料、进度变化最快 5s 内可见
+  setInterval(() => { if (ME) { loadList(); loadPrinters(); } }, 5000);
 })();
 </script>
 </body>

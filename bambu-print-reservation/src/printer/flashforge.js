@@ -254,12 +254,17 @@ class FlashforgeClient {
       }));
     }
     const trays = [];
+    // 5M 系机端不上报料名/颜色——余量走独立字段（remainUnit='g'），不冒充材料类型：
+    // 此前把「余量约Xg」塞进 type，监测台当料名渲染、分发映射当材料匹配，两处全被污染
+    // （2026-10-22 曼波反馈「A5P 没有 AMS」）
     const push = (slot, weight) => trays.push({
       slot,
-      type: weight != null && Number(weight) > 0 ? `余量约${Math.round(Number(weight))}g` : '',
+      type: '',
       colorHex: '',
       active: true,
       external: true,
+      remain: weight != null && Number(weight) > 0 ? Math.round(Number(weight)) : null,
+      remainUnit: 'g',
     });
     const hasLeft = this.state.leftTemp != null || this.state.estimatedLeftWeight != null;
     const hasRight = this.state.rightTemp != null || this.state.estimatedRightWeight != null;
