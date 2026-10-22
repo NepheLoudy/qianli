@@ -654,3 +654,11 @@
 - **指纹**：闪铸固件屏幕取消经历 `canceling → cancel → ready` 原始态（协议状态全集）——flashforge `getPrintStatus` 透出 `rawStatus`，manager 随 jobEvent 透传；dispatcher idle 收尾链新增分支：rawStatus 落在 canceling/cancel 即机端人工取消，按 `humanTerminateTask` 收尾（已取消、不重排、不进 givenUp）。
 - **已知边界**：5s 轮询若把 canceling/cancel 两个态都错过（瞬发取消）则退回幽灵通道——取消是机械动作（头抬升/热床下降）通常跨多个轮询周期，实测 C5P canceling 可采样。
 - 测试：dispatcher-manual-race 6e（canceling/cancel 两态 × 移出 printing/写已取消/不重排 6 断言），30 断言全绿；全量 28 套全绿，已上线。
+
+### v57 热修48 · 2026-10-23 · 随本提交落地 · feat
+
+**闪铸文件喷头指令审计（C5P 二号喷嘴争议）**
+
+- **争议**：曼波称 C5P 单指定了二号喷嘴、机器却用一号喷头打。拆单内 3mf 实证：`plate_1.gcode` 全程只有 `T0`（×2，开头 `T0 + M109 S255 T0`），无任何 T1/T2/T3——机端忠实执行文件，文件本身就是一号喷头刀路；project_settings 有 `filament_map:["1"]` 痕迹（切片器里选过）但没烙进刀路——**选择丢失发生在切片侧（Orca/FlashPrint C5P 配置），非分发链**（闪铸直通原样提取上传，字节不改）。
+- **改进**：闪铸直通提取 gcode 后统计 `^T\d` 指令，分发日志打 `[分发] <单号> 闪铸文件喷头指令: T0×2 / 无 T 指令（机端用当前默认喷头）`——切片选错喷头开打前一眼可见。
+- 全量 28 套测试全绿，已上线。

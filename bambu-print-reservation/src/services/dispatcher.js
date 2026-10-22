@@ -1017,6 +1017,16 @@ class Dispatcher {
           buffer = g.getData();
           uploadName = remoteName.replace(/\.3mf$/i, '.gcode');
           console.log(`[分发] ${task.recordId} 闪铸直通：提取内嵌 gcode ${Math.round(buffer.length / 1024)}KB → ${uploadName}`);
+          // 喷头审计（2026-10-23 热修48，C5P 二号喷嘴争议）：机端用哪支喷头完全由文件
+          // 里 T 指令决定——切片器把喷嘴选择留在元数据没烙进刀路时，这里分发前一眼可见
+          const toolStats = {};
+          for (const m of buffer.toString('utf8').matchAll(/^T(\d)\s*$/gm)) {
+            toolStats['T' + m[1]] = (toolStats['T' + m[1]] || 0) + 1;
+          }
+          const toolSummary = Object.keys(toolStats).length
+            ? Object.entries(toolStats).map(([t, n]) => `${t}×${n}`).join(' + ')
+            : '无 T 指令（机端用当前默认喷头）';
+          console.log(`[分发] ${task.recordId} 闪铸文件喷头指令: ${toolSummary}`);
         } catch (err) {
           throw new Error(`闪铸直通 3mf 提取内嵌 gcode 失败：${err.message}`);
         }
