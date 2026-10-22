@@ -637,3 +637,11 @@
 - **两步式停止**：flashforge `stopPrint` = pause → 直轮 /detail 确认 PAUSE（≤8s）→ 才发 cancel；**pause 未确认且仍在打印则跳过 cancel**（该固件下等于触发重打），返回 `cancelSent:false` 供端点如实报「请到屏幕操作」。每步回执打日志。
 - **端点适配**：闪铸判停口径改「gcodeState 到 IDLE」（canceling 归一 IDLE，PAUSE 只是两步式中间态），验证窗 10s→30s；`stopPrintOnPrinter` 透传两步式结果，cancel 被跳过时 note 明说原因。
 - 测试：flashforge-client 15 断言（pause 未确认跳过 cancel/确认后两步全发），全量 28 套全绿，两次 `npm run push` 上线（SSH 健康检查偶发 ECONNRESET，HTTP /api/health 验证正常）。
+
+### v57 热修46 · 2026-10-23 · 随本提交落地 · fix
+
+**料位变更审计日志（A1mini 换料同步争议定责）**
+
+- **争议**：曼波「A1mini 已换 PLA 为何没生效」——直订机器 MQTT 实证：机端上报 `vt_tray tray_type:PLA/color:000000`，监测台同显 PLA·000000，链路端到端一致；「没生效」实为机器侧时差（外挂料架料型随 RFID/进料确认才更新上报，第三方料盘 tag_uid 全零=无标签，料型来自机端手动告知），非同步链路故障。
+- **改进**：manager.updateState 对 ams 槽位料型/颜色变化打 `[料位] <机名>: 旧 → 新` 审计日志（全机型覆盖，含外挂料架）——机端换料→监测台时延从此翻日志可测，双向同步争议不再靠猜。
+- 全量 28 套测试全绿，已 `npm run push` 上线。

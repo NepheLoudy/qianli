@@ -255,6 +255,14 @@ class PrinterManager {
   updateState(printerId, patch) {
     const prev = this.printerStates[printerId];
     if (!prev) return;
+    // 料位变更审计（2026-10-23 热修46，A1mini 换料同步争议）：机端换料→监测台的
+    // 时延从此可测——槽位料型/颜色变化打「旧 → 新」日志，双向同步争议一眼定责
+    if (Array.isArray(patch.ams) && Array.isArray(prev.ams)) {
+      const sig = (t) => `${t.slot}:${t.type || '空'}${t.colorHex ? '/' + String(t.colorHex).slice(0, 6) : ''}`;
+      const before = prev.ams.map(sig).join(' | ');
+      const after = patch.ams.map(sig).join(' | ');
+      if (before !== after) console.log(`[料位] ${prev.name}: ${before || '(空)'} → ${after || '(空)'}`);
+    }
     const next = { ...prev, ...patch, lastUpdate: new Date() };
     this.printerStates[printerId] = next;
   }
