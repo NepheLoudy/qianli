@@ -143,9 +143,11 @@ const DETAIL = { code: 0, detail: DETAIL_INNER };
     calls.length = 0;
     await c.pausePrint();
     await c.resumePrint();
-    await c.stopPrint();
+    // 桩 /detail 恒 printing → pause 未确认 → **跳过 cancel**（直接 cancel 会触发重打）
+    const stopSkip = await c.stopPrint({ pauseConfirmMs: 200, pollMs: 20 });
+    assert.strictEqual(stopSkip.cancelSent, false, 'pause 未确认不得发 cancel（防重打）');
     const ctrls = calls.filter((x) => x.path === '/control');
-    assert.strictEqual(ctrls.length, 3);
+    assert.strictEqual(ctrls.length, 3, 'pause/continue + 停止①pause，无②cancel');
     const bodies = ctrls.map((x) => JSON.parse(x.opts.body));
     bodies.forEach((b) => {
       assert.strictEqual(b.serialNumber, 'SN90');
@@ -159,7 +161,40 @@ const DETAIL = { code: 0, detail: DETAIL_INNER };
     assert.strictEqual(payloads[0].args.jobID, '');
     assert.strictEqual(payloads[0].args.action, 'pause');
     assert.strictEqual(payloads[1].args.action, 'continue');
-    assert.strictEqual(payloads[2].args.action, 'cancel');
+    assert.strictEqual(payloads[2].args.action, 'pause', '停止①=暂停');
+    await c.disconnect();
+  });
+
+  await ok('停止两步式确认（热修45）：pause 经 /detail 确认后再 cancel', async () => {
+    // 桩：pause 指令发出后 /detail 翻成 pause 态（模拟固件真停）→ 应确认后发 cancel
+    const routes = { '/detail': DETAIL, '/control': { code: 0, message: 'success' } };
+    mockFetch(routes);
+    const c = new FlashforgeClient(PRINTER);
+    await c.connect();
+    await new Promise((r) => setTimeout(r, 20));
+    const baseFetch = global.fetch;
+    global.fetch = async (url, opts = {}) => {
+      const res = await baseFetch(url, opts);
+      try {
+        if (new URL(url).pathname === '/control') {
+          // payload 是 JSON 字符串（协议要求），外层 stringify 转义后不能直接 includes
+          const payload = String(JSON.parse(opts.body).payload || '');
+          if (payload.includes('"action":"pause"')) {
+            routes['/detail'] = { code: 0, detail: { ...DETAIL_INNER, status: 'pause' } };
+          }
+        }
+      } catch { /* 翻转失败按未确认路径走 */ }
+      return res;
+    };
+    calls.length = 0;
+    const r = await c.stopPrint({ pauseConfirmMs: 3000, pollMs: 30 });
+    global.fetch = baseFetch;
+    assert.strictEqual(r.pauseConfirmed, true, 'pause 态应被 /detail 回读确认');
+    assert.strictEqual(r.cancelSent, true, '确认后发 cancel');
+    const ctrls2 = calls.filter((x) => x.path === '/control');
+    assert.strictEqual(ctrls2.length, 2, '两步式共两条指令');
+    const actions = ctrls2.map((x) => JSON.parse(JSON.parse(x.opts.body).payload).args.action);
+    assert.deepStrictEqual(actions, ['pause', 'cancel']);
     await c.disconnect();
   });
 

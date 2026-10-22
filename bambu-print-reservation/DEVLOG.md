@@ -627,3 +627,13 @@
 - **闪铸隐藏「切此槽」死按钮**：`amsChangeFilament` 仅拓竹实现，闪铸料卡不再渲染必然报错的切槽按钮。
 - **轮询提速**：主页 `index.html` 列表+打印机轮询 15s→5s（对齐观察台节奏），机端换料/改料、进度变化最快 5s 内可见；拓竹机端变更本就走 MQTT 推送实时入库，双向闭环：机端改→推送→页面 5s 内刷新，监测台改→`ams_filament_setting`/`msConfig_cmd` 写入+12s 状态回读（C5P 固件空转如实报「未落实」，A5P 无料站如实拒绝）。
 - 测试：flashforge-client 断言改锁新语义（type 空/remain 克数/remainUnit），28 套全绿；已 `npm run push` 上线（部署机 SSH 健康检查偶发 ECONNRESET，HTTP /api/health 验证服务正常）。
+
+### v57 热修45 · 2026-10-23 · 随本提交落地 · fix
+
+**A5P 停止不生效根因实锤 + 闪铸停止两步式（曼波停机 R20261022-007 实案）**
+
+- **实案**：曼波控制台停 A5P（printer=3）两次请求均「回 Success 但机器照打」；状态验证 10s 超时后人工停机标记被撤销，R-007 悬挂打印中。直发实验补刀实锤：对运行中任务直接发 `jobCtl_cmd cancel`，**固件回 Success 但把任务从头重打**（printDuration 归零，日志证明非 dispatcher 重发）——旧单步 cancel 不是无效而是**有害**。
+- **软件通道全排**：HTTP cancel/pause ×（空 jobID / 真实 pid）×（清屏弹窗前置）、TCP 8899 `~M601 S1`——全部「受理不动」，A5P 固件 5.1.9 拒绝一切远程停机（社区同款反馈：JMcCumberIO/flashforge_adventurer5m 注明控制命令可能不生效），只能屏幕物理操作。
+- **两步式停止**：flashforge `stopPrint` = pause → 直轮 /detail 确认 PAUSE（≤8s）→ 才发 cancel；**pause 未确认且仍在打印则跳过 cancel**（该固件下等于触发重打），返回 `cancelSent:false` 供端点如实报「请到屏幕操作」。每步回执打日志。
+- **端点适配**：闪铸判停口径改「gcodeState 到 IDLE」（canceling 归一 IDLE，PAUSE 只是两步式中间态），验证窗 10s→30s；`stopPrintOnPrinter` 透传两步式结果，cancel 被跳过时 note 明说原因。
+- 测试：flashforge-client 15 断言（pause 未确认跳过 cancel/确认后两步全发），全量 28 套全绿，两次 `npm run push` 上线（SSH 健康检查偶发 ECONNRESET，HTTP /api/health 验证正常）。

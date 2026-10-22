@@ -1350,17 +1350,21 @@ app.post('/api/printers/:id/stop', requireUser('admin'), async (req, res) => {
     }
     // 人工停机意图：系统停止没有 0300-400C 码，标记后 failed/idle 事件按「已取消」收尾
     dispatcher.markHumanStop(id, '控制台停止');
+    let stopResult = null;
     try {
-      await printerManager.stopPrintOnPrinter(id);
+      stopResult = await printerManager.stopPrintOnPrinter(id);
     } catch (err) {
       dispatcher.clearHumanStop(id); // 指令没发出去，别把后续真实失败误判成人工取消
       throw err;
     }
-    // 状态验证：≤10s 内离开打印/暂停/准备态视为已停止（H2 状态转换慢是已知特性）
+    // 状态验证：≤10s 内离开打印/暂停/准备态视为已停止（H2 状态转换慢是已知特性）。
+    // 闪铸（热修45）：两步式停止要 pause 停稳再 cancel，且 canceling 归一 IDLE——
+    // 判停口径改「到 IDLE」、窗口放宽 30s（PAUSE 只是两步式的中间态，不算停成）
+    const isFf = (printerManager.getPrinterState(id) || {}).brand === 'flashforge';
     let stopped = false;
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < (isFf ? 15 : 5); i++) {
       await new Promise((r) => setTimeout(r, 2000));
-      if (!gone.includes(readState())) { stopped = true; break; }
+      if (isFf ? readState() === 'IDLE' : !gone.includes(readState())) { stopped = true; break; }
     }
     if (!stopped) dispatcher.clearHumanStop(id); // 机器未响应停止，撤销意图
     const st = printerManager.getPrinterState(id);
@@ -1373,7 +1377,10 @@ app.post('/api/printers/:id/stop', requireUser('admin'), async (req, res) => {
       state: st ? st.status : '',
       cancelled: Boolean(cancelledRecordId),
       recordId: cancelledRecordId || undefined,
-      note: stopped ? undefined : '指令被机器受理但状态未变化——请查看机器屏幕（固件可能未响应停止指令）',
+      note: stopped ? undefined
+        : (stopResult && stopResult.cancelSent === false
+          ? '固件未响应暂停指令，已跳过取消（该固件对运行中任务直接取消会触发重打）——请到打印机屏幕上停止'
+          : '指令被机器受理但状态未变化——请查看机器屏幕（固件可能未响应停止指令）'),
     });
   } catch (err) {
     console.error('停止打印失败:', err);

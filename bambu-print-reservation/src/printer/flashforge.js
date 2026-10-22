@@ -312,7 +312,50 @@ class FlashforgeClient {
 
   async pausePrint() { return this.sendCommand('jobCtl_cmd', { jobID: '', action: 'pause' }); }
   async resumePrint() { return this.sendCommand('jobCtl_cmd', { jobID: '', action: 'continue' }); }
-  async stopPrint() { return this.sendCommand('jobCtl_cmd', { jobID: '', action: 'cancel' }); }
+  /**
+   * 停止（2026-10-22 热修45 两步式：先暂停确认再取消）——对运行中任务直接发 cancel 的
+   * 固件实测行为（R20261022-007 曼波停机实案 + 同单直发实验）：
+   *   预热/调平阶段 → 回 Success 但忽略（打印照旧）；
+   *   开打初期     → 回 Success 但**任务从头重打**（printDuration 归零重计）。
+   * 两步式：pause → /detail 确认进 PAUSE（≤pauseConfirmMs）→ 才发 cancel。
+   * **pause 未确认（仍在 PRINTING）则跳过 cancel**——该固件下那等于触发重打，比不停
+   * 更糟；跳过时如实返回 cancelSent=false 供调用方报「请到屏幕操作」。
+   * pause 指令本身失败/超时同走跳过路径。每步回执打日志。
+   * @returns {{ack: object|null, pauseConfirmed: boolean, cancelSent: boolean, printDurationBefore: number}}
+   */
+  async stopPrint(opts = {}) {
+    const pauseConfirmMs = Number(opts.pauseConfirmMs) || 8000;
+    const pollMs = Number(opts.pollMs) || 1500;
+    const printDurationBefore = this.state ? Number(this.state.printDuration) || 0 : 0;
+    let pauseConfirmed = false;
+    let leftPrinting = false;
+    try {
+      const ack = await this.pausePrint();
+      console.log(`[闪铸] ${this.config.name} 停止①pause 回执: ${JSON.stringify(ack).slice(0, 100)}`);
+      const deadline = Date.now() + pauseConfirmMs;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, pollMs));
+        try {
+          // 直接轮 /detail（不依赖 5s 后台轮询缓存——确认延迟要贴着指令走）
+          const d = await this.postJson('/detail', this.auth);
+          const raw = String((d && d.detail && d.detail.status) || '');
+          if (!raw) continue;
+          const g = STATUS_MAP[raw];
+          if (g === 'PAUSE') { pauseConfirmed = true; break; }
+          if (g !== 'PRINTING') { leftPrinting = true; break; } // 已取消/完成——无需②
+        } catch { /* 单次状态查询失败继续等 */ }
+      }
+    } catch (err) {
+      console.warn(`[闪铸] ${this.config.name} 停止①pause 失败: ${err.message}`);
+    }
+    if (!pauseConfirmed && !leftPrinting) {
+      console.warn(`[闪铸] ${this.config.name} 停止①pause 未确认且仍在打印——跳过②cancel（该固件直接 cancel 会触发任务重打），请到打印机屏幕操作`);
+      return { ack: null, pauseConfirmed, cancelSent: false, printDurationBefore };
+    }
+    const ack = await this.sendCommand('jobCtl_cmd', { jobID: '', action: 'cancel' });
+    console.log(`[闪铸] ${this.config.name} 停止②cancel（pause${pauseConfirmed ? '已确认' : '已离开打印态'}）回执: ${JSON.stringify(ack).slice(0, 100)}`);
+    return { ack, pauseConfirmed, cancelSent: true, printDurationBefore };
+  }
 
   /**
    * 写料站槽位料信息（Creator 5 系列 msConfig_cmd，2026-10-17 协议档案线格式：

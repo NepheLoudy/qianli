@@ -594,7 +594,7 @@ class PrinterManager {
       throw new Error('打印机未连接');
     }
 
-    await client.stopPrint();
+    return client.stopPrint(); // 闪铸两步式结果（cancelSent/pauseConfirmed）透传给端点
   }
 
   async syncPrinterStatusToBitable() {
