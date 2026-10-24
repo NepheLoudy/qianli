@@ -1176,7 +1176,18 @@ async function loadGivenUp() {
   const given = data.givenUp || [];
   if (!given.length) { $('givenUpBar').innerHTML = ''; return; }
   $('givenUpBar').innerHTML = `<div class="warnbar">⚠️ <b>${given.length}</b> 单自动重试耗尽待人工恢复：` +
-    given.map(g => `#${esc(g.recordId)} ${esc(g.fileName || '')}（${g.error ? '原因：' + esc(g.error) + '；' : ''}<button class="mini" onclick="recoverGivenUp('${g.recordId}')">指定打印机恢复</button>`).join('　') + `</div>`;
+    given.map(g => `#${esc(g.recordId)} ${esc(g.fileName || '')}（${g.error ? '原因：' + esc(g.error) + '；' : ''}<button class="mini" onclick="recoverGivenUp('${g.recordId}')">指定打印机恢复</button><button class="mini" onclick="dismissGivenUp('${g.recordId}')" title="不要了：移出放弃池，预约单落「已取消」">丢弃</button>`).join('　') + `</div>`;
+}
+
+/** 放弃池人工丢弃（2026-10-24 热修50）：明确不要的单直接清理，预约单落「已取消」 */
+async function dismissGivenUp(recordId) {
+  if (!confirm(`丢弃 #${recordId}？\n\n预约单将落「已取消」，不再分发（想打请重新预约）。`)) return;
+  const res = await fetch(`/api/dispatch/given-up/${encodeURIComponent(recordId)}/dismiss`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`已丢弃 #${recordId}`);
+  else toast('❌ ' + (data.error || '丢弃失败'));
+  loadGivenUp();
+  loadList();
 }
 
 /** 指定打印机恢复：prompt 换下拉（2026-10-08）——拼错名字会被后端 400 打回，下拉直接消除拼错面 */

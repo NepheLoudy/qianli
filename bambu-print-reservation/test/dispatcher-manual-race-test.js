@@ -237,6 +237,19 @@ function taskOf(rid, appNo) {
     && dispatcher.queue.some((t) => t.recordId === 'rWithEv'),
     JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
 
+  console.log('\n== 6g. 放弃池人工丢弃：移出池 + 预约单落已取消（2026-10-24 热修50） ==');
+  calls.tableWrites.length = 0;
+  const given = { recordId: 'rGiven', applicationNo: '2026X', fileToken: 'tok_x', fileSource: 'mirror', dispatchRetries: 3, dispatchError: 'x' };
+  dispatcher.givenUp.set('rGiven', given);
+  const dismissed = await dispatcher.dismissGivenUp('rGiven');
+  check('丢弃返回任务且移出放弃池', dismissed.recordId === 'rGiven' && !dispatcher.givenUp.has('rGiven'),
+    JSON.stringify([...dispatcher.givenUp.keys()]));
+  check('镜像表写回「已取消」', calls.tableWrites.some((w) => w.id === 'rGiven' && w.fields['申请状态'] === '已取消'),
+    JSON.stringify(calls.tableWrites));
+  let dismissErr = '';
+  try { await dispatcher.dismissGivenUp('rGiven'); } catch (err) { dismissErr = err.message; }
+  check('重复丢弃报错（幂等护栏）', dismissErr.includes('放弃池中没有'), dismissErr);
+
   console.log('\n== 7. 状态白名单放行：「已通过」单人工直发照常工作 ==');
   reservationRecords = [
     { record_id: 'rOK', fields: { 申请编号: '2026OK', 申请状态: '已通过', 切片文件: [{ name: 'ok.3mf', file_token: 'tok_ok' }] } },

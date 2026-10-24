@@ -1857,6 +1857,17 @@ app.post('/api/dispatch/manual', requireUser('reviewer', 'admin'), async (req, r
   }
 });
 
+// 放弃池人工丢弃（reviewer+，2026-10-24 热修50）：重试耗尽单除「恢复」外新增直接清理——
+// 移出放弃池 + 预约单落「已取消」，黄条/列表同步干净
+app.post('/api/dispatch/given-up/:id/dismiss', requireUser('reviewer', 'admin'), async (req, res) => {
+  try {
+    const task = await dispatcher.dismissGivenUp(req.params.id);
+    res.json({ success: true, recordId: req.params.id, file: task.fileName || '' });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // multer 校验失败（扩展名白名单/超限）等中间件错误 → 统一 JSON 400（而非默认 500 HTML）
 app.use((err, req, res, next) => {
   if (!err) return next();

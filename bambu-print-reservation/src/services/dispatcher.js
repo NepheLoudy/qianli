@@ -1395,6 +1395,33 @@ class Dispatcher {
     }));
   }
 
+  /**
+   * 放弃池人工丢弃（2026-10-24 曼波令，热修50）：重试耗尽单此前只有「恢复」一条路，
+   * 明确不要的单永远躺黄条/列表排队中——新增直接清理：移出放弃池、预约单落「已取消」。
+   * 与恢复互斥（同一单只能选一样）；幂等：单不在池时报错由端点回 400。
+   */
+  async dismissGivenUp(recordId) {
+    const task = this.givenUp.get(recordId);
+    if (!task) throw new Error(`放弃池中没有 ${recordId}（可能已被恢复或丢弃）`);
+    this.givenUp.delete(recordId);
+    this.flushState();
+    if (isLocalTask(task)) {
+      storeSafe(() => reservationStore.updateStatus(
+        recordId,
+        config.status.CANCELLED,
+        '放弃池人工丢弃——不再分发（如需打印请重新预约）'
+      ), 'given-up-dismiss');
+    } else if (isMirrorTask(task)) {
+      await bitableApi
+        .updateRecord(config.bitable.reservationTableId, recordId, {
+          '申请状态': config.status.CANCELLED,
+        })
+        .catch(() => {});
+    }
+    console.log(`[分发] 放弃池丢弃 ${recordId}（${task.fileName || ''}）→ 预约单落「已取消」`);
+    return task;
+  }
+
   /** 人工强制指定分发（/print-dispatch） */
   async manualDispatch(recordId, printerName) {
     const printer = printerManager.getAllPrinterStates().find(
