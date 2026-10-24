@@ -81,6 +81,7 @@ const DETAIL = { code: 0, detail: DETAIL_INNER };
     assert.strictEqual(c.connected, true);
     assert.strictEqual(st.gcodeState, 'PRINTING');
     assert.strictEqual(st.rawStatus, 'printing', '机端原始态随状态透出（热修47 取消指纹）');
+    assert.strictEqual(st.errorCode, '', '机端故障码透出（热修49 失败重排证据门）');
     assert.strictEqual(st.status, '打印中');
     assert.strictEqual(st.progress, 42);
     assert.strictEqual(st.remainingMinutes, 25); // 1500s → 25min

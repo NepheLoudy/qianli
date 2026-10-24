@@ -230,6 +230,7 @@ class PrinterManager {
       sdcard: Boolean(status.sdcard),
       printError: status.printError || 0,
       failReason: status.failReason || 0,
+      errorCode: status.errorCode || null, // 闪铸故障证据（热修49 失败重排证据门）
       deviceInfo: typeof client.getDeviceInfo === 'function' ? client.getDeviceInfo() : null,
       ams: client.getAmsTrays(),
     });

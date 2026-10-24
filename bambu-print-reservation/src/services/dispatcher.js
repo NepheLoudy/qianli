@@ -20,7 +20,10 @@ const plaza = require('./plaza');
 // 必须尊重**：不重排队、不自动重发（此前误走 failTask「失败重排」——机器上取消一次、
 // 系统就再发一次，与人循环对抗）。本系统自己发的 stop 不会走到此判（dequeue 先释放
 // printing 映射，failed 事件找不到在册任务）。
-const HUMAN_CANCEL_FAIL_CODES = new Set([50348044]); // 0x0300400C；后续实测到变体码再补
+const HUMAN_CANCEL_FAIL_CODES = new Set([
+  50348044,  // 0x0300400C 拓竹标准人工取消码（P1/X1 实证）
+  201359426, // 0x0C008042 H2D 屏幕停机变体码（2026-10-24 R20261024-001 实证）
+]);
 // 系统自己发起的停止（控制台/页面）没有 0300-400C 码：用「停机意图」标记兜住——
 // 标记随任务落盘（humanStopRequested），重启后 failed/idle 事件仍按取消收尾
 const HUMAN_STOP_TTL_MS = 3 * 60 * 1000;
@@ -367,8 +370,23 @@ class Dispatcher {
               console.error('[分发] 人工终止收尾失败:', err.message)
             );
           } else {
-            console.log(`[分发] ${printer.name} 打印失败（failReason=${printer.failReason || 0}）→ 自动重排`);
-            this.failTask(task, printer, '打印机上报失败状态');
+            // 类级反转（2026-10-24 热修49，H2D R20261024-001 实案）：同一屏幕停机动作
+            // 先后吐 0x0C008042 / 0 / 0x0300400C 三种 fail_reason——按码追指纹结构性
+            // 失败。真实故障（断料/堵料/跌件）必带故障证据（拓竹 HMS/print_error、
+            // 闪铸 errorCode），**无证据的 FAILED 默认按人为终止收尾**，只有带证据的
+            // 才失败重排。误伤面：极罕见「无码真实故障」会落已取消（页面可见可重约），
+            // 远小于旧行为「与人循环对抗到重试耗尽」的耗材浪费。
+            const hmsCount = Array.isArray(printer.hms) ? printer.hms.length : 0;
+            const hasErrorEvidence = hmsCount > 0 || Number(printer.printError) > 0 || Boolean(String(printer.errorCode || '').trim());
+            if (!hasErrorEvidence) {
+              console.log(`[分发] ${printer.name} 失败无故障证据（failReason=${printer.failReason || 0}，无 HMS/print_error/errorCode）→ 按人为终止收尾，不回排队`);
+              this.humanTerminateTask(task, printer).catch((err) =>
+                console.error('[分发] 人为终止收尾失败:', err.message)
+              );
+            } else {
+              console.log(`[分发] ${printer.name} 打印失败（failReason=${printer.failReason || 0}，HMS ${hmsCount} 项/print_error=${printer.printError || 0}${printer.errorCode ? '/errorCode=' + printer.errorCode : ''}）→ 自动重排`);
+              this.failTask(task, printer, '打印机上报失败状态');
+            }
           }
         }
       } else if (event === 'start') {

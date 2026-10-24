@@ -214,6 +214,29 @@ function taskOf(rid, appNo) {
       JSON.stringify(dispatcher.queue.map((t) => t.recordId)));
   }
 
+  console.log('\n== 6f. 类级反转：无故障证据的 FAILED 按人为终止收尾（2026-10-24 热修49，H2D 三码实案） ==');
+  calls.tableWrites.length = 0;
+  const noEv = { recordId: 'rNoEv', applicationNo: '2026V', fileToken: 'tok_v', fileSource: 'mirror' };
+  dispatcher.printing.set(1, noEv);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 201359426, hms: [] }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[无证据] 变体码 failReason 无 HMS → 已取消不重排',
+    calls.tableWrites.some((w) => w.id === 'rNoEv' && w.fields['申请状态'] === '已取消')
+    && !dispatcher.queue.some((t) => t.recordId === 'rNoEv'),
+    JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
+
+  calls.tableWrites.length = 0;
+  const withEv = { recordId: 'rWithEv', applicationNo: '2026W', fileToken: 'tok_w', fileSource: 'mirror' };
+  dispatcher.printing.set(1, withEv);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 70001, hms: [{ code: '0701-2000' }] }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[带证据] HMS 故障 → 失败重排（写回排队中）',
+    calls.tableWrites.some((w) => w.id === 'rWithEv' && w.fields['申请状态'] === '排队中')
+    && dispatcher.queue.some((t) => t.recordId === 'rWithEv'),
+    JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
+
   console.log('\n== 7. 状态白名单放行：「已通过」单人工直发照常工作 ==');
   reservationRecords = [
     { record_id: 'rOK', fields: { 申请编号: '2026OK', 申请状态: '已通过', 切片文件: [{ name: 'ok.3mf', file_token: 'tok_ok' }] } },
