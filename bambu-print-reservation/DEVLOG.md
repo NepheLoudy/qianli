@@ -680,3 +680,12 @@
 - **功能**：dispatcher.dismissGivenUp（幂等，单不在池报错）= 移出放弃池 + flushState + 预约单落「已取消」（本地源写 store/history，镜像源写表）；端点 `POST /api/dispatch/given-up/:id/dismiss`（reviewer+，与恢复同权限）；主页黄条每单加「丢弃」按钮（confirm 防误触，与恢复并排）。
 - **清理实况**：现网放弃池 3 单盘点——R20261020-006 已于 10-23 恢复后正常打完（/busy 弹窗清掉后恢复链路可用实证）、R20261023-009 已取消、R20261023-011 走停服-改盘-启服（备份 .bak-dismiss）落「已取消」，放弃池清零。
 - 测试：dispatcher-manual-race 6g（移出池/写已取消/重复丢弃报错），35 断言；全量 28 套全绿，已上线。
+
+### v57 热修51 · 2026-10-27 · 1695125 · feat
+
+**打印成功回执自动清机端残留 + 拓竹上传 553 存储离线诊断（A5P/X1C 双罢工实案）**
+
+- **实案**：R20261026-002→A5P `terminated`×3（0.2~0.5s 即挂，机端 8080 web 服务半死：TCP 通、HTTP 全挂）、R20261026-004/006→X1C FTPS `553 Could not create file`×3，三单全进放弃池。对照排查（P1S 探针成功/H2D partial/X1C 全路径拒写）+ 机端状态（`sdcard:false` vs P1S `true`）定根因：**X1C 是 SD 卡掉卡**（与 FINISH 完成态无关——三台拓竹都停 FINISH 但 P1S 可写；`clean_print_error` 受理但清不动 FINISH 残留），A5P 是完成弹窗/固件 web 僵死，均需物理处置，程序远程救不了已病入膏肓的机器。
+- **自动清理**：dispatcher 新增 `cleanupMachineAfterJob`，挂 completeTask 与 sweepStalePrinting（巡检补完成）两路——**闪铸打印成功回执一到位即远程点屏**（复用 clearScreenDialog = stateCtrl setClearPlatform，等价人工点掉完成弹窗，防弹窗积累挡后续控制/上传）；拓竹 FINISH 残留不锁存储且清不动，不空发指令。fire-and-forget，清屏失败只记日志不碰完成收尾。
+- **诊断增强**：拓竹 uploadBuffer 553 时读自身 sdcard 位，存储离线直接报人话「机端存储离线（sdcard=false）——请检查打印机 SD 卡/USB 盘是否在位」，不再让三连挂只吐裸 553（本次掉卡两天无人读懂）。
+- 测试：全量 28 套全绿，已上线。
