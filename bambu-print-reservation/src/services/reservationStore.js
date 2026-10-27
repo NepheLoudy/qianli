@@ -129,6 +129,9 @@ const reservationStore = {
       fileName: input.fileName,
       filePath: input.filePath,
       fileSize: input.fileSize || 0,
+      // STEP/STL 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）：
+      // 切片文件提单时补交的 CAD 源，训练入库时提取真网格特征（gcode 估计的升级）
+      sourceFile: input.sourceFile || null,
       materialType: String(input.materialType || '').trim(),
       color: String(input.color || '').trim(),
       assignedPrinter: String(input.assignedPrinter || '').trim(),
@@ -231,6 +234,10 @@ const reservationStore = {
       if (age < days * 24 * 3600 * 1000) continue;
       try {
         fs.unlinkSync(record.filePath);
+        // 配对的 CAD 源文件同生命周期清理（2026-10-27 提单配对批）：不留孤儿文件
+        if (record.sourceFile && record.sourceFile.storedPath) {
+          try { fs.unlinkSync(record.sourceFile.storedPath); } catch (e2) { if (e2.code !== 'ENOENT') console.warn(`[预约存储] 清理配对源文件失败 ${record.id}:`, e2.message); }
+        }
         record.fileCleaned = true;
         record.fileCleanedAt = new Date(now).toISOString();
         removed++;

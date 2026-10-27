@@ -205,9 +205,9 @@ class ReservationService {
     if (sampleEntry) {
       store.setSample(id, { sampleEntry: true, at: new Date().toISOString() });
       const snapshot = store.get(id);
-      setImmediate(() => {
+      setImmediate(async () => {
         try {
-          const sample = createSampleFromReservation(snapshot, reviewer);
+          const sample = await createSampleFromReservation(snapshot, reviewer);
           store.setSample(id, { sampleId: sample.id });
           console.log(`[预约服务] 审批入库：${id} → 样本 ${sample.id}`);
         } catch (err) {
@@ -377,15 +377,43 @@ const reservationService = new ReservationService();
 // 3mf 直通样本的几何特征全自动提取（无人工核验）——额外低权重置信度（曼波 2026-10-16 令，训练消费按低权对待）
 const AUTO_FEATURE_CONFIDENCE = 40;
 
-function createSampleFromReservation(record, reviewer) {
+async function createSampleFromReservation(record, reviewer) {
   const fs = require('fs');
-  if (!record) throw new Error('预约单不存在');
+  if (!record) throw new Error('预约记录不存在');
   const is3mf = /\.3mf$/i.test(record.fileName || '');
   const buf = record.filePath ? fs.readFileSync(record.filePath) : null;
   if (!buf || buf.length === 0) throw new Error('源文件不可读（filePath 缺失或为空）');
   let features = record.modelFeatures || null;
   let featureSource = 'auto'; // 3mf 直通：几何特征全自动（含网格→网格分析；切片导出件无网格→gcode 估计）
   let slice = null;
+  // CAD 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）：切片导出 3mf 本身
+  // 无内嵌网格（29 条直通件实证），真几何特征从配对的 STEP/STL 源提取——模型归档一并换
+  // 源文件（fitter loadSampleMesh 支持 step/stl，几何家族/摆向学习全链路吃到真网格）；
+  // 提取失败回退切片件口径，不阻塞入库
+  let meshBuf = buf;
+  let meshName = record.fileName || 'model';
+  if (record.sourceFile && record.sourceFile.storedPath) {
+    try {
+      const sb = fs.readFileSync(record.sourceFile.storedPath);
+      const mf = require('./modelFeatures');
+      const extM = /\.([a-z0-9]+)$/i.exec(record.sourceFile.originalName || '') || [];
+      const ext = (extM[1] || '').toLowerCase();
+      const analyzed = ext === 'stl' ? mf.analyzeStl(sb)
+        : (ext === 'step' || ext === 'stp') ? await mf.analyzeStep(sb, record.sourceFile.originalName)
+        : mf.analyze3mf(sb);
+      if (analyzed && analyzed.ok) {
+        features = analyzed;
+        featureSource = 'auto';
+        meshBuf = sb;
+        meshName = record.sourceFile.originalName || meshName;
+        console.log(`[训练入库] ${record.id} 配对源文件真网格特征：${meshName}`);
+      } else {
+        console.warn(`[训练入库] ${record.id} 配对源文件体检未通过（${(analyzed && analyzed.reason) || '未知'}），回退切片件口径`);
+      }
+    } catch (err) {
+      console.warn(`[训练入库] ${record.id} 配对源文件读取/解析失败，回退切片件口径: ${err.message}`);
+    }
+  }
   // 专家摆向标签（2026-10-19 学习回路）：Place on Face 四元数优先；3mf 有对象变换则弱标签
   let orientation = null;
   if (Array.isArray(record.placement) && record.placement.length === 4) {
@@ -433,7 +461,7 @@ function createSampleFromReservation(record, reviewer) {
     placement: record.placement || null,
     orientation, // 专家摆向标签（学习回路）
     materialType: record.materialType || '',
-    model: { originalName: record.fileName || 'model', buffer: buf, features },
+    model: { originalName: meshName, buffer: meshBuf, features },
     slice,
   });
 }

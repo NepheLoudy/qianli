@@ -253,7 +253,7 @@ check('canDispatchResidueFailed:静止残留放行,有在打痕迹/未知不放�
   assert.equal(canDispatchResidueFailed(null), false);
 });
 
-check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源单引用/结果回填)', () => {
+check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源单引用/结果回填)', async () => {
   const { createSampleFromReservation } = require('../src/services/reservation');
   const trainingStore = require('../src/services/trainingStore');
   const zip = new AdmZip();
@@ -272,7 +272,7 @@ check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源
     materialType: 'PLA', selection: { load_magnitude: 'medium' }, spatial: [],
     processParams: null, appliedRules: [],
   };
-  const s = createSampleFromReservation(record, '测试审批人');
+  const s = await createSampleFromReservation(record, '测试审批人');
   assert.equal(s.sourceRecordId, 'R20261016-999', '源单引用落档（结果回填的钩子）');
   assert.equal(s.featureSource, 'gcode-estimate', '切片导出件无网格 → gcode 估计标记（曼波 2026-10-16）');
   assert.ok(s.model && s.model.features && s.model.features.ok === true, '几何特征估计成功落档');
@@ -283,7 +283,7 @@ check('createSampleFromReservation:预约单→训练样本(3mf 内嵌参数/源
   assert.ok(s.model && s.model.storedPath && s.slice.storedPath === s.model.storedPath, '3mf 同产物归档去重（模型即切片）');
   assert.ok(s.orientation && s.orientation.source === '3mf-model-settings', '3mf 对象矩阵提取为专家摆向弱标签');
   // Place on Face 人工标签优先于 3mf 矩阵
-  const s2 = createSampleFromReservation({ ...record, id: 'R20261016-998', placement: [0, 0, 0.707107, 0.707107] }, '测试审批人');
+  const s2 = await createSampleFromReservation({ ...record, id: 'R20261016-998', placement: [0, 0, 0.707107, 0.707107] }, '测试审批人');
   assert.equal(s2.orientation.source, 'placement', '人工放置优先作为强标签');
   assert.deepEqual(s2.orientation.quaternion, [0, 0, 0.707107, 0.707107]);
   const back = trainingStore.setOutcomeBySource('R20261016-999', { status: '成功', recordedBy: '测试' });

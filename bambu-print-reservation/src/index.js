@@ -940,11 +940,30 @@ app.get('/api/reservations/:id/slice-preview/layer', requireUser('reviewer', 'ad
   if (!layer) return res.status(404).json({ error: '层序号越界' });
   res.json({ i: layer.i, z: layer.z, bounds: layer.bounds, segments: layer.segs });
 });
-app.post('/api/reservations', requireUser(), upload.single('file'), async (req, res) => {
+app.post('/api/reservations', requireUser(), upload.fields([
+  { name: 'file', maxCount: 1 },
+  { name: 'sourceFile', maxCount: 1 }, // CAD 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）
+]), async (req, res) => {
+  const removeUploads = (...files) => {
+    for (const f of files) { if (f) { try { fs.unlinkSync(f.path); } catch { /* 已不存在 */ } } }
+  };
   try {
-    if (!req.file) return res.status(400).json({ error: '缺少文件（multipart 字段名 file）' });
+    const file = req.files && req.files.file && req.files.file[0];
+    const srcFile = req.files && req.files.sourceFile && req.files.sourceFile[0];
+    if (!file) return res.status(400).json({ error: '缺少文件（multipart 字段名 file）' });
     const body = req.body || {};
-    const fileName = Buffer.from(req.file.originalname || 'unnamed', 'latin1').toString('utf8');
+    const fileName = Buffer.from(file.originalname || 'unnamed', 'latin1').toString('utf8');
+    // CAD 源文件（可选）：仅切片直通单有意义的配对——STEP/STL 真网格 ↔ 切片文件的专家
+    // 参数，训练入库时自动配对提取真几何特征（gcode-estimate 的升级）。非 CAD 格式打回
+    let sourceFileMeta = null;
+    if (srcFile) {
+      const srcName = Buffer.from(srcFile.originalname || '', 'latin1').toString('utf8');
+      if (!/\.(step|stp|stl|obj)$/i.test(srcName)) {
+        removeUploads(file, srcFile);
+        return res.status(400).json({ error: `配对源文件需为 STEP/STL/OBJ 格式（收到「${srcName}」）——切片文件本身请走 file 字段` });
+      }
+      sourceFileMeta = { originalName: srcName, storedPath: srcFile.path, size: srcFile.size };
+    }
     // 已切片产物=审批直通（2026-10-14 扩：闪铸 gcode 系与 3mf 同语义——参数已定，
     // 引擎不定档不越俎代庖；分发引擎按品牌分流：3mf→拓竹 / gcode→闪铸）
     const isSliced = /\.(3mf|gcode|gx|g)$/i.test(fileName);
@@ -961,12 +980,12 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
         body.spatial ? JSON.parse(body.spatial) : []
       );
     } catch {
-      try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+      try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: 'selection/spatial 不是合法 JSON' });
     }
     // 使用场景必填（2026-10-18 曼波令；标注/预约台双入口同口径，服务端兜底）
     if (!require('./services/taxonomy').isSceneSelected(selection)) {
-      try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+      try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: '请勾选「使用场景」（必填）', details: ['使用场景是必填项——在需求标签区顶部勾选至少一项'] });
     }
     // 放置平面四元数（2026-10-16）：3D 工坊 Place on Face 的累计旋转随单存档——
@@ -1011,7 +1030,7 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       const feat = require('./services/featureDerive').deriveFeatures(spatial, modelFeatures, selection);
       applied = processRules.applyRules(selection, { material: body.materialType, feat });
       if (applied.blocked) {
-        try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
         return res.status(400).json({ error: '需求勾选存在硬冲突', details: applied.errors, warnings: applied.warnings });
       }
     }
@@ -1022,11 +1041,11 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
     let embeddedParams = null;
     let estMinutes = null;
     if (isSliced && is3mf) {
-      if (req.file.size > 50 * 1024 * 1024) {
-        console.log(`[提交] 3mf 过大（${Math.round(req.file.size / 1048576)}MB），跳过参数提取`);
+      if (file.size > 50 * 1024 * 1024) {
+        console.log(`[提交] 3mf 过大（${Math.round(file.size / 1048576)}MB），跳过参数提取`);
       } else {
         try {
-          const extracted = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(req.file.path));
+          const extracted = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(file.path));
           // 板型/用料清单随单入档（2026-10-16 真单批）：分发帧 bed_type 与 ams 映射的底料
           embeddedParams = {
             source: extracted.source, params: extracted.params, estMinutes: extracted.estMinutes,
@@ -1046,7 +1065,7 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       const wanted = String(body.assignedPrinter).trim();
       const pr = config.printers.find((p) => p.name === wanted);
       if (!pr) {
-        try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
         return res.status(400).json({
           error: `指定打印机「${wanted}」未登记，请从下拉选择（已登记：${config.printers.map((p) => p.name).join('、') || '无——先在 .env PRINTER_HOSTS 登记'}）`,
         });
@@ -1055,7 +1074,7 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       const prBrand = (printerManager.brandOf && printerManager.brandOf(pr.model)) || 'bambu';
       const fileBrand = require('./services/dispatcher').brandForFileWithMeta(fileName, embeddedParams && embeddedParams.machineModel); // 内嵌机型优先（2026-10-16）
       if (prBrand !== fileBrand) {
-        try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
         return res.status(400).json({
           error: `「${wanted}」是${prBrand === 'flashforge' ? '闪铸' : '拓竹'}机型，打不了${fileBrand === 'flashforge' ? '闪铸 gcode 系' : '拓竹 3mf'}格式——两品牌切片格式互不兼容，请改选对应品牌机型或留空自动匹配`,
         });
@@ -1067,8 +1086,8 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       submittedBy: req.user.id,        // 归属判定键（本人取消等）
       // 仅文件名需 latin1→UTF-8 还原（文本字段 busboy 已按 UTF-8 解好）
       fileName,
-      filePath: req.file.path,
-      fileSize: req.file.size,
+      filePath: file.path,
+      fileSize: file.size,
       materialType: body.materialType,
       color: body.color,
       assignedPrinter: body.assignedPrinter,
@@ -1082,6 +1101,7 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
       appliedRules: applied ? applied.applied : [],
       embeddedParams, // 3mf 内嵌参数摘要（审批透明化；需求链路单为 null）
       estMinutes,     // 3mf 内嵌预估时长（队列 ETA；需求链路单为 null）
+      sourceFile: sourceFileMeta, // CAD 源文件配对（训练素材，2026-10-27 提单配对批）
       modelFeatures,  // STL 几何体检快照（需求链路单；3mf 直通为 null）
     });
 
@@ -1090,7 +1110,7 @@ app.post('/api/reservations', requireUser(), upload.single('file'), async (req, 
     res.json(reservation);
   } catch (err) {
     console.error('提交预约失败:', err);
-    if (req.file) { try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ } }
+    removeUploads(file, srcFile);
     res.status(400).json({ error: err.message, details: err.details, warnings: err.details?.warnings || [] });
   }
 });

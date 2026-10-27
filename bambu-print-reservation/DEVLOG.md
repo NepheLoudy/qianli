@@ -702,3 +702,13 @@
 - **⑤ 受控改派**：模型直投单（STEP/STL）指定机不可用时播报改派建议（30 分钟节流），主页排队单「改派」按钮+放弃池恢复共用人工直发对话框（POST /api/dispatch/manual）；manualDispatch 补品牌隔离硬校验（3mf→闪铸/闪铸 gcode→拓竹 一律 400，人工路径也不许跨品牌打废件）。
 - **⑥ 特征标签体系**：标签从「摆向单维」扩多维——`parseFilaments` 带出 used_g（耗材量）、切片预估时长+实际耗时（sliceStats：estMinutes/actualMinutes/filamentGrams/machine）、失败回填结构化 failCode（拓竹 fail_reason/HMS 位图）；fitter 标签权重表（placement 1.0 / 3mf 0.8 / auto-confirmed 0.35）加权贯穿 top-1/meanRank/LOFO——弱标签不淹没强标签。
 - 测试：新增 feature-labels-test 9 断言（四元数往返/加权口径/回填防覆盖/failCode/审计来源）；全量 29 套全绿，已上线。
+
+### v57 热修53 · 2026-10-27 · 随本提交落地 · feat
+
+**提单源文件配对：切片件 + STEP/STL 两份齐交 = 一次完整训练素材（曼波令）**
+
+- **背景**：切片导出 gcode.3mf 无内嵌模型网格（29 条直通件实证 + mesh 端点 4/4 降级实锤）——几何特征只能 gcode 粗估（featureSource=gcode-estimate），悬空/接触面/曲率全出不来。
+- **提单侧**：POST /api/reservations 升级 upload.fields 双文件（file=切片件 + sourceFile=CAD 源，白名单 step/stp/stl/obj），失败分支统一 removeUploads 清理；单据落 sourceFile{originalName,storedPath,size}，保留期清理同生命周期删除（不留孤儿）。
+- **前端**：选切片文件弹窗询问「有 STEP/STL 源文件吗」（说明两份各贡献什么：源文件→真几何特征、切片件→专家参数/时长/用料），选完显示已配对条（可移除），提单时随 FormData 上传。
+- **训练入库**：createSampleFromReservation（async 化）检测 sourceFile → 按扩展名 analyzeStl/analyzeStep/analyze3mf 提真网格特征（featureSource='auto'），模型归档换源文件（fitter loadSampleMesh 支持 step/stl——几何家族/摆向学习全链路吃到真网格）；源文件缺失/坏件回退切片件口径不阻塞。
+- 测试：新增 source-pairing-test 3 断言（配对真特征+归档换源/无源回退/坏源容错）；ops-test 样本入库断言 async 化；全量 30 套全绿，已上线。

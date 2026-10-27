@@ -1001,6 +1001,52 @@ function preflight() {
   return sceneMissing ? [sceneHint, ...hits] : hits;
 }
 
+// ---- 切片件 CAD 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）----
+// 切片导出 3mf 内部无模型网格（几何特征只能 gcode 粗估）；补交 STEP/STL 源文件后
+// 训练入库自动配对：真网格特征（源文件）+ 专家切片参数（3mf）一次齐活
+let SOURCE_FILE = null;
+
+function clearSourceFile() {
+  SOURCE_FILE = null;
+  const bar = $('sourceFileBar');
+  if (bar) bar.remove();
+}
+
+/** 选了切片文件时弹窗询问有没有 CAD 源文件（只在切片直通件触发；模型直投不问） */
+function maybeAskSourceFile() {
+  const f = $('file').files[0];
+  if (!f || !/\.(3mf|gcode|gx|g)$/i.test(f.name || '')) { clearSourceFile(); return; }
+  const dlg = document.createElement('dialog');
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">📚 有这个件的 STEP/STL 源文件吗？</h3>
+    <div class="detail" style="margin-bottom:8px">检测到你交的是切片文件——它本身没有模型网格，学习库只能拿粗特征。两份一起交的话：<br>
+    ✅ <b>源文件</b> → 真几何特征（悬空/接触/曲率全自动分析）<br>
+    ✅ <b>切片文件</b> → 专家切片参数、预估时长、用料清单<br>
+    系统自动配对，打印完成后回填真实结果——<b>一次交齐就是一条高质量训练素材</b>（摆向学习、参数拟合都吃它）。</div>
+    <div class="actions" style="margin-top:10px">
+      <button class="ok" id="srcPick">有，选择源文件</button>
+      <button class="mini" id="srcSkip">没有，直接交切片件</button>
+    </div>
+    <input type="file" id="srcInput" accept=".step,.stp,.stl,.obj" style="display:none">`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#srcSkip').onclick = () => dlg.close();
+  dlg.querySelector('#srcPick').onclick = () => dlg.querySelector('#srcInput').click();
+  dlg.querySelector('#srcInput').addEventListener('change', () => {
+    const sf = dlg.querySelector('#srcInput').files[0];
+    if (sf) {
+      SOURCE_FILE = sf;
+      clearSourceFile();
+      const bar = document.createElement('div');
+      bar.id = 'sourceFileBar';
+      bar.className = 'detail';
+      bar.style.marginTop = '4px';
+      bar.innerHTML = `📚 已配对源文件：<b>${esc(sf.name)}</b>（提单时随切片文件一起上传，训练素材 +1） <button class="mini" onclick="clearSourceFile()">移除</button>`;
+      $('file').parentElement.appendChild(bar);
+    }
+    dlg.close();
+  });
+  dlg.showModal();
+}
+
 function submitReservation() {
   const file = $('file').files[0];
   if (!file) return toast('请选择模型/切片文件');
@@ -1009,6 +1055,7 @@ function submitReservation() {
 
   const fd = new FormData();
   fd.append('file', file);
+  if (SOURCE_FILE) fd.append('sourceFile', SOURCE_FILE); // CAD 源文件配对（训练素材，2026-10-27）
   fd.append('materialType', $('materialType').value.trim());
   fd.append('color', $('color').value.trim());
   fd.append('assignedPrinter', $('assignedPrinter').value.trim());
@@ -1042,6 +1089,7 @@ function submitReservation() {
       }
       toast(`✅ 已提交 ${data.id}，等待审批`);
       $('file').value = ''; $('submitHint').textContent = '';
+      clearSourceFile();
       updateSlicedMode();
       analyzeModel(); // 文件已清空：收起体检面板、清掉快照（value 置空不触发 change，手动补）
       loadAnnotator(); // 收起 3D 标注区、清标注态
@@ -1295,7 +1343,7 @@ async function printerCtl(id, action, confirmText) {
   await loadTaxonomy();
   loadColors();
   restoreSelMemory();
-  $('file').addEventListener('change', () => { updateSlicedMode(); analyzeModel(); loadAnnotator(); }); // 双通道模式感知 + STL 几何体检 + 3D 标注装载
+  $('file').addEventListener('change', () => { updateSlicedMode(); analyzeModel(); loadAnnotator(); maybeAskSourceFile(); }); // 双通道模式感知 + STL 几何体检 + 3D 标注装载 + 切片件源文件配对询问
   preflight();
   loadAnnotator(); // 录入台常显：首屏即给出 3D 标注引导（v56 复查批）
   renderSelSummary();
