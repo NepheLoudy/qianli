@@ -40,6 +40,22 @@ function isMachineCancelRawStatus(raw) {
   return MACHINE_CANCEL_RAW_STATUSES.has(String(raw || '').toLowerCase());
 }
 
+// 打印成功回执即清机端残留（2026-10-26 曼波令「程序自己拿成功回执清理状态」）：
+// 闪铸完成/取消后的屏幕弹窗会挡后续控制与上传（A5P 8080 半死实案）——成功回执一到位
+// 就远程点掉（stateCtrl setClearPlatform），不等人工跑现场；拓竹 FINISH 残留不锁存储
+// （P1S/X1C 对照实证）且 clean_print_error 清不动它，不空发。fire-and-forget：清屏失败
+// 只记日志，绝不进完成收尾路径
+function cleanupMachineAfterJob(printerId, printerName) {
+  try {
+    const st = printerManager.getApiStates().find((p) => p.id === printerId);
+    if (!st || (printerManager.brandOf(st.model) || 'bambu') !== 'flashforge') return;
+    printerManager.cleanPrintErrorOnPrinter(printerId).catch((err) =>
+      console.warn(`[分发] ${printerName || printerId} 完成后清屏失败:`, err.message));
+  } catch (err) {
+    console.warn(`[分发] ${printerName || printerId} 完成后清屏调度失败:`, err.message);
+  }
+}
+
 /**
  * 文件格式 → 品牌适配（2026-10-14 双品牌纯内网批，纯函数单测覆盖）：
  * gcode/g/gx（FlashPrint/Orca 闪铸 profile 产物）→ 闪铸；其余（Bambu Studio 3mf
@@ -1190,6 +1206,7 @@ class Dispatcher {
     announce(`完成卡 ${task.recordId}`, require('../feishu/bot').buildJobFinishCard(task, printer), (err) =>
       console.error('[分发] 完成播报失败:', err.message)
     );
+    cleanupMachineAfterJob(printer.id, printer.name);
     plaza.append({ event: '打印完成', title: `${task.applicationNo || task.recordId} @ ${printer.name}` });
     // 续件重入队（2026-10-05 审查批落地：quantity 从「只存不用」到真实执行）：
     // 绕过 enqueue 的 known 幂等——同一单的续件不是重复事件；
@@ -1360,6 +1377,7 @@ class Dispatcher {
         announce(`完成卡 ${task.recordId}`, require('../feishu/bot').buildJobFinishCard(task, state), (err) =>
           console.error('[分发] 巡检完成播报失败:', err.message)
         );
+        cleanupMachineAfterJob(printerId, state.name);
         plaza.append({ event: '打印完成', title: `${task.applicationNo || task.recordId} @ ${state.name || printerId}（巡检补记）` });
         released = true;
       }

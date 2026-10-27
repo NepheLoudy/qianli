@@ -1026,8 +1026,13 @@ class PrinterClient {
     try {
       return await this.ftpPut(buffer, target);
     } catch (err) {
+      // 存储离线诊断（2026-10-26 X1C 553 实案：SD 卡掉卡两天，sdcard 位一直如实上报
+      // false 却没人读，三连挂只吐裸 553）——错误信息直接给出人话指引
+      let sdOffline = false;
+      try { sdOffline = this.getState()?.sdcard === false; } catch { /* 未连接不猜 */ }
       throw new Error(
         `FTPS(990) 上传失败（${ftpsErr ? ftpsErr.message : '未知'}），FTP(21) 回退也失败（${err.message}）`
+        + (sdOffline ? '；机端存储离线（sdcard=false）——请检查打印机 SD 卡/USB 盘是否在位' : '')
       );
     }
   }
