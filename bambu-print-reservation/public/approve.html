@@ -528,7 +528,7 @@ async function openApproveDialog(id) {
     + filRows
     + `<div id="apNozzleRow" style="display:none"><label>喷嘴</label><select id="apNozzle"><option value="">自动</option></select></div>`
     + (canSample
-        ? `<label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer"><input type="checkbox" id="apSample" style="width:auto;margin:0">📚 入库为训练样本<span class="detail">（打印完成后自动回填成功/失败）</span></label>`
+        ? `<label style="display:flex;align-items:center;gap:6px;margin-top:8px;cursor:pointer"><input type="checkbox" id="apSample" ${/\.(gcode\.)?3mf$/i.test((rec && rec.fileName) || '') ? 'checked' : ''} style="width:auto;margin:0">📚 入库为训练样本<span class="detail">（3mf 直通件默认勾选——专家摆向/参数就是教材；STEP 单需手动勾）</span></label>`
         : `<div class="detail" style="margin-top:8px">📚 入库训练样本：本单无工况勾选——切片参数由工况×几何共同决定，无标注的纯切片件入库无训练意义</div>`)
     + `<label>审批意见（可空）</label><input type="text" id="apComment" placeholder="如：优先打这个件">`
     + `<div class="actions" style="margin-top:10px"><button class="ok" id="apGo">通过并分发</button><button class="mini" id="apCancel">取消</button></div>`;

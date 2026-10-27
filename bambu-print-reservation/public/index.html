@@ -1094,13 +1094,17 @@ async function loadList() {
     // 分发异常被取消后可免重传一键重开；服务端 reprint 本就不限状态，只查文件保留期）
     const reprintBtn = ['已完成', '已取消'].includes(r.status)
       ? `<button class="mini" onclick="reprint('${r.id}')">复刻</button>` : '';
+    // 改派（2026-10-27 曼波令）：排队中滞留的模型直投单（STEP/STL，分发时刻才切片）
+    // 物理上可在同品牌空闲机间改派——reviewer 一键入口；3mf 直通件机型锁定不显示
+    const reassignBtn = r.status === '排队中' && isReviewer() && /\.(step|stp|stl|obj)$/i.test(r.fileName || '')
+      ? `<button class="mini" onclick="recoverGivenUp('${r.id}')" title="指定打印机立即分发（同品牌机）">改派</button>` : '';
     return `<tr>
       <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span></td>
       <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${liveProg}</td>
       <td data-label="发起人">${esc(r.applicant || '?')}${mine ? '<br><span class="detail">(我)</span>' : ''}<br><span class="detail">${esc(r.fileName || '')}</span></td>
       <td data-label="需求">${esc(r.materialType || '?')}${r.color ? '×' + esc(r.color) : ''}${r.isUrgent ? ' ⚡' : ''}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
       <td data-label="参数与轨迹" class="detail">${srcTag}${params ? '<b>参数</b> ' + params + '<br>' : ''}${rules ? '<b>依据</b> ' + rules + '<br>' : ''}${hist}</td>
-      <td data-label="操作">${cancelBtn}${reprintBtn}</td>
+      <td data-label="操作">${cancelBtn}${reprintBtn}${reassignBtn}</td>
     </tr>`;
   }).join('');
   box.innerHTML = `<table>
@@ -1197,8 +1201,8 @@ async function recoverGivenUp(recordId) {
   }
   if (!PRINTER_NAMES.length) return toast('暂无已登记打印机');
   const dlg = document.createElement('dialog');
-  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">恢复 #${esc(recordId)}</h3>
-    <div class="detail" style="margin-bottom:6px">选择要分发到的打印机（可含需人工上传的非自动机型）：</div>
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">人工直发 #${esc(recordId)}</h3>
+    <div class="detail" style="margin-bottom:6px">选择要分发到的打印机（放弃池恢复 / 排队单改派共用；可含需人工上传的非自动机型）：</div>
     <select id="recoverPrinterSel" style="width:100%;padding:8px">${PRINTER_NAMES.map(n => `<option>${esc(n)}</option>`).join('')}</select>
     <div class="actions" style="margin-top:10px">
       <button class="ok" onclick="doRecover('${recordId}', this.closest('dialog'))">恢复分发</button>

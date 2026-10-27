@@ -136,6 +136,7 @@ function parseFilaments(zip) {
         type: attrs.type || '',
         colorHex: String(attrs.color || '').replace('#', '').slice(0, 6),
         trayIdx: attrs.tray_info_idx || '',
+        usedG: usedG > 0 ? usedG : null, // 耗材量标签（2026-10-27 特征标签批）：克数随清单进样本库
       });
     }
   } catch { /* 解析失败按无清单处理 */ }

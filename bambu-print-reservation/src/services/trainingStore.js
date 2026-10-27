@@ -195,6 +195,51 @@ const trainingStore = {
     return this.setOutcome(s.id, outcome);
   },
 
+  /**
+   * 自举摆向标签回填（2026-10-27 特征标签批）：自动摆向打印成功 = 该朝向经现实验证——
+   * 把实际生效摆向（autoSlice 返回的 orientation，含候选轴 p/s）转成四元数记弱标签
+   * （source=auto-confirmed，fitter 低权重防偏见强化）。人工/专家标签优先：已有
+   * orientation 或 placement 时不覆盖。无对应样本返回 null（未入库单不强行入库）。
+   */
+  setOrientationBySource(sourceRecordId, orientation) {
+    const s = load().find((x) => x.sourceRecordId === String(sourceRecordId || ''));
+    if (!s) return null;
+    if (s.orientation || (Array.isArray(s.placement) && s.placement.length === 4)) {
+      return { skipped: true, reason: '已有更强标签（专家/人工），自举不覆盖', id: s.id };
+    }
+    const q = orientation && Array.isArray(orientation.quaternion) ? orientation.quaternion : null;
+    if (!q || q.length !== 4 || q.some((v) => !Number.isFinite(Number(v)))) {
+      throw new Error('orientation.quaternion 必须是 [x,y,z,w]');
+    }
+    s.orientation = {
+      quaternion: q.map(Number),
+      source: String(orientation.source || 'auto-confirmed').slice(0, 32),
+      note: orientation.note ? String(orientation.note).slice(0, 200) : '',
+    };
+    save(load().map((x) => (x.id === s.id ? s : x)));
+    return { ok: true, id: s.id, orientation: s.orientation };
+  },
+
+  /**
+   * 切片统计标签回填（2026-10-27 特征标签批）：estMinutes=切片预估时长、
+   * actualMinutes=首件实际耗时、filamentGrams=切片产物申报用量——训练侧校准
+   * 时间/耗材模型的原始素材。仅记结构化数字，缺失维度传 null 即不覆盖。
+   */
+  setSliceStatsBySource(sourceRecordId, stats) {
+    const s = load().find((x) => x.sourceRecordId === String(sourceRecordId || ''));
+    if (!s) return null;
+    const next = {
+      estMinutes: Number.isFinite(Number(stats && stats.estMinutes)) && Number(stats.estMinutes) > 0 ? Number(stats.estMinutes) : (s.sliceStats && s.sliceStats.estMinutes) || null,
+      actualMinutes: Number.isFinite(Number(stats && stats.actualMinutes)) && Number(stats.actualMinutes) > 0 ? Number(stats.actualMinutes) : (s.sliceStats && s.sliceStats.actualMinutes) || null,
+      filamentGrams: Number.isFinite(Number(stats && stats.filamentGrams)) && Number(stats.filamentGrams) > 0 ? Number(stats.filamentGrams) : (s.sliceStats && s.sliceStats.filamentGrams) || null,
+      machine: String((stats && stats.machine) || (s.sliceStats && s.sliceStats.machine) || '').slice(0, 40),
+      recordedAt: new Date().toISOString(),
+    };
+    s.sliceStats = next;
+    save(load().map((x) => (x.id === s.id ? s : x)));
+    return { ok: true, id: s.id, sliceStats: s.sliceStats };
+  },
+
   list() {
     // 老样本（family 字段上线前）按特征即时派生族 id——非破坏性，不写回
     return load().slice().reverse().map((s) => (s.family ? s : { ...s, family: familyOf(s.model && s.model.features, s.model && s.model.originalName) }));
@@ -213,6 +258,7 @@ const trainingStore = {
     sample.outcome = {
       status,
       issues: String(outcome && outcome.issues || '').slice(0, 500),
+      failCode: Number.isFinite(Number(outcome && outcome.failCode)) ? Number(outcome.failCode) : null, // 结构化失败码（HMS/fail_reason，2026-10-27 特征标签批）
       recordedAt: new Date().toISOString(),
       recordedBy: String(outcome && outcome.recordedBy || ''),
     };

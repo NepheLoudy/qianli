@@ -274,6 +274,15 @@ function buildJobCancelledCard(task, printer, reason) {
   };
 }
 
+/** 简版文本卡（2026-10-27 分发改派建议/换料核对播报用）：无任务上下文的提示性卡片 */
+function buildTextCard(title, text) {
+  return {
+    config: { wide_screen_mode: true, enable_forward: true },
+    elements: [{ tag: 'markdown', content: String(text || '') }],
+    header: { template: 'yellow', title: { content: String(title || '通知'), tag: 'plain_text' } },
+  };
+}
+
 /** 缺料提醒 */
 function buildMaterialMissingCard(waitingCount, needs) {
   return {
@@ -317,5 +326,6 @@ module.exports = {
   buildJobFailedCard,
   buildJobCancelledCard,
   buildMaterialMissingCard,
+  buildTextCard,
   sendTextToUser,
 };

@@ -689,3 +689,16 @@
 - **自动清理**：dispatcher 新增 `cleanupMachineAfterJob`，挂 completeTask 与 sweepStalePrinting（巡检补完成）两路——**闪铸打印成功回执一到位即远程点屏**（复用 clearScreenDialog = stateCtrl setClearPlatform，等价人工点掉完成弹窗，防弹窗积累挡后续控制/上传）；拓竹 FINISH 残留不锁存储且清不动，不空发指令。fire-and-forget，清屏失败只记日志不碰完成收尾。
 - **诊断增强**：拓竹 uploadBuffer 553 时读自身 sdcard 位，存储离线直接报人话「机端存储离线（sdcard=false）——请检查打印机 SD 卡/USB 盘是否在位」，不再让三连挂只吐裸 553（本次掉卡两天无人读懂）。
 - 测试：全量 28 套全绿，已上线。
+
+### v57 热修52 · 2026-10-27 · 随本提交落地 · feat
+
+**分发改判策略 + 训练标签体系扩展（曼波令「都做」批：①-⑥）**
+
+- **背景**：两条提交链路的两难——STEP 单靠人工摆向凑标签（训练不足时疑难件卡人工），3mf 专家件因「无变换记录」吃不到摆向标签（29 条直通件 0 标签，实证：`extractOrientationFrom3mf` 全返回 null——切片导出件几何已烘焙）；分发侧指定槽只查「槽在」不查「料对」（审批后换料照打废件）。
+- **① 指定槽换料校验**：matchPrinter 指定槽校验从「槽位在」升级为「槽位在+料型匹配」（文件逐条用料优先/提单声明兜底，exact/family 均不符即滞留+播报换料核对卡）；filaments 由 enqueue 后 setImmediate 异步解析挂任务（审批入队关键路径零 await 保持）。
+- **② 自举摆向标签**：autoSlice 透出实际生效摆向（含缓存 meta）→ 打印成功回执把选中候选的朝上轴经 `modelOrient.quaternionFromUpAxis` 转四元数回填样本（source=auto-confirmed）——**打印行为本身即标注**，人工/专家标签优先不覆盖。
+- **③ identity 实证（现网 32 样本只读统计）**：29 条直通 3mf 无一携带变换记录（连 identity 都没有）——「收默认朝向当标签」对存量无意义，保持 `!ex.identity` 口径；fitter 权重表留 `default-pose:0.5` 预留位待未来工程 3mf。
+- **④ 3mf 直通单审批默认勾入库**（approve.html，专家摆向/参数即教材；STEP 单维持手动）。
+- **⑤ 受控改派**：模型直投单（STEP/STL）指定机不可用时播报改派建议（30 分钟节流），主页排队单「改派」按钮+放弃池恢复共用人工直发对话框（POST /api/dispatch/manual）；manualDispatch 补品牌隔离硬校验（3mf→闪铸/闪铸 gcode→拓竹 一律 400，人工路径也不许跨品牌打废件）。
+- **⑥ 特征标签体系**：标签从「摆向单维」扩多维——`parseFilaments` 带出 used_g（耗材量）、切片预估时长+实际耗时（sliceStats：estMinutes/actualMinutes/filamentGrams/machine）、失败回填结构化 failCode（拓竹 fail_reason/HMS 位图）；fitter 标签权重表（placement 1.0 / 3mf 0.8 / auto-confirmed 0.35）加权贯穿 top-1/meanRank/LOFO——弱标签不淹没强标签。
+- 测试：新增 feature-labels-test 9 断言（四元数往返/加权口径/回填防覆盖/failCode/审计来源）；全量 29 套全绿，已上线。

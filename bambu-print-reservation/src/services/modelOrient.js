@@ -91,6 +91,37 @@ function score(m) {
 }
 
 /**
+ * 模型坐标朝上轴 → 「模型→打印」旋转四元数（自举标签用，2026-10-27 特征标签批）。
+ * 语义对齐 orientationFitter：标签 q 满足 rotateVec(q⁻¹, [0,0,1]) = up，
+ * 即 q 是把 up 转到打印 +Z 的最短弧旋转。up 非零向量（不要求单位）。
+ */
+function quaternionFromUpAxis(up) {
+  const len = Math.hypot(up[0], up[1], up[2]);
+  if (len < 1e-9) return [0, 0, 0, 1];
+  const a = [up[0] / len, up[1] / len, up[2] / len];
+  const b = [0, 0, 1];
+  const d = a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  if (d > 1 - 1e-9) return [0, 0, 0, 1]; // 已朝上
+  if (d < -(1 - 1e-9)) {
+    // 180° 翻转：叉积退化，任取与 a 正交的水平轴
+    const axis = Math.abs(a[0]) < 0.9 ? [1, 0, 0] : [0, 1, 0];
+    return [axis[0], axis[1], axis[2], 0];
+  }
+  const axis = [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  // 最简式：q = normalize([a×b, 1+a·b])——恒等展开即 [axis_hat·sin(θ/2), cos(θ/2)]
+  const w = 1 + d;
+  const norm = Math.hypot(axis[0], axis[1], axis[2], w);
+  return [axis[0] / norm, axis[1] / norm, axis[2] / norm, w / norm];
+}
+
+/** 候选朝上轴（模型坐标的 +Z 对应轴）：new[i]=s[i]*old[p[i]] → old[p[2]]=s[2] */
+function candidateUpAxis(o) {
+  const v = [0, 0, 0];
+  v[o.p[2]] = o.s[2];
+  return v;
+}
+
+/**
  * 选择摆向。
  * @param {{positions, faces, triangles}} parsed
  * @param {{strategy?: string, placement?: number[]|null}} opts
@@ -221,5 +252,5 @@ function writeBinaryStl(parsed, outPath) {
 
 module.exports = {
   chooseOrientation, applyOrientation, applyQuaternion, normalize, writeBinaryStl,
-  metricsFor, allOrientations, IDENTITY,
+  metricsFor, allOrientations, IDENTITY, quaternionFromUpAxis, candidateUpAxis,
 };

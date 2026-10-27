@@ -186,7 +186,12 @@ async function sliceModel({ sourcePath, fileName, model, materialType, selection
     throw new Error(`自动切片排布核对失败：请求 ${copies} 件/盘，产物只有 ${objects} 件（切片器未正确复制排盘）——请人工切片后上传 gcode.3mf`);
   }
   const fit = extraction && extraction.params ? paramFit.compare(applied.params || {}, extraction.params) : null;
-  return { ok: true, outPath, copies, objects, fit, profiles, orientation: prepared.orientation, log };
+  // 切片预估时长/申报耗材量（2026-10-27 特征标签批：打印完成后作 sliceStats 标签回填）
+  const estMinutes = extraction && extraction.estMinutes > 0 ? extraction.estMinutes : null;
+  const filamentGrams = extraction && Array.isArray(extraction.filaments)
+    ? Math.round(extraction.filaments.reduce((a, f) => a + (Number(f.usedG) || 0), 0) * 10) / 10
+    : null;
+  return { ok: true, outPath, copies, objects, fit, profiles, orientation: prepared.orientation, estMinutes, filamentGrams, log };
 }
 
 /** 分发链入口：按任务份数切片（盘内多件），产物缓存（同单同份数同源文件同参数复用，重试不重切） */
@@ -222,7 +227,11 @@ async function ensureSliced(task, printer) {
       if (meta.sourceMtimeMs === stat.mtimeMs && meta.sourceSize === stat.size
         && meta.copies === copies && meta.signature === signature) {
         console.log(`[自动切片] ${task.recordId} 复用缓存（${meta.copies} 件/盘，${meta.objects} object）`);
-        return { buffer: fs.readFileSync(cachePath), copies: meta.copies, objects: meta.objects, fit: meta.fit };
+        return {
+          buffer: fs.readFileSync(cachePath), copies: meta.copies, objects: meta.objects,
+          fit: meta.fit, orientation: meta.orientation || null,
+          estMinutes: meta.estMinutes || null, filamentGrams: meta.filamentGrams || null,
+        };
       }
     } catch { /* 缓存损坏 → 重切 */ }
   }
@@ -243,6 +252,9 @@ async function ensureSliced(task, printer) {
     copies: result.copies,
     objects: result.objects,
     fit: result.fit,
+    orientation: result.orientation || null, // 实际生效摆向（自举标签源，2026-10-27 特征标签批）
+    estMinutes: result.estMinutes || null,
+    filamentGrams: result.filamentGrams || null,
     signature,
     machine: printer.model,
     materialType: task.materialType || '',
@@ -250,7 +262,11 @@ async function ensureSliced(task, printer) {
     sourceSize: stat.size,
   }, null, 2));
   try { fs.unlinkSync(result.outPath); } catch { /* 已不存在 */ }
-  return { buffer: fs.readFileSync(cachePath), copies: result.copies, objects: result.objects, fit: result.fit };
+  return {
+    buffer: fs.readFileSync(cachePath), copies: result.copies, objects: result.objects,
+    fit: result.fit, orientation: result.orientation || null,
+    estMinutes: result.estMinutes || null, filamentGrams: result.filamentGrams || null,
+  };
 }
 
 module.exports = { sliceModel, ensureSliced, resolveSliceProfiles, normalizeMaterial, clampCopies, MAX_COPIES, SLICE_DIR };

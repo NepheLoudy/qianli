@@ -19,6 +19,16 @@ const featureDerive = require('./featureDerive');
 
 const MIN_ROWS = 6;
 const MIN_FAMILIES = 3;
+// 标签可信度权重（2026-10-27 特征标签批）：placement=人工摆放最强；3mf matrix=专家
+// 切片弱标签；auto-confirmed=自举（自动摆向打印成功——经现实验证但存在偏见强化，
+// 低权重只当先验）。加权口径贯穿 top-1 准确率/meanRank/LOFO，未登记来源按 1 计。
+const LABEL_WEIGHTS = {
+  'placement': 1,
+  '3mf-model-settings': 0.8,
+  '3mf-build-item': 0.8,
+  'auto-confirmed': 0.35,
+  'default-pose': 0.5, // 预留：identity 语义实证通过后的默认朝向弱标签
+};
 const AXIS_DOT = 0.985; // 专家朝上的轴与候选轴夹角 ≤10° 才算同一摆向（面朝下语义）
 const GRID = {
   contact: [0, 0.25, 0.5, 0.75, 1, 1.5, 2],
@@ -160,6 +170,7 @@ async function buildOrientationRows(samples) {
       expertSet,
       features,
       labelSource: lab.source,
+      weight: LABEL_WEIGHTS[lab.source] != null ? LABEL_WEIGHTS[lab.source] : 1,
     });
   }
   return { rows, skipped };
@@ -193,22 +204,31 @@ function pickCandidate(candidates, policy) {
 
 function evaluateRows(rows, policy) {
   let correct = 0;
+  let weightSum = 0;
   let rankSum = 0;
   for (const row of rows) {
+    const w = Number(row.weight) || 1;
+    weightSum += w;
     const norm = normalized(row.candidates);
     const picked = pickCandidate(norm, policy);
     const idx = picked ? norm.indexOf(picked) : -1;
-    if (idx >= 0 && row.expertSet.has(idx)) correct++;
-    // 专家候选的平均排名（越小越好）
+    if (idx >= 0 && row.expertSet.has(idx)) correct += w;
+    // 专家候选的平均排名（越小越好，按标签权重计）
     let bestRank = Infinity;
     for (const ei of row.expertSet) {
       const sorted = norm.slice().sort((a, b) => scoreCandidate(b, policy) - scoreCandidate(a, policy));
       const rank = sorted.indexOf(norm[ei]);
       if (rank >= 0 && rank < bestRank) bestRank = rank;
     }
-    rankSum += Number.isFinite(bestRank) ? bestRank : norm.length;
+    rankSum += (Number.isFinite(bestRank) ? bestRank : norm.length) * w;
   }
-  return { accuracy: rows.length ? correct / rows.length : 0, meanRank: rows.length ? rankSum / rows.length : null, correct, total: rows.length };
+  return {
+    accuracy: weightSum ? correct / weightSum : 0,
+    meanRank: weightSum ? rankSum / weightSum : null,
+    correct: Math.round(correct * 1000) / 1000,
+    total: rows.length,
+    weightSum: Math.round(weightSum * 1000) / 1000,
+  };
 }
 
 function baselinePolicy() {

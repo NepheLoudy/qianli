@@ -575,6 +575,21 @@ class Dispatcher {
     this.queue.push(task);
     const position = this.queue.length - 1;
     console.log(`[分发] 入队: ${task.applicationNo || task.recordId} ${task.materialType || ''}${task.color ? '×' + task.color : ''}${task.isUrgent ? ' [加急]' : ''}`);
+    // 文件用料清单异步解析（2026-10-27 指定槽换料校验批）：3mf 直通件入队后后台提取
+    // filaments 挂任务上，供 matchPrinter 对指定槽做料型核对（审批入队关键路径零 await
+    // 的竞态约束保持——任务排队等机的秒级窗口足够解析完成）
+    setImmediate(() => {
+      try {
+        if (/\.3mf$/i.test(task.fileName || '') && task.filePath && fs.existsSync(task.filePath)) {
+          const ex = require('./slicerExtract').extractFrom3mf(fs.readFileSync(task.filePath));
+          if (Array.isArray(ex && ex.filaments) && ex.filaments.length) {
+            task.filaments = ex.filaments;
+            const grams = ex.filaments.reduce((a, f) => a + (Number(f.usedG) || 0), 0);
+            if (grams > 0) task.filamentGrams = Math.round(grams * 10) / 10;
+          }
+        }
+      } catch { /* 解析失败按无清单处理——槽料核对退化为只查槽位在 */ }
+    });
 
     if (!silent) {
       plaza.append({ event: '打印排队', title: `${task.applicationNo || task.recordId} ${task.materialType || ''}${task.color ? '×' + task.color : ''}${task.isUrgent ? '（加急）' : ''}` });
@@ -851,19 +866,53 @@ class Dispatcher {
         if (!task._prefUnavailLoggedAt || now - task._prefUnavailLoggedAt > 10 * 60 * 1000) {
           task._prefUnavailLoggedAt = now;
           console.warn(`[分发] ${task.applicationNo || task.recordId} 指定打印机「${task.assignedPrinter}」当前不可用（品牌不符/忙/失联）——滞留等待人工，不改派`);
+          // 受控改派提示（2026-10-27 曼波令）：模型直投单（STEP/STL）分发时刻才现场切片，
+          // 物理上可在同品牌空闲机间改派——把「可改派到谁」播报出来（30 分钟节流），
+          // 一键改派走 POST /api/dispatch/manual；3mf/gcode 直通件机型锁定，无此选项
+          if (!/\.(3mf|gcode|gx|g)$/i.test(task.fileName || '')
+            && (!task._reassignHintAt || Date.now() - task._reassignHintAt > 30 * 60 * 1000)) {
+            const alt = candidates.filter((p) => p.name !== task.assignedPrinter);
+            if (alt.length) {
+              task._reassignHintAt = Date.now();
+              announce(
+                `改派建议 ${task.recordId}`,
+                require('../feishu/bot').buildTextCard(
+                  `📋 ${task.applicationNo} 指定的 ${task.assignedPrinter} 暂不可用（忙/失联）。该单是模型直投（分发时现场切片，机型可换）：${alt.map((p) => p.name).join('、')} 空闲且兼容——可在主页该单上点「改派」一键换机。3mf 直通件无此选项，仍滞留等待。`
+                ),
+                (err) => console.error('[分发] 改派建议播报失败:', err.message)
+              );
+            }
+          }
         }
         return null;
       }
       // 审批分发指定（2026-10-16）：审批人指定的槽位在分发时刻仍须实装——
       // 换料/抽走导致槽位不可用时滞留等人工（不静默换槽，尊重审批指定）。
       // 多耗材批：prefTrays 逐条检查非空条目（留自动的条目无需检查）
-      const prefSlots = Array.isArray(task.prefTrays) && task.prefTrays.some(Boolean)
-        ? task.prefTrays.filter(Boolean)
-        : (task.prefTray && task.prefTray.slot ? [task.prefTray] : []);
-      for (const pt of prefSlots) {
-        const stillThere = (named.ams || []).some((t) => t.slot === pt.slot && t.type);
-        if (!stillThere) {
+      const prefSlotEntries = Array.isArray(task.prefTrays)
+        ? task.prefTrays.map((t, i) => [i, t]).filter(([, t]) => t && t.slot)
+        : (task.prefTray && task.prefTray.slot ? [[0, task.prefTray]] : []);
+      for (const [fi, pt] of prefSlotEntries) {
+        const tray = (named.ams || []).find((t) => t.slot === pt.slot && t.type);
+        if (!tray) {
           console.warn(`[分发] ${task.applicationNo} 审批指定槽位「${pt.slot}」在 ${named.name} 已不可用——滞留等待人工处理`);
+          return null;
+        }
+        // 槽内料型核对（2026-10-27 曼波令「按实际填充材料改判」）：审批后人把槽里的
+        // PLA 换成 PETG 也能打下去的历史缺口——文件逐条用料优先、提单声明材料兜底，
+        // 类型对不上（exact/family 均不匹配）即滞留播报，不打废件；旧文件/模型直投
+        // 解析不出用料时退回「槽位在即可」不阻塞
+        const wantType = (Array.isArray(task.filaments) && task.filaments[fi] && task.filaments[fi].type)
+          || task.materialType;
+        if (wantType && materialMatch(wantType, tray.type) === false) {
+          console.warn(`[分发] ${task.applicationNo} 指定槽位「${pt.slot}」在 ${named.name} 现为 ${tray.type}，与文件用料「${wantType}」不符——滞留等待人工核对换料`);
+          announce(
+            `换料核对 ${task.recordId}`,
+            require('../feishu/bot').buildTextCard(
+              `⚠️ ${task.applicationNo} 指定 ${named.name}·${pt.slot}，但槽内现为 ${tray.type}，文件要的是「${wantType}」——已滞留不派，请核对换料或改派。`
+            ),
+            (err) => console.error('[分发] 换料核对播报失败:', err.message)
+          );
           return null;
         }
       }
@@ -1025,6 +1074,12 @@ class Dispatcher {
       if (isUnslicedFileName(task.fileName || '') && isLocalTask(task)) {
         autoSliced = await autoSlice.ensureSliced(task, printer);
         buffer = autoSliced.buffer;
+        // 实际生效摆向（2026-10-27 特征标签批）：打印成功后按此回填自举标签——
+        // changed=false 的直通（原姿态/keep）candidateUpAxis 恒 +Z，同样有效
+        task.usedOrientation = autoSliced.orientation || null;
+        // 切片预估时长/申报耗材量（校准时间与耗材模型的标签素材）
+        if (autoSliced.estMinutes > 0) task.estMinutes = autoSliced.estMinutes;
+        if (autoSliced.filamentGrams > 0) task.filamentGrams = autoSliced.filamentGrams;
         // 注意：remaining 清零必须等「开打成功」之后（见下发段）——提前清零会让
         // 上传/下发失败后的重试按 1 件重切（4 份单静默缩水成 1 份）
         const fitNote = autoSliced.fit ? `，回读拟合 ${autoSliced.fit.weightedScore}%（${autoSliced.fit.verdict}）` : '';
@@ -1192,6 +1247,24 @@ class Dispatcher {
             require('./trainingStore').setOutcomeBySource(task.recordId, {
               status: '成功', recordedBy: '打印系统', issues: `打印完成 @ ${printer.name}`,
             });
+            // 自举摆向标签（2026-10-27 特征标签批）：自动摆向打印成功 = 朝向经现实验证，
+            // 记弱标签（fitter 低权重防偏见强化）；人工/专家标签已在则 trainingStore 不覆盖
+            if (task.usedOrientation) {
+              const modelOrient = require('./modelOrient');
+              const up = modelOrient.candidateUpAxis(task.usedOrientation);
+              require('./trainingStore').setOrientationBySource(task.recordId, {
+                quaternion: modelOrient.quaternionFromUpAxis(up),
+                source: 'auto-confirmed',
+                note: task.usedOrientation.note || '',
+              });
+            }
+            // 耗时/耗材统计标签（2026-10-27 特征标签批）：时间与耗材模型的校准素材
+            require('./trainingStore').setSliceStatsBySource(task.recordId, {
+              estMinutes: task.estMinutes,
+              actualMinutes: task.startedAt ? (Date.now() - task.startedAt) / 60000 : null,
+              filamentGrams: task.filamentGrams,
+              machine: printer.model,
+            });
           }
         } catch (err) { console.warn('[分发] 入库样本结果回填失败:', err.message); }
       }
@@ -1278,6 +1351,7 @@ class Dispatcher {
         if (rec && rec.sample && rec.sample.sampleEntry && rec.sample.sampleId) {
           require('./trainingStore').setOutcomeBySource(task.recordId, {
             status: '失败', recordedBy: '打印系统', issues: String(reason || '').slice(0, 200),
+            failCode: printer.failReason || null, // 结构化失败码（拓竹 fail_reason/HMS 位图，2026-10-27 特征标签批）
           });
         }
       } catch (err) { console.warn('[分发] 入库样本失败回填异常:', err.message); }
@@ -1489,6 +1563,19 @@ class Dispatcher {
         );
       }
       task = reservationService.formatReservation(record);
+    }
+
+    // 品牌隔离硬校验（2026-10-27 改派批）：人工直发/改派同样不许跨品牌——3mf 打到
+    // 闪铸、闪铸 gcode 打到拓竹都是废件。内嵌机型优先，扩展名兜底
+    {
+      const fileBrand = brandForFileWithMeta(task.fileName, task.machineModel);
+      const targetBrand = printerManager.brandOf(printer.model) || 'bambu';
+      if (fileBrand !== targetBrand) {
+        throw new Error(
+          `「${task.fileName}」是${fileBrand === 'flashforge' ? '闪铸' : '拓竹'}格式文件，` +
+          `打不了${targetBrand === 'flashforge' ? '闪铸' : '拓竹'}机「${printer.name}」——两品牌切片格式互不兼容`
+        );
+      }
     }
 
     if (!printer.autoDispatch) {
