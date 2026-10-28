@@ -1520,6 +1520,26 @@ class Dispatcher {
     return { held: true, printerId };
   }
 
+  /** 运维置闸（2026-10-28 曼波「板上有件先停机」）：人工把某机按入「等待取件」态——
+   *  板上有未取件/需清板时防队列下一件顶上。与 completeTask 自动置闸同通道。 */
+  holdQueue(printerId, recordId) {
+    this.receiptHold.set(printerId, recordId || ('manual-' + Date.now().toString(36)));
+    this.persistState();
+    console.log(`[分发] 人工置闸：printer=${printerId}（${this.receiptHold.get(printerId)}）——队列对该机暂停`);
+    return { held: true, printerId, recordId: this.receiptHold.get(printerId) };
+  }
+
+  /** 清闸（运维口）：取件完成/清板完毕后放行该机队列 */
+  releaseHold(printerId) {
+    const rid = this.receiptHold.get(printerId);
+    if (!rid) return { held: false };
+    this.receiptHold.delete(printerId);
+    this.persistState();
+    this.trigger('receipt-ack');
+    console.log(`[分发] 人工清闸：printer=${printerId}（原 ${rid}）——队列恢复`);
+    return { held: true, printerId, recordId: rid };
+  }
+
   /** 回执闸清单（queue 快照消费：页面显示哪台机卡在「等待取件回执」） */
   listReceiptHold() {
     return [...this.receiptHold.entries()].map(([printerId, recordId]) => ({ printerId, recordId }));

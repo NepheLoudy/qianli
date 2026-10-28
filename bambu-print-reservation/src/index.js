@@ -1888,6 +1888,19 @@ app.post('/api/reservations/:id/receipt', requireUser(), async (req, res) => {
   }
 });
 
+// 队列暂停/恢复（admin 运维口，2026-10-28「板上有件先停机」）：人工把某机按入/解除
+// 「等待取件」态——清板/取件期间防队列下一件顶上。{printerId, recordId?} / {printerId}
+app.post('/api/dispatch/hold', requireUser('admin'), (req, res) => {
+  const { printerId, recordId } = req.body || {};
+  if (!printerId) return res.status(400).json({ error: 'printerId 不能为空' });
+  res.json(dispatcher.holdQueue(printerId, recordId));
+});
+app.post('/api/dispatch/hold/release', requireUser('admin'), (req, res) => {
+  const { printerId } = req.body || {};
+  if (!printerId) return res.status(400).json({ error: 'printerId 不能为空' });
+  res.json(dispatcher.releaseHold(printerId));
+});
+
 app.post('/api/dispatch/manual', requireUser('reviewer', 'admin'), async (req, res) => {
   try {
     const { recordId, printerName } = req.body;
