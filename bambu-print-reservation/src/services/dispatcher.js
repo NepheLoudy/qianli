@@ -293,14 +293,15 @@ function materialMatch(required, trayType) {
  * 窗口结束原样补发（打印机控制/写表/队列匹配不延迟，只有消息延后）
  */
 function announce(name, card, onError, targetUrl) {
+  // 群播报降噪到极致（2026-10-28 曼波令「机械组播报停了，仅保留打印成功」）：
+  // 除「✅ 打印完成」卡外全部丢弃（排队/重试/失败/放弃/改派/换料/缺料等一律不发，
+  // 不积压不补发——状态页面与放弃池可见；失败单的故障轨迹都在单据 history 里）。
+  // 静默期闸失效后仍走此过滤，完成卡不受影响（完成卡内容自带取件提醒）
+  const isFinishCard = card && card.header && card.header.title
+    && String(card.header.title.content || '').includes('打印完成');
+  if (!isFinishCard) return;
   if (quietHours.gatePayload('webhook-card', card, name)) return;
-  // 打印异常类卡片（buildJobFailedCard，标题「❌ 打印异常」）改发审批 webhook 机器人所在群
-  // （2026-10-18 曼波令：机械组播报太吵，异常卡集中到话题群）；其余播报仍走机械组。
-  // 显式 targetUrl 优先；审批群 webhook 未配置时回落机械组（fail-safe）
-  const isFailureCard = card && card.header && card.header.title
-    && String(card.header.title.content || '').includes('打印异常');
-  const url = targetUrl || (isFailureCard ? config.bot.approvalWebhookUrl || undefined : undefined);
-  sendMessage(card, url).catch(onError);
+  sendMessage(card, targetUrl).catch(onError);
 }
 
 class Dispatcher {
