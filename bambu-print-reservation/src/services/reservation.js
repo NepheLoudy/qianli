@@ -480,4 +480,69 @@ async function createSampleFromReservation(record, reviewer) {
 }
 
 module.exports = reservationService;
+/**
+ * 切片件提交初审（2026-10-28 曼波令「程序初审」）：3mf 上传即解析内嵌机型与用料清单——
+ *   ① 机队无同型号登记机 → 禁止提交（内嵌机型锁死切片 profile，交了也打不了）；
+ *   ② 同型号机端无对应耗材（逐条用料 type 对该机料位 exact/family 匹配，任意一台满足
+ *      全部用料即可）→ 禁止提交；同型号机状态全部失联时降级为警告（料位不可信不误杀）；
+ *   ③ 目标机占用/持闸 → 告知将排队（放行不拦）。
+ * modelKey 与审批台前端/审批校验同口径（去品牌前缀、adventurer→ad，互含判等）——三处同款，改一处记得三处。
+ * @param {{machineModel:string|null, filaments:Array<{type:string}>, printers:Array, apiStates:Array, queueInfo:{printing:string[], holdPrinterIds:string[], queueLength:number}}} input
+ * @returns {{blocked:boolean, errors:string[], warnings:string[], targets:string}}
+ */
+function precheckSlicedSubmission(input = {}) {
+  const errors = [];
+  const warnings = [];
+  const machineModel = input.machineModel;
+  if (!machineModel) return { blocked: false, errors, warnings, targets: '' }; // 无内嵌机型：初审跳过（老文件/提取失败，不误杀）
+  const modelKey = (x) => String(x || '').toLowerCase().replace(/^(bambu lab|flashforge)\s+/, '').replace(/^adventurer\s+/, 'ad').trim();
+  const want = modelKey(machineModel);
+  const targets = (input.printers || []).filter((p) => {
+    const b = modelKey(p.model);
+    return b && (want.includes(b) || b.includes(want));
+  });
+  if (!targets.length) {
+    errors.push(`机队中没有「${machineModel}」同型号登记机——切片文件已锁定机型，提交了也无法分发；请用机队现有机型重新切片后再提交`);
+    return { blocked: true, errors, warnings, targets: '' };
+  }
+  const targetNames = targets.map((p) => p.name).join('、');
+  // 耗材初审：逐条用料对该机实时料位匹配；状态失联/料位空的机器不参与判定（不误杀）
+  const lists = Array.isArray(input.filaments) ? input.filaments.filter((f) => f && f.type) : [];
+  if (lists.length) {
+    const states = input.apiStates || [];
+    // 与 dispatcher.materialMatch 同口径（exact/家族前缀软匹配）——本地实现避免 require
+    // dispatcher（其模块 init 会连生产打印机，轻量消费方/单测 require reservation 即被拖连）
+    const materialMatch = (required, trayType) => {
+      const a = String(required || '').trim().toUpperCase();
+      const b = String(trayType || '').trim().toUpperCase();
+      if (!a || !b) return false;
+      if (a === b) return 'exact';
+      if (b.startsWith(a + '-') || a.startsWith(b + '-')) return 'family';
+      return false;
+    };
+    const verdicts = targets.map((p) => {
+      const st = states.find((s) => String(s.id) === String(p.id));
+      if (!st || st.stateStale || !Array.isArray(st.ams) || !st.ams.some((t) => t.type)) return { p, ok: null };
+      const ok = lists.every((f) => st.ams.some((t) => materialMatch(String(f.type).toUpperCase(), t.type)));
+      return { p, ok };
+    });
+    const anyTrusted = verdicts.some((v) => v.ok !== null);
+    if (anyTrusted && !verdicts.some((v) => v.ok === true)) {
+      const missing = lists.map((f) => f.type).join('、');
+      errors.push(`同型号机（${targetNames}）机端料位没有本件所需耗材（${missing}）——请先上料，或用机端现有料型重新切片后再提交`);
+      return { blocked: true, errors, warnings, targets: targetNames };
+    }
+    if (!anyTrusted) warnings.push(`同型号机（${targetNames}）状态失联，耗材初审跳过——以审批与分发时刻实况为准`);
+  }
+  // 占用告知（放行）：目标机打印中/持闸 → 提示将排队
+  const qi = input.queueInfo || {};
+  const busy = targets.some((p) => (qi.printing || []).includes(p.name))
+    || (qi.holdPrinterIds || []).some((pid) => targets.some((t) => String(t.id) === String(pid)));
+  if (busy) {
+    warnings.push(`同型号机（${targetNames}）当前占用中，本件提交后将进入队列（当前队列 ${Number(qi.queueLength) || 0} 单）——已正常受理`);
+  }
+  return { blocked: false, errors, warnings, targets: targetNames };
+}
+
 module.exports.createSampleFromReservation = createSampleFromReservation;
+module.exports.precheckSlicedSubmission = precheckSlicedSubmission;

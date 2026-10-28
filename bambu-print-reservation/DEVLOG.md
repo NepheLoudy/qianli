@@ -762,3 +762,11 @@
 - **三层落地**：①分发层 matchPrinter——切片直通件（3mf/gcode 系）无 assignedPrinter 一律滞留（节流日志「等待审批指定同型号机」），不再品牌级瞎配（A1 mini 的件落 X1C = 机端 preset 不匹配）；模型直投（STEP/STL，分发时刻现场切）保留自动匹配。②审批层 approveReservation——切片件无指定当场打回 400；新增机型相容硬校验（modelKey 归一：去品牌前缀、adventurer→ad，互含判等）——同品牌错型号（A1 mini 件指 X1C）同样拦。③前端：审批台切片件按内嵌机型过滤候选 + 不给自动匹配选项 + 锁定提示；提单页「指定打印机」栏文案明确「自动匹配仅对模型直投有效」。
 - **测试适配**：新语义推翻「切片件无指定自动放行」的旧断言——dispatcher-test/receipt-gate-test/ops-test/local-reservation-test 四套适配（审批调用补指定、mock 登记机改 config.printers 注入 + 未知品牌串只登记不建连）；连带修复 getApiStates 防御层（残缺 mock client 的 isStateStale 交错炸，统一补桩）。
 - 全量 31 套全绿，已上线。
+
+### v57 热修60 · 2026-10-28 · 随本提交落地 · feat
+
+**提交程序初审：3mf 上传即预检机型/耗材/占用（曼波令）**
+
+- **三维预检**（`reservation.precheckSlicedSubmission`，提单路由挂载）：①机队无同型号登记机 → **禁止提交**（内嵌机型锁死 profile，交了也打不了）；②同型号机端料位无本件所需耗材（逐条 exact/family 匹配，任意一台满足全部用料即可）→ **禁止提交**；同型号机状态全部失联时降级为警告（料位不可信不误杀）；③目标机打印中/持回执闸 → 告知「将进入队列（当前 N 单）」放行。模型直投单不初审（机型未定现场切）；无内嵌机型跳过不误杀。初审警告随响应 `precheckWarnings` 返回，前端提交 toast 展示。
+- **连带**：materialMatch 本地实现（避免 require dispatcher——其 init 连生产打印机，轻量消费方/单测被拖连，precheck-test 首跑即中招阻断后才绿）；precheck-test 8 断言（无机型拦/无料拦/齐全放/family 软匹配/失联降级/占用告知/持闸占用/跳过不误杀）。
+- 全量 32 套全绿，已上线。

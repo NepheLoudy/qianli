@@ -1070,6 +1070,30 @@ app.post('/api/reservations', requireUser(), upload.fields([
       }
     }
 
+    // 程序初审（2026-10-28 曼波令）：切片件提交即预检机型/耗材/占用——机队无同型号机或
+    // 机端无对应耗材直接打回；目标机占用只告知排队不拦。模型直投单不初审（机型未定，
+    // 现场切片）；初审警告随响应返回前端 toast 展示
+    let precheckWarnings = [];
+    if (embeddedParams) {
+      const dispatcherSvc = require('./services/dispatcher');
+      const verdict = reservationService.precheckSlicedSubmission({
+        machineModel: embeddedParams.machineModel,
+        filaments: embeddedParams.filaments,
+        printers: config.printers,
+        apiStates: printerManager.getApiStates(),
+        queueInfo: {
+          printing: dispatcherSvc.getPrintingSnapshot().map((t) => t.printer),
+          holdPrinterIds: dispatcherSvc.listReceiptHold().map((h) => h.printerId),
+          queueLength: dispatcherSvc.getQueueSnapshot().length,
+        },
+      });
+      if (verdict.blocked) {
+        removeUploads(file, srcFile);
+        return res.status(400).json({ error: verdict.errors[0], details: verdict.errors, precheck: true });
+      }
+      precheckWarnings = verdict.warnings;
+    }
+
     // 指定打印机校验（2026-10-08）：自由文本填错名字此前会静默走自动匹配或永远排队——
     // 显式指定的值必须命中登记清单，拼错当场打回
     if (String(body.assignedPrinter || '').trim()) {
@@ -1118,7 +1142,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
 
     reservationService.notifyReviewers(reservation).catch(() => {}); // fire-and-forget
     require('./services/usageReport').reportUsage(req.user.username, 'print-submit').catch(() => {});
-    res.json(reservation);
+    res.json({ ...reservation, precheckWarnings }); // 初审警告（占用排队告知）随单返回前端展示
   } catch (err) {
     console.error('提交预约失败:', err);
     removeUploads(file, srcFile);
