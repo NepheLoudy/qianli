@@ -312,6 +312,11 @@ class Dispatcher {
     this.lastMaterialRemind = 0;  // 缺料提醒节流
     this.matching = false;        // 匹配过程串行化
     this.givenUp = new Map();     // 重试耗尽退出的任务（recordId → task，供 /print-dispatch 人工恢复）
+    // 打完等回执闸（2026-10-28 曼波令「第一个件打完了在预约界面要回执才行」）：
+    // printerId → recordId。completeTask 一律置闸——该机在取件确认前不开打队列中的
+    // 下一件（板上件没取走就开新件会撞板/挤料，且装配件要先试装）。回执接口清闸并
+    // 触发匹配；状态落盘防重启丢闸
+    this.receiptHold = new Map();
     this.humanStops = new Map();  // printerId → {at, reason}：系统发起的停止意图（failed/idle 事件消费）
     this.inFlight = [];           // 分发进行中的任务（已出队未入 printing；落盘携带，重启重回队列）
     this.dispatching = new Set(); // 正在分发中的 printerId（人工指定 vs 自动匹配互斥闸门；
@@ -469,6 +474,7 @@ class Dispatcher {
       // 重试耗尽任务落盘（2026-09-15）：此前纯内存，重启后 /print-dispatch 人工恢复
       // 通道静默失效（known 已拦重入队、审批源单不在镜像表）——B4 承诺在重启场景不成立
       givenUp: [...this.givenUp.entries()].slice(-GIVEN_UP_CAP),
+      receiptHold: [...this.receiptHold.entries()],
     };
   }
 
@@ -503,6 +509,7 @@ class Dispatcher {
       this.completedCount = new Map(Array.isArray(data.completedCount) ? data.completedCount : []);
       this.known = new Set(Array.isArray(data.known) ? data.known : []);
       this.givenUp = new Map(Array.isArray(data.givenUp) ? data.givenUp.slice(-GIVEN_UP_CAP) : []);
+      this.receiptHold = new Map(Array.isArray(data.receiptHold) ? data.receiptHold : []);
       for (const t of this.queue) this.known.add(t.recordId);
       for (const [, t] of this.printing) this.known.add(t.recordId);
       // 分发中断恢复（2026-09-13）：上次退出时正在下载/上传的任务处于「已出队、未入
@@ -852,6 +859,7 @@ class Dispatcher {
       (p) => p.autoDispatch
         && (['空闲', '已完成'].includes(p.status) || printerManager.canDispatchResidueFailed(p))
         && brandForFileWithMeta(task.fileName, task.machineModel) === (printerManager.brandOf(p.model) || 'bambu')
+        && !this.receiptHold.has(p.id) // 打完等回执闸：上一单取件确认前本机不开新件（2026-10-28 曼波令）
     );
 
     // 1. 指定打印机（**指定即权威**，2026-10-16 曼波真机反馈「选 A5P 却被分发到 X1C」）：
@@ -1228,6 +1236,11 @@ class Dispatcher {
     this.printing.delete(printer.id);
     this.completedCount.set(printer.id, (this.completedCount.get(printer.id) || 0) + 1);
     printerManager.updateState(printer.id, { activeTask: null });
+    // 打完等回执闸（2026-10-28 曼波令）：板上件被确认取走前，本机不开打下一件。
+    // 续打单（hasMore）同样置闸——取件后再打下一盘
+    this.receiptHold.set(printer.id, task.recordId);
+    this.persistState();
+    console.log(`[分发] ${task.applicationNo || task.recordId} @ ${printer.name} 完成——等预约界面回执取件后继续队列`);
 
     // 份数续打判定先于状态写入：remaining>0 时单据回「排队中」而非「已完成」——
     // 全部件完成才算完成，否则队列里挂着续件、表上却是终态（意图-执行断裂）
@@ -1440,6 +1453,7 @@ class Dispatcher {
         this.printing.delete(printerId);
         this.completedCount.set(printerId, (this.completedCount.get(printerId) || 0) + 1);
         printerManager.updateState(printerId, { activeTask: null });
+        this.receiptHold.set(printerId, task.recordId); // 打完等回执闸（与 completeTask 同口径）
         // 审批源不写镜像表（同 completeTask 守卫）：写 instance_code 必然失败，白刷错误日志
         if (isLocalTask(task)) {
           storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.COMPLETED, `巡检补完成 @ ${state.name || printerId}`), 'sweep-complete');
@@ -1485,6 +1499,29 @@ class Dispatcher {
       retries: task.dispatchRetries,
       error: task.dispatchError || '',
     }));
+  }
+
+  /**
+   * 取件回执（2026-10-28 曼波令「第一个件打完了在预约界面要回执才行」）：
+   * 清该单所在机的回执闸并触发一轮匹配——下一件这才开打。幂等：单没持闸时返回
+   * {held:false}（重复回执/历史单回执无害）。
+   */
+  acknowledgeReceipt(recordId) {
+    let printerId = null;
+    for (const [pid, rid] of this.receiptHold.entries()) {
+      if (rid === recordId) { printerId = pid; break; }
+    }
+    if (!printerId) return { held: false };
+    this.receiptHold.delete(printerId);
+    this.persistState();
+    this.trigger('receipt-ack');
+    console.log(`[分发] 回执取件：${recordId}（printer=${printerId}）——闸清，队列继续`);
+    return { held: true, printerId };
+  }
+
+  /** 回执闸清单（queue 快照消费：页面显示哪台机卡在「等待取件回执」） */
+  listReceiptHold() {
+    return [...this.receiptHold.entries()].map(([printerId, recordId]) => ({ printerId, recordId }));
   }
 
   /**

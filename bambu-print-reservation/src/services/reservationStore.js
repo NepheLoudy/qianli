@@ -218,6 +218,32 @@ const reservationStore = {
   },
 
   /**
+   * 取件回执（2026-10-28 曼波令「打完要回执才行」）：已完成单确认取件落档——
+   * 幂等（重复回执覆盖为最新）；终态单均可回执（巡检补完成的老单也能补确认）。
+   * 队列闸的清理由 dispatcher.acknowledgeReceipt 负责（端点串联两步）。
+   */
+  acknowledgeReceipt(id, user) {
+    const records = load();
+    const record = records.find((r) => r.id === id);
+    if (!record) throw new Error(`预约不存在: ${id}`);
+    if (!['已完成', '已取消', '已驳回'].includes(record.status)) {
+      const err = new Error(`预约「${id}」当前状态「${record.status}」——只有打完的单才需要取件回执`);
+      err.statusCode = 400;
+      throw err;
+    }
+    record.receipt = {
+      by: user.displayName || user.username,
+      byId: user.id || '',
+      at: new Date().toISOString(),
+    };
+    record.updatedAt = record.receipt.at;
+    record.history.push({ at: record.receipt.at, from: record.status, to: record.status, note: `取件回执：${record.receipt.by}` });
+    if (record.history.length > 200) record.history = record.history.slice(-200);
+    save(records);
+    return { ...record };
+  },
+
+  /**
    * 上传源文件生命周期（2026-10-05 审查批）：终态单（已完成/已取消/已驳回）超过
    * UPLOAD_RETENTION_DAYS 天（默认 30，0=禁用）后清理源文件——磁盘护栏；单据记录
    * 与参数快照永久保留（fileCleaned 标记），打印产物不受影响

@@ -721,3 +721,12 @@
 - **动机**：R20261028 拨弹盘四单实况——选文件时弹窗容易被无视/跳过；提交是用户意图最强的时刻，提醒放在这里才有拦截力。顺带发现 API 直调审批不吃前端「默认勾入库」（热修52 的④是 UI 默认值）——API 代批需显式传 sampleEntry。
 - 改动纯前端（public/index.html）：submitReservation 拆 submitReservation（拦截判断）+ doSubmit（上传本体），change 监听不再触发询问。
 - 全量 30 套全绿（纯前端改动），已上线。
+
+### v57 热修55 · 2026-10-28 · 随本提交落地 · feat
+
+**打完等回执闸 + 注册重新开放（曼波令双批）**
+
+- **取件回执闸**：completeTask/巡检补完成一律置 `receiptHold`（printerId→recordId，落盘防重启丢闸）——该机在「确认取件」前不开打队列下一件（板上件没取走开新件会撞板/挤料，装配件要先试装；续打盘同样等回执）。matchPrinter 候选过滤持闸机器；`POST /api/reservations/:id/receipt`（本人或 reviewer+，assertCanManage 同取消口径）清闸并触发匹配——`acknowledgeReceipt` 幂等（重复回执 held:false）。预约单落 `receipt{by,byId,at}` + history；非终态单 400。queue 快照透出 `receiptHold`（页面可见哪台机卡在等取件）。人工直发（manualDispatch）绕闸——人工已显式确认机台，天然是回执语义。
+- **注册重新开放**（2026-10-12 关闭→2026-10-28 曼波令重开）：authStore.register 本就健在（账号规则/姓名必填 ≤24/密码 ≥6/首位 admin bootstrap/可选 REGISTER_INVITE_CODE），端点从 fail-closed 403 恢复为真实注册——注册即建会话免二次登录。前端登录卡恢复登录/注册双模式 tab，注册显式三字段：**用户名 + 姓名 + 密码**；注册成功直接进入系统。
+- **播报显示姓名**：链路核验无需改码——提单 applicant=req.user.displayName，注册的姓名直通提单/排队/完成/失败各卡「发起人」字段（bot.js 同一链路）；历史账号 displayName=用户名的显示旧值，新注册号填什么显什么。
+- 测试：新增 receipt-gate-test 5 断言（无闸可选/置闸排除/清闸恢复+幂等/回执落档+非终态 400/落盘恢复）；全量 31 套全绿，已上线。

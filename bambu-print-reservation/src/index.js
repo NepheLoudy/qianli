@@ -126,10 +126,21 @@ app.get('/api/health', (req, res) => {
 // ---------- 账号体系（2026-10-05 第二批：防止未授权使用） ----------
 // 注册开放（首位注册者自动 admin，之后均 member）；审批人由 admin 在页面升权。
 
-// 注册已关闭（2026-10-12 曼波：需要账号联系 2805328773@qq.com 人工开）。
-// 端点保留并 fail-closed 403——防止老客户端/脚本仍走开放注册
+// 注册重新开放（2026-10-28 曼波令）：账号 + 姓名 + 密码三字段自助注册（authStore
+// 校验/首位 admin bootstrap 沿用；可选 REGISTER_INVITE_CODE 邀请码闸）。注册成功
+// 直接建立会话（免二次登录）；displayName 即播报/卡片显示的姓名
 app.post('/api/auth/register', (req, res) => {
-  res.status(403).json({ error: '注册已关闭——如需账号请联系 2805328773@qq.com（注明姓名与用途），由管理员人工开通' });
+  try {
+    const { username, password, displayName, inviteCode } = req.body || {};
+    const user = authStore.register({ username, password, displayName, inviteCode });
+    const token = authStore.createSession(user.id);
+    res.setHeader('Set-Cookie',
+      `bambu_session=${token}; HttpOnly; Path=/; SameSite=Lax; Max-Age=${30 * 24 * 3600}`);
+    console.log(`[注册] 新账号: ${user.username}（${user.displayName}）role=${user.role}`);
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 app.post('/api/auth/login', (req, res) => {
@@ -1860,7 +1871,21 @@ app.get('/api/dispatch/queue', requireUser(), (req, res) => {
     queue: dispatcher.getQueueSnapshot(),
     printing: dispatcher.getPrintingSnapshot(),
     givenUp: dispatcher.listGivenUp(), // 重试耗尽待人工恢复（页面黄条 + 恢复按钮消费）
+    receiptHold: dispatcher.listReceiptHold(), // 打完等回执闸（2026-10-28：页面显示「等待取件回执」）
   });
+});
+
+// 取件回执（2026-10-28 曼波令）：本人或 reviewer+ 确认已取走打完的件——清回执闸，
+// 该机队列下一件才开打；预约单落回执记录
+app.post('/api/reservations/:id/receipt', requireUser(), async (req, res) => {
+  try {
+    assertCanManage(req.user, reservationStore.get(req.params.id));
+    const rec = reservationStore.acknowledgeReceipt(req.params.id, req.user);
+    const ack = dispatcher.acknowledgeReceipt(req.params.id);
+    res.json({ success: true, receipt: rec.receipt, queueResumed: ack.held });
+  } catch (err) {
+    res.status(err.statusCode || 400).json({ error: err.message });
+  }
 });
 
 app.post('/api/dispatch/manual', requireUser('reviewer', 'admin'), async (req, res) => {

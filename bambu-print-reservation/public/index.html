@@ -176,11 +176,16 @@
   </div>
 
   <div class="card" id="authCard" style="display:none">
-    <h2>🔐 账号登录 <span class="sub">注册已关闭——需要账号联系管理员人工开通（2805328773@qq.com）</span></h2>
+    <h2>🔐 账号 <span class="sub">自助注册开放（2026-10-28）：账号 + 姓名 + 密码；姓名会显示在群播报里</span></h2>
+    <div style="margin-bottom:8px">
+      <button class="mini on" id="tabLogin" onclick="switchAuth('login')">登录</button>
+      <button class="mini" id="tabRegister" onclick="switchAuth('register')">注册新账号</button>
+    </div>
     <div class="row">
-      <div><label>用户名</label><input type="text" id="authUsername"></div>
-      <div><label>密码</label><input type="password" id="authPassword" onkeydown="if(event.key==='Enter')doAuth()"></div>
-      <div style="flex:0; align-self:flex-end"><button class="primary" onclick="doAuth()">登 录</button></div>
+      <div id="authDisplayName" style="display:none"><label>姓名（播报/审批记录显示用）</label><input type="text" id="authDisplayNameInput" maxlength="24" placeholder="如 张三"></div>
+      <div><label>用户名（3–32 位字母/数字/_/-）</label><input type="text" id="authUsername"></div>
+      <div><label>密码（≥6 位）</label><input type="password" id="authPassword" onkeydown="if(event.key==='Enter')doAuth()"></div>
+      <div style="flex:0; align-self:flex-end"><button class="primary" id="authSubmitBtn" onclick="doAuth()">登 录</button></div>
     </div>
     <div class="hint" id="authHint"></div>
   </div>
@@ -301,21 +306,25 @@ function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display
 const isReviewer = () => ME && ['reviewer', 'admin'].includes(ME.role);
 const isAdmin = () => ME && ME.role === 'admin';
 
-function switchAuth(mode) { // 注册已关闭（2026-10-12）：保留函数签名兼容旧调用，只支持 login
-  authMode = 'login';
-  $('tabLogin').className = 'on';
-  $('authDisplayName').style.display = 'none';
+function switchAuth(mode) { // 注册重新开放（2026-10-28 曼波令）：登录/注册双模式
+  authMode = mode;
+  $('tabLogin').className = mode === 'login' ? 'on' : '';
+  $('tabRegister').className = mode === 'register' ? 'on' : '';
+  $('authDisplayName').style.display = mode === 'register' ? '' : 'none';
+  $('authDisplayName').style.flex = mode === 'register' ? '1' : '';
+  $('authSubmitBtn').textContent = mode === 'register' ? '注 册' : '登 录';
 }
 
 async function doAuth() {
   const username = $('authUsername').value.trim();
   const password = $('authPassword').value;
   const url = authMode === 'login' ? '/api/auth/login' : '/api/auth/register';
-  const body = authMode === 'login' ? { username, password } : { username, password, displayName: username };
+  const body = authMode === 'login' ? { username, password }
+    : { username, password, displayName: $('authDisplayNameInput').value.trim() };
   const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
   const data = await res.json();
   if (!res.ok) { $('authHint').className = 'hint bad'; $('authHint').textContent = data.error; return; }
-  if (authMode === 'register') { toast('✅ 注册成功，请登录'); switchAuth('login'); return; }
+  if (authMode === 'register') { toast('✅ 注册成功，已登录为「' + data.displayName + '」'); }
   $('authHint').textContent = '';
   await loadMe();
 }
@@ -1158,17 +1167,24 @@ async function loadList() {
     // 分发异常被取消后可免重传一键重开；服务端 reprint 本就不限状态，只查文件保留期）
     const reprintBtn = ['已完成', '已取消'].includes(r.status)
       ? `<button class="mini" onclick="reprint('${r.id}')">复刻</button>` : '';
+    // 取件回执（2026-10-28 曼波令「打完要回执才行」）：已完成单确认已取走——
+    // 清该机回执闸，队列下一件才开打；本人或 reviewer 可点
+    const receiptBtn = r.status === '已完成' && !r.receipt && (mine || isReviewer())
+      ? `<button class="mini" onclick="ackReceipt('${r.id}')">确认取件</button>` : '';
+    const receiptTag = r.status === '已完成'
+      ? (r.receipt ? `<br><span class="detail">📦 已回执（${esc(r.receipt.by)}）</span>` : '<br><span class="detail" style="color:var(--warn)">📦 待取件回执</span>')
+      : '';
     // 改派（2026-10-27 曼波令）：排队中滞留的模型直投单（STEP/STL，分发时刻才切片）
     // 物理上可在同品牌空闲机间改派——reviewer 一键入口；3mf 直通件机型锁定不显示
     const reassignBtn = r.status === '排队中' && isReviewer() && /\.(step|stp|stl|obj)$/i.test(r.fileName || '')
       ? `<button class="mini" onclick="recoverGivenUp('${r.id}')" title="指定打印机立即分发（同品牌机）">改派</button>` : '';
     return `<tr>
       <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span></td>
-      <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${liveProg}</td>
+      <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${receiptTag}${liveProg}</td>
       <td data-label="发起人">${esc(r.applicant || '?')}${mine ? '<br><span class="detail">(我)</span>' : ''}<br><span class="detail">${esc(r.fileName || '')}</span></td>
       <td data-label="需求">${esc(r.materialType || '?')}${r.color ? '×' + esc(r.color) : ''}${r.isUrgent ? ' ⚡' : ''}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
       <td data-label="参数与轨迹" class="detail">${srcTag}${params ? '<b>参数</b> ' + params + '<br>' : ''}${rules ? '<b>依据</b> ' + rules + '<br>' : ''}${hist}</td>
-      <td data-label="操作">${cancelBtn}${reprintBtn}${reassignBtn}</td>
+      <td data-label="操作">${cancelBtn}${reprintBtn}${reassignBtn}${receiptBtn}</td>
     </tr>`;
   }).join('');
   box.innerHTML = `<table>
@@ -1245,6 +1261,15 @@ async function loadGivenUp() {
   if (!given.length) { $('givenUpBar').innerHTML = ''; return; }
   $('givenUpBar').innerHTML = `<div class="warnbar">⚠️ <b>${given.length}</b> 单自动重试耗尽待人工恢复：` +
     given.map(g => `#${esc(g.recordId)} ${esc(g.fileName || '')}（${g.error ? '原因：' + esc(g.error) + '；' : ''}<button class="mini" onclick="recoverGivenUp('${g.recordId}')">指定打印机恢复</button><button class="mini" onclick="dismissGivenUp('${g.recordId}')" title="不要了：移出放弃池，预约单落「已取消」">丢弃</button>`).join('　') + `</div>`;
+}
+
+/** 取件回执（2026-10-28 曼波令）：确认已取走打完的件——清该机回执闸，队列下一件才开打 */
+async function ackReceipt(recordId) {
+  const res = await fetch(`/api/reservations/${encodeURIComponent(recordId)}/receipt`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`📦 已回执 #${recordId}${data.queueResumed ? '，队列继续' : ''}`);
+  else toast('❌ ' + (data.error || '回执失败'));
+  loadList();
 }
 
 /** 放弃池人工丢弃（2026-10-24 热修50）：明确不要的单直接清理，预约单落「已取消」 */
