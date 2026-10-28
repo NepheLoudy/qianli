@@ -746,3 +746,11 @@
 - **场景**：R20261028-001 打到一半被机端暂停后重交新版（005），停机取消后 A1mini 空闲、队首 002 立刻顶上——板上的半成品件没取走。停当前件之前必须先把机器按入「等待取件」态，否则取件窗口永远被下一件挤掉。
 - **能力**：`POST /api/dispatch/hold`（admin，{printerId, recordId?}）人工置闸、`POST /api/dispatch/hold/release`（admin）清闸并触发匹配——与 completeTask 自动置闸同通道（receiptHold），落盘防重启丢闸。
 - 全量 31 套全绿，已上线。
+
+### v57 热修58 · 2026-10-28 · 随本提交落地 · fix
+
+**审批结果卡补漏：notifyReviewResult 停发（曼波令「仅保留打印成功」收口）**
+
+- **漏网**：热修56 只过滤了 announce——审批结果卡（通过+排队合并卡/驳回卡）走 notifyReviewResult→sendMessage 直发机械组主群，绕过过滤；代批一单群里多一张卡，曼波实测抓包。
+- **收口**：notifyReviewResult 停发（审批是审批人自己的操作，结果页面立即可见；申请人看列表状态）。sendMessage 全量清点后群播仅剩三处：announce（完成卡）/ 提单审批提醒（话题群，审批人工作入口，保留）/ 静默期 DM 补发（非群播）。
+- 全量 31 套全绿，已上线。

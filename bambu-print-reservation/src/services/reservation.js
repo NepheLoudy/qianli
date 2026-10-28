@@ -238,22 +238,11 @@ class ReservationService {
   }
 
   async notifyReviewResult(reservation, result, comment, queueInfo = null) {
-    try {
-      // 审批通过 + 排队合并卡（2026-10-16 曼波令：审批结果/排队一张单子）；驳回维持单独结果卡
-      const card = (result === config.reviewResult.APPROVED && queueInfo)
-        ? buildApprovedQueuedCard(reservation, comment, queueInfo)
-        : buildReviewResultCard({
-            fields: {
-              '发起人': [{ id: '', name: reservation.applicant }],
-              '切片文件': [{ name: reservation.fileName }],
-            },
-          }, result, comment);
-      if (!quietHours.gatePayload('webhook-card', card, `审批结果卡 ${reservation.id}`)) {
-        await sendMessage(card);
-      }
-    } catch (err) {
-      console.error('[预约服务] 审批结果播报失败:', err.message);
-    }
+    // 审批结果卡停发（2026-10-28 曼波令「机械组播报仅保留打印成功」补漏）：此前走
+    // sendMessage 直发机械组主群、绕过 announce 过滤——代批一单群里多一张卡。审批是
+    // 审批人自己的操作（结果页面立即可见，申请人看列表状态），无需群播回执。
+    // 提单审批提醒（notifyReviewers→审批话题群）是审批人的工作入口，不受此令影响
+    return;
   }
 
   // ---------- 取消 ----------
