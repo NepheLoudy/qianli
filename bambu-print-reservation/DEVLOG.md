@@ -754,3 +754,11 @@
 - **漏网**：热修56 只过滤了 announce——审批结果卡（通过+排队合并卡/驳回卡）走 notifyReviewResult→sendMessage 直发机械组主群，绕过过滤；代批一单群里多一张卡，曼波实测抓包。
 - **收口**：notifyReviewResult 停发（审批是审批人自己的操作，结果页面立即可见；申请人看列表状态）。sendMessage 全量清点后群播仅剩三处：announce（完成卡）/ 提单审批提醒（话题群，审批人工作入口，保留）/ 静默期 DM 补发（非群播）。
 - 全量 31 套全绿，已上线。
+
+### v57 热修59 · 2026-10-28 · 随本提交落地 · feat
+
+**自动分发收窄：切片直通件必须显式指定同型号机（曼波令「自动分发只对纯 step 有效」）**
+
+- **三层落地**：①分发层 matchPrinter——切片直通件（3mf/gcode 系）无 assignedPrinter 一律滞留（节流日志「等待审批指定同型号机」），不再品牌级瞎配（A1 mini 的件落 X1C = 机端 preset 不匹配）；模型直投（STEP/STL，分发时刻现场切）保留自动匹配。②审批层 approveReservation——切片件无指定当场打回 400；新增机型相容硬校验（modelKey 归一：去品牌前缀、adventurer→ad，互含判等）——同品牌错型号（A1 mini 件指 X1C）同样拦。③前端：审批台切片件按内嵌机型过滤候选 + 不给自动匹配选项 + 锁定提示；提单页「指定打印机」栏文案明确「自动匹配仅对模型直投有效」。
+- **测试适配**：新语义推翻「切片件无指定自动放行」的旧断言——dispatcher-test/receipt-gate-test/ops-test/local-reservation-test 四套适配（审批调用补指定、mock 登记机改 config.printers 注入 + 未知品牌串只登记不建连）；连带修复 getApiStates 防御层（残缺 mock client 的 isStateStale 交错炸，统一补桩）。
+- 全量 31 套全绿，已上线。

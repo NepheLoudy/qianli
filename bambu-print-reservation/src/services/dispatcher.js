@@ -863,6 +863,19 @@ class Dispatcher {
         && !this.receiptHold.has(p.id) // 打完等回执闸：上一单取件确认前本机不开新件（2026-10-28 曼波令）
     );
 
+    // 切片直通件不做自动分发（2026-10-28 曼波令「自动分发只对纯 step 有效」）：切片文件
+    // 内嵌机型锁死切片 profile，品牌级自动匹配会让 A1 mini 的件落到 X1C（机端 preset
+    // 不匹配/打废）——无指定即滞留提示，等审批补指定；模型直投单（STEP/STL，分发时刻
+    // 现场切片）才真正具备自动匹配资格
+    if (!task.assignedPrinter && !isUnslicedFileName(task.fileName || '')) {
+      const nowSilent = Date.now();
+      if (!task._noAutoSliceLoggedAt || nowSilent - task._noAutoSliceLoggedAt > 10 * 60 * 1000) {
+        task._noAutoSliceLoggedAt = nowSilent;
+        console.warn(`[分发] ${task.applicationNo || task.recordId} 切片直通件未指定打印机——不自动分发（内嵌机型锁定切片 profile，自动匹配仅对模型直投有效），等待审批指定同型号机`);
+      }
+      return null;
+    }
+
     // 1. 指定打印机（**指定即权威**，2026-10-16 曼波真机反馈「选 A5P 却被分发到 X1C」）：
     //    指定的机器不在候选（品牌不符/忙/失联）时**滞留等待人工**，绝不静默改派他机——
     //    此前 fallthrough 到自动匹配，把人的明确指定当空气

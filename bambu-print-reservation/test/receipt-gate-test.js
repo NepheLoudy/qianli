@@ -36,8 +36,15 @@ async function main() {
   const task = { recordId: 'R-RT-1', applicationNo: 'R-RT-1', fileName: 'part.gcode.3mf', materialType: 'PLA', quantity: 1 };
 
   checks.push(['无闸：同品牌空闲机可被选中', async () => {
-    const hit = dispatcher.matchPrinter(task, [printer]);
+    const hit = dispatcher.matchPrinter({ ...task, fileName: 'part.step' }, [printer]); // 模型直投才具备自动匹配资格（2026-10-28 曼波令）
     assert.strictEqual(hit && hit.id, 'p1');
+  }]);
+
+  checks.push(['切片直通件无指定：不自动分发（滞留等审批指定，2026-10-28 曼波令）', async () => {
+    const sliced = { ...task, fileName: 'part.gcode.3mf', assignedPrinter: undefined };
+    assert.strictEqual(dispatcher.matchPrinter(sliced, [printer]), null, '切片件留空不派');
+    const model = { ...task, fileName: 'part.step', assignedPrinter: undefined };
+    assert.strictEqual(dispatcher.matchPrinter(model, [printer]).id, 'p1', '模型直投仍可自动匹配');
   }]);
 
   checks.push(['置闸：该机被匹配层排除（打完等回执）', async () => {
@@ -51,7 +58,7 @@ async function main() {
     const ack1 = dispatcher.acknowledgeReceipt('R-RT-1');
     assert.strictEqual(ack1.held, true);
     assert.strictEqual(ack1.printerId, 'p1');
-    assert.strictEqual(dispatcher.matchPrinter(task, [printer]).id, 'p1', '清闸后恢复可选');
+    assert.strictEqual(dispatcher.matchPrinter({ ...task, fileName: 'part.step' }, [printer]).id, 'p1', '清闸后恢复可选（模型直投）');
     const ack2 = dispatcher.acknowledgeReceipt('R-RT-1');
     assert.strictEqual(ack2.held, false, '重复回执幂等');
   }]);

@@ -119,10 +119,11 @@ check('brandForFileWithMeta：切片文件内嵌机型优先于扩展名（2026-
   assert.equal(dispatcher.brandForFileWithMeta('x.gcode.3mf', 'Bambu Lab H2D'), 'bambu');
   assert.equal(dispatcher.brandForFileWithMeta('x.gcode.3mf', null), 'bambu', '无内嵌机型时退回扩展名');
   assert.equal(dispatcher.brandForFileWithMeta('y.gcode', null), 'flashforge');
-  // 内嵌机型 + 闪铸目标机在候选中的匹配（品牌闸门以内容为准）
+  // 内嵌机型 + 指定闪铸机 → 命中（2026-10-28 曼波令：切片件不做自动分发，指定即权威）
   const ff = { ...H2D, name: '闪铸A5P', model: 'AD5M Pro', ams: [{ slot: '进料口', type: 'PLA', colorHex: '', active: true, external: true }] };
-  const t = { materialType: 'PLA', color: '白色', fileName: 'x.gcode.3mf', machineModel: 'Flashforge Adventurer 5M Pro' };
-  assert.equal(dispatcher.matchPrinter(t, [ff, X1C1]).name, '闪铸A5P', '内嵌闪铸机型 → 匹配闪铸机');
+  const t = { materialType: 'PLA', color: '白色', fileName: 'x.gcode.3mf', machineModel: 'Flashforge Adventurer 5M Pro', assignedPrinter: '闪铸A5P' };
+  assert.equal(dispatcher.matchPrinter(t, [ff, X1C1]).name, '闪铸A5P', '内嵌闪铸机型 + 指定 → 命中闪铸机');
+  assert.equal(dispatcher.matchPrinter({ ...t, assignedPrinter: undefined }, [ff, X1C1]), null, '切片件留空不自动分发（滞留等指定）');
 });
 check('占用中的打印机不在候选（快照只传空闲）', () => {
   const printingX1C1 = { ...X1C1, status: '打印中' };

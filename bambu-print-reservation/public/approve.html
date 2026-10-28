@@ -502,8 +502,17 @@ async function openApproveDialog(id) {
   // 品牌判定：切片文件内嵌机型优先；无内嵌按扩展名
   const mm = (rec && rec.embeddedParams && rec.embeddedParams.machineModel) || '';
   const fileIsFf = mm ? /flashforge|ad5|5m|creator/i.test(mm) : /\.(gcode|gx|g)$/i.test((rec && rec.fileName) || '');
-  const usable = printers.filter((p) => Boolean(p.brand === 'flashforge') === fileIsFf);
-  const preselect = mm && usable.length === 1 ? usable[0].name : '';
+  // 切片直通件（2026-10-28 曼波令「自动分发只对纯 step 有效」）：内嵌机型锁定切片 profile——
+  // 机型级过滤（同型号机）+ 不给自动匹配选项；模型直投单保留品牌过滤 + 自动匹配
+  const isSlicedFile = /\.(3mf|gcode|gx|g)$/i.test((rec && rec.fileName) || '');
+  const modelKey = (x) => String(x || '').toLowerCase().replace(/^(bambu lab|flashforge)\s+/, '').replace(/^adventurer\s+/, 'ad').trim();
+  let usable = printers.filter((p) => Boolean(p.brand === 'flashforge') === fileIsFf);
+  if (isSlicedFile && mm) usable = usable.filter((p) => { const a = modelKey(mm), b = modelKey(p.model); return a && b && (a.includes(b) || b.includes(a)); });
+  const preselect = isSlicedFile && usable.length === 1 ? usable[0].name : (mm && usable.length === 1 ? usable[0].name : '');
+  const autoOption = isSlicedFile ? '' : '<option value="">自动匹配（按材料/颜色选机）</option>';
+  const machineLockNote = isSlicedFile
+    ? `<div class="detail" style="margin-bottom:6px;color:var(--warn)">🔒 切片文件按内嵌机型锁定切片 profile（${esc(mm || '未识别——请按文件来源机型选择')}）——自动分发仅对 STEP/STL 模型直投有效，请从同型号机中指定</div>`
+    : '';
   const modelNote = mm
     ? `<div class="detail" style="margin-bottom:6px">📦 文件内嵌机型：<b>${esc(mm)}</b>${preselect ? '——已为你锁定匹配机型' : '（请在同品牌机型中确认目标机）'}</div>`
     : '';
@@ -523,8 +532,8 @@ async function openApproveDialog(id) {
     : '';
   dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">✅ 通过并分发（${esc(id)}）</h3>`
     + `<div class="detail" style="margin-bottom:8px">指定分发目标与用料（都可留自动匹配）；指定后该机不可用会滞留等人工、不静默改派</div>`
-    + modelNote + brandHint + filNote
-    + `<label>目标打印机</label><select id="apPrinter" onchange="renderApTrays()"><option value="">自动匹配（按材料/颜色选机）</option>${opts}</select>`
+    + machineLockNote + modelNote + brandHint + filNote
+    + `<label>目标打印机</label><select id="apPrinter" onchange="renderApTrays()">${autoOption}${opts}</select>`
     + filRows
     + `<div id="apNozzleRow" style="display:none"><label>喷嘴</label><select id="apNozzle"><option value="">自动</option></select></div>`
     + (canSample

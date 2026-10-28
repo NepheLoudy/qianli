@@ -21,6 +21,12 @@ process.env.BOT_WEBHOOK_URL = '';
 const assert = require('assert');
 const fs = require('fs');
 const store = require('../src/services/reservationStore');
+{
+  const cfgT = require('../src/config');
+  if (!cfgT.printers.some((p) => p.name === '联调拓竹机')) {
+    cfgT.printers.push({ name: '联调拓竹机', id: 'cfg-t-bambu', model: 'TEST-BAMBU-COMPAT', autoDispatch: true }); // 未知品牌=manager 只登记不建连
+  }
+}
 const processRules = require('../src/services/processRules');
 const dispatcher = require('../src/services/dispatcher');
 const reservationService = require('../src/services/reservation');
@@ -160,7 +166,7 @@ check('份数护栏：非正/小数/非数字/超限收敛为 1..99 整数', () 
 
 check('集成：审批通过 → 入队 + store 排队中（快照一致）', async () => {
   const r = submit();
-  const after = await reservationService.approveReservation(r.id, '测试审批人', 'OK');
+  const after = await reservationService.approveReservation(r.id, '测试审批人', 'OK', { assignedPrinter: '联调拓竹机' });
   assert.equal(after.status, '排队中');
   assert.ok(after.review && after.review.reviewer === '测试审批人');
   const queued = dispatcher.getQueueSnapshot().find((q) => q.recordId === r.id);
@@ -169,7 +175,7 @@ check('集成：审批通过 → 入队 + store 排队中（快照一致）', as
 
 check('集成：重复审批被拒（仅待审批单可批，防重复入队）', async () => {
   const r = submit();
-  await reservationService.approveReservation(r.id, 'A', '');
+  await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调拓竹机' });
   await assert.rejects(
     () => reservationService.approveReservation(r.id, 'B', ''),
     /仅待审批单可审批/
@@ -178,7 +184,7 @@ check('集成：重复审批被拒（仅待审批单可批，防重复入队）'
 
 check('集成：取消 → dequeue 出队 + store 已取消', async () => {
   const r = submit();
-  await reservationService.approveReservation(r.id, 'A', '');
+  await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调拓竹机' });
   assert.ok(dispatcher.getQueueSnapshot().some((q) => q.recordId === r.id));
   await reservationService.cancelReservation(r.id);
   assert.equal(store.get(r.id).status, '已取消');
@@ -187,7 +193,7 @@ check('集成：取消 → dequeue 出队 + store 已取消', async () => {
 
 check('集成：审批勾选入库 → 决策落档 + 样本管线软着陆（测试单无真实文件→记录 sampleError）', async () => {
   const r = submit();
-  await reservationService.approveReservation(r.id, '测试审批人', '', {}, true);
+  await reservationService.approveReservation(r.id, '测试审批人', '', { assignedPrinter: '联调拓竹机' }, true);
   await new Promise((res2) => setTimeout(res2, 300)); // 等异步管线（setImmediate + 文件读）
   const rec = store.get(r.id);
   assert.ok(rec.sample && rec.sample.sampleEntry === true, '入库决策应落档');
@@ -285,7 +291,7 @@ check('份数续打:quantity=3 完成后 remaining 递减重入队,末件才终�
     applicant: '批量测试', fileName: 'x3.3mf', filePath: 'x', materialType: material,
     quantity: 3, selection: { load_magnitude: 'medium' }, processParams: applied.params, appliedRules: [],
   });
-  await reservationService.approveReservation(rec.id, 'A', '');
+  await reservationService.approveReservation(rec.id, 'A', '', { assignedPrinter: '联调拓竹机' });
   const task = dispatcher.getQueueSnapshot().find((q) => q.recordId === rec.id);
   assert.equal(task.remaining, 2, '首件外剩余 2');
   // 模拟第一件完成:任务在 printing 中 → completeTask
@@ -365,7 +371,7 @@ check('estMinutes 随单入档并透传 buildLocalTask 与队列快照(ETA 数�
   assert.equal(r2.estMinutes, null, '缺省为 null');
   assert.equal(dispatcher.buildLocalTask(store.get(r2.id)).estMinutes, null);
   // 快照透出 estMinutes（前端 ETA 条消费）：审批入队后从队列快照取
-  await reservationService.approveReservation(r.id, 'A', '');
+  await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调拓竹机' });
   const snap = dispatcher.getQueueSnapshot().find((q) => q.recordId === r.id);
   assert.ok(snap && snap.estMinutes === 95, '队列快照应带 estMinutes');
 });

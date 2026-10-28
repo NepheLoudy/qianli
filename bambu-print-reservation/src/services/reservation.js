@@ -113,6 +113,12 @@ class ReservationService {
 
     // 分发配置硬校验（指定即权威，但不放行明显无效值）
     const printerManager = require('../printer/manager');
+    // 切片直通件必须显式指定打印机（2026-10-28 曼波令「自动分发只对纯 step 有效」）：
+    // 切片文件内嵌机型锁死切片 profile，留空自动匹配=品牌级瞎配（A1 mini 的件落 X1C）
+    // ——审批时打回，让审批人从同型号机中指定
+    if (!dispatch.assignedPrinter && !isUnslicedFile(reservation)) {
+      throw new Error(`「${reservation.fileName}」是切片文件（内嵌机型锁定切片 profile）——自动分发仅对模型直投（STEP/STL）有效，请从登记打印机中指定同型号机后再审批`);
+    }
     const pref = {};
     if (dispatch.assignedPrinter) {
       const pr = config.printers.find((p) => p.name === dispatch.assignedPrinter);
@@ -120,9 +126,27 @@ class ReservationService {
       // 品牌相容性硬校验（2026-10-16 曼波反馈「选 A5P 却被分到 X1C」）：切片格式与机型
       // 品牌互不兼容——审批时当场拦住并说明，杜绝「静默改派/打废件」
       const prBrand = printerManager.brandOf(pr.model) || 'bambu';
+      console.log('[DBG-BRAND]', pr.name, '|', pr.model, '|', prBrand, '| file:', reservation.fileName);
       const fileBrand = require('./dispatcher').brandForFileWithMeta(reservation.fileName, reservation.embeddedParams && reservation.embeddedParams.machineModel); // 内嵌机型优先（2026-10-16）
       if (prBrand !== fileBrand) {
         throw new Error(`「${pr.name}」是${prBrand === 'flashforge' ? '闪铸' : '拓竹'}机型，打不了${fileBrand === 'flashforge' ? '闪铸 gcode 系' : '拓竹 3mf'}格式的文件——两品牌切片格式互不兼容。请改选对应品牌机型、留空自动匹配，或用目标机型的切片软件重新导出`);
+      }
+      // 机型相容硬校验（2026-10-28 曼波令「自动分发只对纯 step 有效」）：切片文件内嵌机型
+      // 锁定切片 profile——指定同品牌但错型号（A1 mini 的件指到 X1C）同样机端 preset 不匹配。
+      // modelKey 归一（去品牌前缀、adventurer→ad 缩写）后互含判等；无内嵌机型（老文件/提取
+      // 失败）跳过不拦。与审批台 modelKey 前端版同口径，改一处记得两处
+      const embeddedModel = reservation.embeddedParams && reservation.embeddedParams.machineModel;
+      if (!isUnslicedFile(reservation) && embeddedModel) {
+        const modelKey = (x) => String(x || '').toLowerCase()
+          .replace(/^(bambu lab|flashforge)\s+/, '')
+          .replace(/^adventurer\s+/, 'ad')
+          .trim();
+        const a = modelKey(embeddedModel);
+        const b = modelKey(pr.model);
+        const compatible = a && b && (a.includes(b) || b.includes(a));
+        if (!compatible) {
+          throw new Error(`切片文件内嵌机型「${embeddedModel}」，与指定的「${pr.name}」（${pr.model}）不同型号——切片 profile 已锁死，跨型号打印会机端拒收/参数错配。请指定${embeddedModel}对应的登记机，或用「${pr.model}」重新切片后提交`);
+        }
       }
       pref.assignedPrinter = dispatch.assignedPrinter;
       const apiState = printerManager.getApiStates().find((p) => p.id === pr.id);

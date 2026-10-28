@@ -8,10 +8,10 @@ process.env.RESERVATIONS_STORE_FILE = path.join(os.tmpdir(), `bambu-test-ops-res
 // 阻断真机连接（2026-10-16）：manager 是模块级单例、require 即 init() 连打印机——
 // 不置空这里，测试进程会真连生产三机（Bambu 同 clientId 互踢，会扰动线上连接）
 process.env.PRINTER_HOSTS = '';
-process.env.PRINTER_ACCESS_CODES = '';
-process.env.PRINTER_SERIALS = '';
-process.env.PRINTER_NAMES = '';
-process.env.PRINTER_MODELS = '';
+process.env.PRINTER_ACCESS_CODES = 'test1,test2';
+process.env.PRINTER_SERIALS = 'TESTSERIAL1,TESTSERIAL2';
+process.env.PRINTER_NAMES = '联调拓竹机,联调闪铸机';
+process.env.PRINTER_MODELS = 'X1C,AD5M Pro';
 process.env.RESERVATIONS_UPLOAD_DIR = path.join(os.tmpdir(), `bambu-test-ops-up-${process.pid}`);
 process.env.DISPATCH_STATE_FILE = path.join(os.tmpdir(), `bambu-test-ops-ds-${process.pid}.json`);
 process.env.QUIET_BACKLOG_FILE = path.join(os.tmpdir(), `bambu-test-ops-qb-${process.pid}.json`);
@@ -25,9 +25,37 @@ process.env.TRAINING_SAMPLES_FILE = path.join(os.tmpdir(), `bambu-test-ops-train
 process.env.TRAINING_FILES_DIR = path.join(os.tmpdir(), `bambu-test-ops-trainfiles-${process.pid}`);
 
 const assert = require('assert');
+// getApiStates 防御层（2026-10-29）：多 case 并行挂起时，残缺 mock client（自愈 case 等
+// 直接往 manager.clients 塞的最小对象）会暴露给其他审批 case 的状态解析链——统一在此
+// 补 isStateStale 桩，杜绝 'client.isStateStale is not a function' 交错炸
+{
+  const mgrDef = require('../src/printer/manager');
+  const origGetApiStates = mgrDef.getApiStates;
+  mgrDef.getApiStates = function () {
+    for (const c of Object.values(this.clients || {})) {
+      if (c && typeof c.isStateStale !== 'function') c.isStateStale = () => true;
+    }
+    return origGetApiStates.apply(this, arguments);
+  };
+}
 const fs = require('fs');
 const AdmZip = require('adm-zip');
 const store = require('../src/services/reservationStore');
+  // 登记机清单（2026-10-29）：切片件审批须指定打印机——PRINTER_HOSTS=''（零连接零 client）
+  // 时 config.printers 为空，这里直接补测试登记机（拓扑无关，不触发任何连接）
+  {
+    const cfgT = require('../src/config');
+    if (!cfgT.printers.some((p) => p.name === '联调拓竹机')) {
+      cfgT.printers.push(
+        { name: '联调拓竹机', id: 'cfg-t-bambu', model: 'TEST-BAMBU-COMPAT', autoDispatch: true }, // 未知品牌=manager 只登记不建连（残缺 client 根除），审批校验 unknown||bambu 仍过
+        { name: '联调闪铸机', id: 'cfg-t-ff', model: 'AD5M Pro', autoDispatch: true },
+      );
+    }
+  }
+  const cfgDbg = require('../src/config');
+  const { brandOf: dbgBrandOf } = require('../src/printer/manager');
+  console.log('DBG brandOf AD5M Pro:', dbgBrandOf('AD5M Pro'));
+  console.log('DBG printers:', JSON.stringify(cfgDbg.printers.map(p => ({ n: p.name, m: p.model }))));
 const processRules = require('../src/services/processRules');
 const reservationService = require('../src/services/reservation');
 const backup = require('../src/services/backup');
@@ -71,6 +99,42 @@ check('存储损坏隔离:坏文件改名留档,不再静默覆盖', () => {
 
 // ---------- 审批未切片：拓竹自动切片放行 / 指定闪铸拦截 ----------
 
+check('approveReservation:多耗材逐条槽位名服务端解析(留空=自动),坏槽位当场打回', async () => {
+  const config = require('../src/config');
+  const manager = require('../src/printer/manager');
+  const dispatcher = require('../src/services/dispatcher');
+  const testPrinter = { name: '联调测试机', id: 'test-printer-multi', model: 'H2D' };
+  config.printers.push(testPrinter);
+  const origStates = manager.getApiStates;
+  // 不覆写 manager.brandOf（2026-10-29）：全局覆写的污染窗口会串进并行挂起的其他审批 case
+  //（联调测试机=H2D 拓竹系，capabilitiesFor 天然判 bambu，无需 mock）
+  manager.getApiStates = () => [{ id: testPrinter.id, ams: [
+    { slot: 'AMS 0', type: 'PETG', colorHex: 'C1C1C1', amsId: 0, trayId: 0 },
+    { slot: '外挂料盘·左', type: 'PLA', colorHex: '161616', amsId: 254, trayId: 0, external: true },
+  ] }];
+  try {
+    const r = submitFile('multi-color.3mf', { embeddedParams: { filaments: [{ type: 'PETG' }, { type: 'PLA' }] } });
+    await reservationService.approveReservation(r.id, '测试审批人', '', {
+      assignedPrinter: '联调测试机',
+      trays: [null, { slot: '外挂料盘·左' }],
+    });
+    const rec = store.get(r.id);
+    assert.equal(rec.review.dispatch.trays[0], null, '留空条目=该条自动');
+    assert.deepEqual(rec.review.dispatch.trays[1], { amsId: 254, trayId: 0, slot: '外挂料盘·左' }, '槽位名解析为实时料位 id');
+    assert.ok(/用料 1→自动 2→外挂料盘·左/.test(rec.history.map((s) => s.note).join('|')), '状态注记带逐条用料摘要');
+    // 坏槽位名：审批硬校验当场打回（不落「已通过」）
+    const r2 = submitFile('multi-color2.3mf');
+    await assert.rejects(() => reservationService.approveReservation(r2.id, 'A', '', {
+      assignedPrinter: '联调测试机', trays: [{ slot: '不存在的槽' }],
+    }), /不存在或未实装/);
+    assert.equal(store.get(r2.id).status, '待审批', '打回后仍待审批');
+  } finally {
+    manager.getApiStates = origStates;
+    const i = config.printers.indexOf(testPrinter);
+    if (i >= 0) config.printers.splice(i, 1);
+  }
+});
+
 check('审批通过：stl/step 放行（分发链自动切片）；指定闪铸机时拦截', async () => {
   const stl = submitFile('bracket.stl');
   const a1 = await reservationService.approveReservation(stl.id, 'A', '');
@@ -91,14 +155,14 @@ check('审批通过：stl/step 放行（分发链自动切片）；指定闪铸�
     assert.equal(store.get(stl2.id).status, '待审批', '拦截后状态不变');
   }
   const mf = submitFile('done.3mf');
-  const after = await reservationService.approveReservation(mf.id, 'A', '');
+  const after = await reservationService.approveReservation(mf.id, 'A', '', { assignedPrinter: '联调拓竹机' }); // 切片件须指定（2026-10-28 曼波令）
   assert.equal(after.status, '排队中', '3mf 正常通过');
 });
 
 check('审批通过 gcode 系放行(v53 双品牌:闪铸直通链)', async () => {
   for (const name of ['bracket.gcode', 'bracelet.gx', 'gear.g']) {
     const r = submitFile(name);
-    const after = await reservationService.approveReservation(r.id, 'A', '');
+    const after = await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调闪铸机' }); // 切片件须指定（2026-10-28 曼波令）
     assert.equal(after.status, '排队中', `${name} 应放行入队`);
   }
 });
@@ -322,43 +386,6 @@ check('buildAmsMapping:指定槽/自动匹配/无清单三径,外挂虚拟料位
   // ⑤ 全空 prefTrays（UI 全留自动时不下发，服务端兜底）：退回按文件用料逐条自动
   const allAuto = buildAmsMapping({ prefTrays: [null, null] }, printer, { filaments: [{ type: 'PETG', colorHex: 'C1C1C1' }, { type: 'PLA', colorHex: 'F0F0F0' }] });
   assert.deepEqual(allAuto.amsMapping2, [{ ams_id: 0, slot_id: 0 }, { ams_id: 0, slot_id: 2 }]);
-});
-
-check('approveReservation:多耗材逐条槽位名服务端解析(留空=自动),坏槽位当场打回', async () => {
-  const config = require('../src/config');
-  const manager = require('../src/printer/manager');
-  const dispatcher = require('../src/services/dispatcher');
-  const testPrinter = { name: '联调测试机', id: 'test-printer-multi', model: 'H2D' };
-  config.printers.push(testPrinter);
-  const origStates = manager.getApiStates;
-  const origBrand = manager.brandOf;
-  manager.getApiStates = () => [{ id: testPrinter.id, ams: [
-    { slot: 'AMS 0', type: 'PETG', colorHex: 'C1C1C1', amsId: 0, trayId: 0 },
-    { slot: '外挂料盘·左', type: 'PLA', colorHex: '161616', amsId: 254, trayId: 0, external: true },
-  ] }];
-  manager.brandOf = () => 'bambu';
-  try {
-    const r = submitFile('multi-color.3mf', { embeddedParams: { filaments: [{ type: 'PETG' }, { type: 'PLA' }] } });
-    await reservationService.approveReservation(r.id, '测试审批人', '', {
-      assignedPrinter: '联调测试机',
-      trays: [null, { slot: '外挂料盘·左' }],
-    });
-    const rec = store.get(r.id);
-    assert.equal(rec.review.dispatch.trays[0], null, '留空条目=该条自动');
-    assert.deepEqual(rec.review.dispatch.trays[1], { amsId: 254, trayId: 0, slot: '外挂料盘·左' }, '槽位名解析为实时料位 id');
-    assert.ok(/用料 1→自动 2→外挂料盘·左/.test(rec.history.map((s) => s.note).join('|')), '状态注记带逐条用料摘要');
-    // 坏槽位名：审批硬校验当场打回（不落「已通过」）
-    const r2 = submitFile('multi-color2.3mf');
-    await assert.rejects(() => reservationService.approveReservation(r2.id, 'A', '', {
-      assignedPrinter: '联调测试机', trays: [{ slot: '不存在的槽' }],
-    }), /不存在或未实装/);
-    assert.equal(store.get(r2.id).status, '待审批', '打回后仍待审批');
-  } finally {
-    manager.getApiStates = origStates;
-    manager.brandOf = origBrand;
-    const i = config.printers.indexOf(testPrinter);
-    if (i >= 0) config.printers.splice(i, 1);
-  }
 });
 
 check('staleThresholdMs:有预估按×2且≥1h,无预估退回固定12h', () => {
