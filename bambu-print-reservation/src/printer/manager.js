@@ -316,6 +316,13 @@ class PrinterManager {
         // X1/H2D 系=RTSP 暂不代理；闪铸=HTTP MJPEG 代理。机型不带摄像头则 false
         camera: cameraKind(p),
         cameraUrl: client && typeof client.getCameraUrl === 'function' ? client.getCameraUrl() : null,
+        // 打完等回执闸标记（2026-10-29 机队悬浮坞消费）：惰性 require 防循环依赖
+        receiptHold: (() => {
+          try {
+            const hold = require('./dispatcher').receiptHold;
+            return hold && hold.has(p.id) ? { recordId: hold.get(p.id) } : null;
+          } catch { return null; }
+        })(),
       };
     });
   }

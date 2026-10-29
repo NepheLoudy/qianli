@@ -323,3 +323,99 @@ dialog .actions { display: flex; gap: 10px; margin-top: 16px; }
   .row { grid-template-columns: 1fr; }
   .site-header .head { flex-wrap: wrap; padding: 10px 0; }
 }
+
+/* ---------- 机队悬浮坞（Fleet Dock，2026-10-29 曼波令「缩略版状态悬浮」） ---------- */
+#fleetDock {
+  position: fixed;
+  right: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 45;
+  width: 224px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .14);
+  transition: width .18s, transform .18s;
+}
+#fleetDock .fd-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--soft-line);
+  cursor: default;
+}
+#fleetDock .fd-title { color: var(--accent); font-size: 11px; font-weight: 500; letter-spacing: .18em; }
+#fleetDock .fd-summary { color: var(--muted); font-size: 12px; flex: 1; text-align: right; }
+#fleetDock .fd-fold {
+  border: none;
+  background: none;
+  color: var(--subtle);
+  padding: 0 2px;
+  font-size: 14px;
+  cursor: pointer;
+  line-height: 1;
+}
+#fleetDock .fd-fold:hover { color: var(--accent); }
+#fleetDock .fd-body { padding: 6px 0; max-height: 60vh; overflow-y: auto; }
+#fleetDock .fd-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background .12s;
+}
+#fleetDock .fd-row:hover { background: var(--surface); }
+#fleetDock .fd-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#fleetDock .fd-status { color: var(--subtle); font-size: 11.5px; white-space: nowrap; }
+#fleetDock .fd-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 8px; background: var(--subtle); }
+#fleetDock .fd-dot--ok { background: var(--ok); }
+#fleetDock .fd-dot--info { background: var(--info); }
+#fleetDock .fd-dot--accent { background: var(--accent); }
+#fleetDock .fd-dot--warn { background: var(--warn); }
+#fleetDock .fd-dot--bad { background: var(--bad); }
+#fleetDock .fd-dot--dim { background: var(--subtle); }
+#fleetDock .fd-pulse { animation: fdPulse 2s ease-in-out infinite; }
+@keyframes fdPulse { 50% { opacity: .35; } }
+#fleetDock .fd-hold { cursor: pointer; }
+#fleetDock .fd-stale { color: var(--warn); font-size: 10.5px; border: 1px solid var(--warn); padding: 0 4px; }
+#fleetDock .fd-empty { color: var(--subtle); font-size: 12.5px; padding: 12px; text-align: center; }
+/* 折叠态：缩成边缘细条 */
+#fleetDock.collapsed { width: 46px; }
+#fleetDock.collapsed .fd-title, #fleetDock.collapsed .fd-summary, #fleetDock.collapsed .fd-status,
+#fleetDock.collapsed .fd-name, #fleetDock.collapsed .fd-hold, #fleetDock.collapsed .fd-stale { display: none; }
+#fleetDock.collapsed .fd-head { border-bottom: none; padding: 8px 6px; justify-content: center; }
+#fleetDock.collapsed .fd-row { justify-content: center; padding: 5px 0; }
+#fleetDock.collapsed .fd-body { max-height: none; }
+@media (max-width: 860px) {
+  #fleetDock { width: 190px; right: 8px; }
+  #fleetDock.collapsed { width: 40px; }
+}
+
+/* ---------- 页头导航（四页统一，当前页 accent 下划线——千里 nav 同款） ---------- */
+.site-nav { display: inline-flex; gap: clamp(8px, 1vw, 18px); margin-left: auto; }
+.site-nav a {
+  position: relative;
+  padding: 6px 2px;
+  font-size: 14px;
+  color: var(--text);
+  white-space: nowrap;
+  transition: color .16s;
+}
+.site-nav a:after {
+  content: "";
+  position: absolute;
+  left: 0; right: 0; bottom: -2px;
+  height: 3px;
+  background: var(--accent);
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform .18s;
+}
+.site-nav a:hover { color: var(--accent); }
+.site-nav a.on { color: var(--accent); font-weight: 500; }
+.site-nav a.on:after { transform: scaleX(1); }
+@media (max-width: 1100px) { .site-nav a { font-size: 13px; } }
+@media (max-width: 860px) { .site-nav { display: none; } /* 移动端收进页脚链接 */ }
