@@ -32,7 +32,7 @@ module.exports = {
       quickActions: [
         { id: 'install', label: 'npm install', cmd: 'npm install', cwd: '' },
       ],
-      notes: 'v19 起管理端点鉴权（/api/dispatch 与 /api/usage-sync/run 需 X-API-Token 头，GATEWAY_API_TOKEN 在 .env）+ 长连接启动失败自动重试（2s 起指数退避封顶 5min，30s 轮询自愈）；改路由/消费者登记先读 .agents/skills/qianli-chat-architecture/SKILL.md；不提供本地启动——本地实例会与部署目标(小电脑)抢共用应用唯一长连接，生产事件会被随机分流；使用统计（口径=机器人交互：显式路由/私聊/@机器人）每 30 分钟自动 upsert 到机器人项目看板「网关日活跃」单表（动态广场看板数据源，POST /api/usage-sync/run?force=1 手动补数；网关功能使用/网关队员活跃两表已下线）',
+      notes: 'v19 起管理端点鉴权（/api/dispatch、/api/usage-sync/run、/api/usage/report 需 X-API-Token 头，GATEWAY_API_TOKEN 在 .env）+ 长连接启动失败自动重试（2s 起指数退避封顶 5min，30s 轮询自愈）；改路由/消费者登记先读 .agents/skills/qianli-chat-architecture/SKILL.md；不提供本地启动——本地实例会与部署目标(小电脑)抢共用应用唯一长连接，生产事件会被随机分流；使用统计（口径=机器人交互：显式路由/私聊/@机器人）每 30 分钟自动 upsert 到机器人项目看板「网关日活跃」单表（动态广场看板数据源，POST /api/usage-sync/run?force=1 手动补数；网关功能使用/网关队员活跃两表已下线）',
     },
     {
       id: 'hub',
@@ -74,7 +74,7 @@ module.exports = {
       permissions: [
         '审批群（APPROVAL_CHAT_ID）：整体切换为仅 /approval-*',
         '值日管辖群（duty-bot /api/duty/policy 下发，当前=快递申领群）：hub 基础指令关闭，看板「值日助手」仅 @ 或私聊触发；关键词回答全群统一（未@也生效，2026-09-13）',
-        '私聊基础指令白名单 P2P_COMMAND_OPEN_IDS / P2P_COMMAND_CHAT_IDS（值日指令不限）',
+        '私聊基础指令白名单 P2P_COMMAND_OPEN_IDS / P2P_COMMAND_CHAT_IDS（值日指令不限；/print-bind、/print-pickup 打印自助两条豁免，2026-10-29 起）',
         '抽奖：@机器人 发「/工作表名」即抽一次（抽奖配置表.xlsx 一个工作表=一个指令=一个奖池，复制表改名即新抽奖；值日管辖群可用；审批群不开放；私聊按指令白名单口径）；LOTTERY_CHAT_IDS 可收窄；动态进 /help',
       ],
       localRun: { script: 'server/src/index.js', cwd: '', env: {} },
@@ -159,6 +159,7 @@ module.exports = {
       windows: [
         { m: 'GET', p: '/api/tickets/policy', d: '播报路由/审批节点/多人单窗口/组长映射/门禁全景（只读）' },
         { m: 'GET', p: '/api/tickets/workload-by-person', d: '未结单工单按人展开（open_id 粒度，负载视角不做路由过滤；hub /api/hub/workload 聚合数据源）' },
+        { m: 'GET', p: '/api/tickets/unclosed-by-group', d: '未结单工单按负责人组别分桶（pm-robot DDL 分栏「未结单工单」取数端点，五桶口径见 ticket-bot README）' },
       ],
       notes: '多人接单批次已随 v61（f6f73e2）推送：出站 fetch 15s 超时、审批人解析失败不缓存自愈、接单队列复用全量记录、静默积压挪址 QUIET_BACKLOG_FILE；v64 起同群并发接单串行化（补充负责人合并写不再互相覆盖）；v65 起搬运人员口径=补充负责人全员（指定负责人公示即绑定入补充负责人，专项搬运废止；指定负责人本身不再直接入看板）；v66 起接单类消息按群实时队列门禁（无单群静默，不再回无待接单提示）；工单播报/接单/结单/审批自动通过事件写入动态广场（机器人项目看板）',
     },
@@ -215,7 +216,7 @@ module.exports = {
       localRun: { script: 'src/index.js', cwd: '', env: {} },
       quickActions: [
         { id: 'install', label: 'npm install', cmd: 'npm install', cwd: '' },
-        { id: 'test', label: '全量 stub 测试（13 套）', cmd: 'npm run test', cwd: '' },
+        { id: 'test', label: '全量 stub 测试（20 套）', cmd: 'npm run test', cwd: '' },
         { id: 'table-check', label: '表格字段校验', cmd: 'npm run table:check', cwd: '' },
         { id: 'plaza-tables', label: '动态广场建表（幂等）', cmd: 'node scripts/create-plaza-tables.js', cwd: '' },
       ],
@@ -259,7 +260,7 @@ module.exports = {
       ],
       windows: [
         { m: 'GET', p: '/api/netlog/summary', d: '当前 lan/wan 状态 + 最近 50 条网络事件 + 复活引擎状态（基线/队列/最近动作）' },
-        { m: 'POST', p: '/api/netlog/revive', d: '手动触发断网复活流程（X-API-Token=netlog .env NETLOG_API_TOKEN；fail-closed）' },
+        { m: 'POST', p: '/api/netlog/revive', d: '手动触发断网复活流程（X-API-Token=netlog .env NETLOG_API_TOKEN；fail-closed）', tokenKey: 'NETLOG_API_TOKEN' },
       ],
       notes: 'v2（2026-09-27）：断网复活引擎上线——账号池 campus-accounts.local.json（7 账号，31108753 首选项；push.js 备份守卫上传）；协议=Dr.COM eportal :801（考古自 4A ping.sh 归档）；慢速判定=自适应基线×3 →「本月不再使用」；账号池每自然月自动解禁。v1 特性全部保留（落盘/积压补发/防抖）',
     },

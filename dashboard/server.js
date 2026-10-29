@@ -107,7 +107,10 @@ function stopLocal(id) {
   const p = localProcs.get(id);
   if (!p || p.child.exitCode !== null) return { ok: false, error: '本地进程未在运行' };
   if (process.platform === 'win32') {
-    spawn('taskkill', ['/pid', String(p.child.pid), '/T', '/F'], { shell: false });
+    // taskkill 结果接进进程日志：失败（权限/进程已退）此前无声，UI 恒显示已停
+    const tk = spawn('taskkill', ['/pid', String(p.child.pid), '/T', '/F'], { shell: false });
+    tk.stdout.on('data', (d) => String(d).split(/\r?\n/).forEach((l) => l && pushLog(id, `[taskkill] ${l.trim()}`)));
+    tk.stderr.on('data', (d) => String(d).split(/\r?\n/).forEach((l) => l && pushLog(id, `[taskkill][err] ${l.trim()}`)));
   } else {
     p.child.kill('SIGINT');
   }
@@ -555,7 +558,20 @@ app.post('/api/deploy/api', async (req, res) => {
     const bodyB64 = Buffer.from(JSON.stringify(req.body?.body ?? {}), 'utf-8').toString('base64');
     cmd = `printf '%s' ${shQuote(bodyB64)} | base64 -d | ` + cmd + ` --data-binary @-`;
     // 管理端点鉴权（2026-09-13）：POST 自动附共享 X-API-Token（凭据直读 approval-bot/.env）
-    const apiToken = (readDeployConfig() || {}).apiToken || '';
+    // 各域 token 键可能不同（netlog 用 NETLOG_API_TOKEN）：窗口条目声明 tokenKey 时按目标项目 .env 取值，
+    // 读不到或未声明回落全局键——2026-10-30 审查批修复（定制中心对手动复活恒 401）
+    let apiToken = (readDeployConfig() || {}).apiToken || '';
+    const tokenKey = String(req.body?.tokenKey || '');
+    if (tokenKey && /^[A-Z0-9_]+$/.test(tokenKey)) {
+      const proj = registry.projects.find((p) => p.port === port);
+      if (proj) {
+        try {
+          const envText = fs.readFileSync(path.join(ROOT, proj.dir, '.env'), 'utf-8');
+          const v = ((envText.match(new RegExp(`^${tokenKey}=(.*)$`, 'm')) || [])[1] || '').trim();
+          if (v) apiToken = v;
+        } catch (err) { /* 项目无 .env，回落全局 token */ }
+      }
+    }
     if (apiToken) cmd += ` -H ` + shQuote(`X-API-Token: ${apiToken}`);
   }
   cmd += ` ` + shQuote(`http://localhost:${port}${apiPath}`);

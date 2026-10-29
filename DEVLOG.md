@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 push 归档提交。本仓库远程为 `github.com/NepheLoudy/bambu-print-reservation`——它由 bambu 独立仓库演化而来（v9 起转型 monorepo），故早期版本即 bambu 的早期历史（细节见 [bambu-print-reservation/DEVLOG.md](bambu-print-reservation/DEVLOG.md)）。v1~v25 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](AGENTS.md)）。
 
-当前最新：**v158**（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
+当前最新：**v159**（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
 
 ## 阶段一 · bambu 独立仓库时期（2026-07-15 ~ 07-21）
 
@@ -1357,3 +1357,14 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - **时钟事故（记录在案）**：本机系统时钟在 15:5x 前慢了约 13 小时（显示 02:5x 实为 15:5x），期间产生的 mtime/日志时间戳需按绝对 epoch 解读；已自动校回（GitHub Date 头锚定）。此前「凌晨」类判断作废；两机当前时钟一致。
 - 测试总账：gateway 三桩+冒烟全绿、duty 17 套全绿；其余仓本轮无改动。
 - 哈希回填：v157=`04efc29`。
+
+## v159 · 2026-10-30 · 随本提交落地 · feat
+
+**运维台印刷品 UI 重置 + 人机工效迭代 + 四仓全量审查修复批联动**
+
+- **运维台 UI 重置（曼波令，参照 bambu v58 印刷品风格，bambu 侧零改动）**：index.html style 块整体重写为同源设计系统——衬线字体/1px 硬边框/无圆角/亮色品牌粉 #ed2174 ↔ 暗色荧光绿 #5cfc90 双主题/大字距眉题/印刷表格；class 名与 id 全部保留，业务 JS 零改动；主题切换胶囊 localStorage 键 qli-theme 与打印预约台共享（全站联动）；head 预置脚本防闪，无存储默认暗。旧 CSS 变量名（--txt/--dim/--err 等）作为别名映射保留，内联 style 的 var() 引用不受影响。补 `color-scheme` 声明（亮/暗各一）——浏览器正确渲染滚动条/表单控件并关掉强制暗化误判。browser 双主题三屏截图验收（首屏/状态矩阵/团队负载榜/网络拓扑树）全过。
+- **人机工效迭代**：停用整张回答表加确认（影响线上自动回答）；值日管辖群在线改写保存前列出变更内容确认（即时生效影响 hub 群闸门）；页面隐藏（document.hidden）暂停全部五路轮询、回前台立即刷一轮。
+- **运维台 P1 修复 · netlog 复活按钮 401**：定制中心 /api/deploy/api 统一附全局 API_TOKEN，而 netlog 校验独立键 NETLOG_API_TOKEN（实测两值不等）——registry 窗口条目支持声明 tokenKey，server 按目标项目 .env 取键（白名单字符校验+读不到回落全局），前端 deployApi 透传。stopLocal 的 taskkill 结果接进进程日志（此前失败无声 UI 恒显示已停）。
+- **registry 补登三处**：duty quickAction 测试数 13→20 套（zklink 系列扩容后漂移）；ticket windows 补 GET /api/tickets/unclosed-by-group（两仓联动契约端点漏登记）；hub permissions 补 /print-bind、/print-pickup 私聊豁免两条（v135/v136 文档欠账）。
+- **四仓全量审查修复批（四个只读子代理分仓审查 + 主会话修复，各自 DEVLOG 详录）**：ticket-bot v93 播报卡消毒（hub 修了下游没修源头的跨仓缺口）+ pm v137 消毒一致性/关键词防互答/文档同步 + approval v90 form_alert_live 冲刷注册（P1）/回执诚实性/台账白名单/时区统一/消毒补网/.env.example 补 17 键 + gateway v40 统计落盘原子写/日桶钉东八区/health 透出 SDK 真实态。全部桩测试全绿（新增 stub-test-card-sanitize 11 断言、stub-test-form-alert-live 4 断言、keyword-post 补断言）。
+- 审查遗留待确认清单见各仓 DEVLOG（approval 静默重跑 7 次/gateway reconnecting 行为面/pm 宽口径 @判定 等——均按「不揣测设计意图」原则记录两种读法，未擅动）。

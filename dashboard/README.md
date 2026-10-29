@@ -39,7 +39,7 @@ stderr/事件日志地静默死亡）。Startup 里另有 `qianli-ops-console-au
 | 职能与权限 | 每个项目的角色、监听链路、指令/接口、权限边界（`registry.js` 为单一事实来源） |
 | 更新状态 | 各仓 git 分支 / 最新提交 / 未提交改动数 |
 | 运行日志 | 部署目标 pm2 日志（SSH tail ~/.pm2/logs）+ 本地测试进程实时输出 |
-| **定制中心** | 各机器人后端定制窗口（`registry.js` 的 `windows` 清单）：白名单增删、名册全景与通讯录刷新、管辖策略/定制项全景、关键词回答表可视化编辑（增删改/启停/切表），读写经 `/api/deploy/api`（SSH curl）直达部署目标本机接口 |
+| **定制中心** | 各机器人后端定制窗口（`registry.js` 的 `windows` 清单）：白名单增删、名册全景与通讯录刷新、管辖策略/定制项全景、关键词回答表可视化编辑（增删改/启停/切表），读写经 `/api/deploy/api`（SSH curl）直达部署目标本机接口；POST 自动附 `X-API-Token`——默认取 approval-bot/.env 的 `API_TOKEN`（全局共享键），窗口条目声明 `tokenKey` 时改读目标项目 .env 同名键（如 netlog 复活端点用 `NETLOG_API_TOKEN`），读不到回落全局 |
 | **网络拓扑** | 云/主路由/小电脑/旧NAS/4A 打印隔离区分区图（TCP 并行探测 + 出口 IP；裁判系统路由器已配置未部署，静态占位）；LAN 设备发现（ping 扫描 + ARP + OUI 厂商标注）与踢出/封禁/解封（经小米路由器 MAC 过滤，封禁持久化 `.banned-devices.json`） |
 | **R14 看门狗** | 每小时 SSH 逐端口 curl 各服务 `/api/health`（先探主路由判离站，连 2 轮异常才告警、12h 重提醒；23:00-09:00 静默 pending 补发；告警走 duty-bot 看板 webhook 或 `WATCHDOG_WEBHOOK_URL`） |
 
