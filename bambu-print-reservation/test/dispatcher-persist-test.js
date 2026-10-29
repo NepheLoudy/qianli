@@ -141,8 +141,26 @@ check('状态文件缺失时静默跳过', () => assert.equal(d5.queue.length, 0
   });
 
   let exhaustedTask = null;
-  for (let i = 0; i < config.dispatch.maxRetries - 1; i++) exhaustedTask = await failOnce(d8);
-  check(`运行期失败累计 ${config.dispatch.maxRetries} 次：进入 givenUp 退出队列`, () => {
+  // 热修68 复打熔断：30 分钟内二次失败不再重排，直接转 givenUp（误判上限钉在「多打一次」）
+  const t2 = await failOnce(d8);
+  check('30 分钟内二次失败：熔断转 givenUp 退出队列（热修68）', () => {
+    assert.equal(d8.queue.length, 0);
+    assert.ok(d8.givenUp.has('f1'), JSON.stringify([...d8.givenUp.keys()]));
+    assert.equal(t2.dispatchRetries, 2);
+  });
+
+  // 慢失败路径（每次把 lastPrintFailAt 拨到窗口外）：仍按 maxRetries 累计耗尽
+  d8.givenUp.delete('f1');
+  const slowTask = mkTask();
+  slowTask.lastPrintFailAt = 0;
+  for (let i = 0; i < config.dispatch.maxRetries; i++) {
+    slowTask.lastPrintFailAt = Date.now() - 31 * 60 * 1000; // 视为超窗口的历史失败
+    d8.queue = []; // 模拟分发已把任务从队列取走（真实链路：dispatch 出队 → printing）
+    d8.printing = new Map([[9, slowTask]]);
+    await d8.failTask(slowTask, { id: 9, name: 'P9' }, '慢失败');
+  }
+  exhaustedTask = slowTask;
+  check(`慢失败累计 ${config.dispatch.maxRetries} 次：进入 givenUp 退出队列`, () => {
     assert.equal(d8.queue.length, 0);
     assert.ok(d8.givenUp.has('f1'), JSON.stringify([...d8.givenUp.keys()]));
     assert.equal(exhaustedTask.dispatchRetries, config.dispatch.maxRetries);

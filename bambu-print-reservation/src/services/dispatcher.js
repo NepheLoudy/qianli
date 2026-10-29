@@ -25,7 +25,42 @@ const HUMAN_CANCEL_FAIL_CODES = new Set([
   201359426, // 0x0C008042 H2D 屏幕停机变体码（2026-10-24 R20261024-001 实证）
   50364437,  // 0x03008015 A1 系屏幕停止码（2026-10-29 R20261028-005/003 实证：A1 老世代
              // 停止不上报 fail_reason，码落在 print_error 位图——见 failed 分支 printError 通道）
+  83918929,  // 0x05008051 H2D 屏幕暂停/停止码（2026-10-29 R20261029-004 实证：08:54 停 →
+             // 判真故障重排 → 08:57 复打；与 fail_reason/print_error 同值出现）
 ]);
+
+/**
+ * 本次打印期间的 HMS 条目数（2026-10-29 热修68）：拓竹 hms 数组是**累积列表**，
+ * 停机后不清空——H2D 实案里躺着 2026-10-07 的陈年条目，被判成「本次故障证据」
+ * 导致屏幕停机后自动复打。只认 ts_unix 在开打之后的条目（无 startedAt 退 6 小时窗口；
+ * 无法解析时间戳的条目按证据计——宁可多判一次真故障，也不放过真实断料）。
+ */
+const HMS_TS_TOLERANCE_MS = 10 * 60 * 1000; // 时钟容差：HMS 可能比 startedAt 略早
+const HMS_FALLBACK_WINDOW_MS = 6 * 3600 * 1000;
+function parseHmsTs(h) {
+  const raw = h && (h.ts_unix != null ? h.ts_unix : h.ts);
+  if (raw == null) return null;
+  if (typeof raw === 'number') return raw > 1e12 ? raw : raw * 1000; // 秒/毫秒双兼容
+  const s = String(raw).trim();
+  if (/^\d{14}$/.test(s)) { // YYYYMMDDHHMMSS（打印机本地墙钟）
+    const p = [0, 4, 6, 8, 10, 12].map((i) => Number(s.slice(i, i + 2)));
+    const d = new Date(2000 + p[0], p[1] - 1, p[2], p[3], p[4], p[5]);
+    return Number.isFinite(d.getTime()) ? d.getTime() : null;
+  }
+  const n = Number(s);
+  if (Number.isFinite(n) && n > 0) return n > 1e12 ? n : n * 1000;
+  const d = new Date(s);
+  return Number.isFinite(d.getTime()) ? d.getTime() : null;
+}
+function freshHmsCount(hms, startedAt) {
+  const list = Array.isArray(hms) ? hms : [];
+  if (!list.length) return 0;
+  const since = (Number(startedAt) > 0 ? Number(startedAt) : Date.now() - HMS_FALLBACK_WINDOW_MS) - HMS_TS_TOLERANCE_MS;
+  return list.filter((h) => {
+    const ts = parseHmsTs(h);
+    return ts === null || ts >= since; // 无法判时代按证据计（保守，不放过真故障）
+  }).length;
+}
 // 系统自己发起的停止（控制台/页面）没有 0300-400C 码：用「停机意图」标记兜住——
 // 标记随任务落盘（humanStopRequested），重启后 failed/idle 事件仍按取消收尾
 const HUMAN_STOP_TTL_MS = 3 * 60 * 1000;
@@ -250,6 +285,7 @@ const STATE_FILE = process.env.DISPATCH_STATE_FILE || path.join(__dirname, '..',
 try { fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true }); } catch { /* 目录不可建时退化为不持久化，分发本身不受影响 */ }
 const KNOWN_CAP = 2000;
 const GIVEN_UP_CAP = 200; // givenUp 持久化截尾（人工恢复通道的容量护栏）
+const REPRINT_GUARD_MS = 30 * 60 * 1000; // 短时复打熔断窗口（2026-10-29 热修68）
 const PICKUP_CODE_TTL_MS = 24 * 3600 * 1000; // 取件码有效期（2026-10-29）：取件可能隔天，给足 24h
 
 // ============================================================
@@ -401,15 +437,28 @@ class Dispatcher {
             // 闪铸 errorCode），**无证据的 FAILED 默认按人为终止收尾**，只有带证据的
             // 才失败重排。误伤面：极罕见「无码真实故障」会落已取消（页面可见可重约），
             // 远小于旧行为「与人循环对抗到重试耗尽」的耗材浪费。
-            const hmsCount = Array.isArray(printer.hms) ? printer.hms.length : 0;
-            const hasErrorEvidence = hmsCount > 0 || Number(printer.printError) > 0 || Boolean(String(printer.errorCode || '').trim());
+            //
+            // 2026-10-29 热修68（H2D R20261029-004 复打实案）：证据必须**属于本次打印**——
+            // 该机 hms 里躺着 2026-10-07 的陈年条目（ts_unix 实测），被当成本次故障证据，
+            // 「屏幕停机 → 判真故障 → 自动复打」循环复现。三条加固：
+            //   ① HMS 时效过滤：只认本次开打后的条目（无 startedAt 时退 6 小时窗口）；
+            //   ② print_error 若等于 fail_reason（同值镜像），不算独立证据——只有它独有
+            //      的值才可能是另一路的真实故障位；
+            //   ③ 短时复打熔断（failTask 内）：同单 30 分钟内二次失败不再自动重排。
+            const hmsFresh = freshHmsCount(printer.hms, task && task.startedAt);
+            const pe = Number(printer.printError) || 0;
+            const fr = Number(printer.failReason) || 0;
+            const peIsMirror = pe > 0 && pe === fr; // 同值 = 同一路错误码的镜像，非独立证据
+            const hasErrorEvidence = hmsFresh > 0
+              || (pe > 0 && !peIsMirror)
+              || Boolean(String(printer.errorCode || '').trim());
             if (!hasErrorEvidence) {
-              console.log(`[分发] ${printer.name} 失败无故障证据（failReason=${printer.failReason || 0}，无 HMS/print_error/errorCode）→ 按人为终止收尾，不回排队`);
+              console.log(`[分发] ${printer.name} 失败无本次故障证据（failReason=${fr}，本次 HMS ${hmsFresh} 项/print_error=${pe}${peIsMirror ? '（与 fail_reason 同值镜像）' : ''}）→ 按人为终止收尾，不回排队`);
               this.humanTerminateTask(task, printer).catch((err) =>
                 console.error('[分发] 人为终止收尾失败:', err.message)
               );
             } else {
-              console.log(`[分发] ${printer.name} 打印失败（failReason=${printer.failReason || 0}，HMS ${hmsCount} 项/print_error=${printer.printError || 0}${printer.errorCode ? '/errorCode=' + printer.errorCode : ''}）→ 自动重排`);
+              console.log(`[分发] ${printer.name} 打印失败（failReason=${fr}，本次 HMS ${hmsFresh} 项/print_error=${pe}${printer.errorCode ? '/errorCode=' + printer.errorCode : ''}）→ 自动重排`);
               this.failTask(task, printer, '打印机上报失败状态');
             }
           }
@@ -1408,6 +1457,26 @@ class Dispatcher {
     // 运行期失败接入与分发失败同款的重试/让位通道（2026-09-15）：此前只把镜像表
     // 写回「排队中」而不重排，known 拦截重入队 → 单据永久滞留（失败卡却承诺会重排）
     task.dispatchRetries = (task.dispatchRetries || 0) + 1;
+    // 短时复打熔断（2026-10-29 热修68，H2D 复打实案的结构性兜底）：机器指纹不可全信
+    // （缺码/变体码/陈年 HMS 都见过），任何一次误判都会变成「人停一次、系统复打一次」。
+    // 同单在 REPRINT_GUARD_MS 内二次失败即不再自动重排——把误差上限钉死在「最多多打一次」，
+    // 转放弃池等人工决定（页面黄条可恢复/丢弃，DM 会通知）。
+    const nowFail = Date.now();
+    const recentFail = Number(task.lastPrintFailAt) > 0 && nowFail - Number(task.lastPrintFailAt) < REPRINT_GUARD_MS;
+    task.lastPrintFailAt = nowFail;
+    if (recentFail) {
+      console.error(`[分发] 任务 ${task.recordId} ${Math.round(REPRINT_GUARD_MS / 60000)} 分钟内二次失败——疑似人因终止/机器反复异常，停止自动重排转人工`);
+      this.givenUp.set(task.recordId, task);
+      this.persistState();
+      require('./reservation').notifyApplicantDm(task.recordId,
+        `⚠️ 你的打印单在短时间内连续失败两次（${String(reason || '').slice(0, 60)}）——已停止自动重打，转人工处理：确认不是人为停止后可让管理员恢复，或直接「复刻」重新提交`);
+      announce(
+        `失败卡 ${task.recordId}`,
+        require('../feishu/bot').buildJobFailedCard(task, printer, `打印失败：${reason}；短时间连续失败，已停止自动重打，转人工处理`),
+        (err) => console.error('[分发] 失败播报失败:', err.message)
+      );
+      return;
+    }
     if (task.dispatchRetries >= config.dispatch.maxRetries) {
       console.error(`[分发] 任务 ${task.recordId} 运行期失败已重试 ${task.dispatchRetries} 次，退出队列，请人工处理`);
       this.givenUp.set(task.recordId, task);
@@ -1788,3 +1857,6 @@ module.exports.brandForFile = brandForFile;
 module.exports.brandForFileWithMeta = brandForFileWithMeta;
 module.exports.buildAmsMapping = buildAmsMapping;
 module.exports.isHumanCancelFailReason = isHumanCancelFailReason;
+module.exports.freshHmsCount = freshHmsCount;
+module.exports.parseHmsTs = parseHmsTs;
+module.exports.REPRINT_GUARD_MS = REPRINT_GUARD_MS;

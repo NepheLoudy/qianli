@@ -237,6 +237,50 @@ function taskOf(rid, appNo) {
     && dispatcher.queue.some((t) => t.recordId === 'rWithEv'),
     JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
 
+  // 6i. 热修68（H2D R20261029-004 复打实案）：陈年 HMS 不算本次故障证据 + 停止码 + 复打熔断
+  calls.tableWrites.length = 0;
+  const staleHms = { recordId: 'rStaleHms', applicationNo: '2026S', fileToken: 'tok_s', fileSource: 'mirror' };
+  dispatcher.printing.set(1, staleHms);
+  dispatcher.queue.length = 0;
+  // 陈年条目（2026-10-07 的 ts_unix）+ 无法解析时按证据计，故此处给可解析的旧时间戳
+  listeners.jobEvent({
+    printer: { ...PRINTER, failReason: 0, printError: 0, hms: [{ attr: 84082688, code: 196649, ts_unix: '20261007142817' }] },
+    event: 'failed',
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[陈年 HMS] 本次无故障证据 → 已取消不重排（热修68）',
+    calls.tableWrites.some((w) => w.id === 'rStaleHms' && w.fields['申请状态'] === '已取消')
+    && !dispatcher.queue.some((t) => t.recordId === 'rStaleHms'),
+    JSON.stringify({ writes: calls.tableWrites }));
+
+  calls.tableWrites.length = 0;
+  const h2dStop = { recordId: 'rH2dStop', applicationNo: '2026U', fileToken: 'tok_u', fileSource: 'mirror' };
+  dispatcher.printing.set(1, h2dStop);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({
+    printer: { ...PRINTER, failReason: 83918929, printError: 83918929, hms: [{ attr: 84082688, code: 196649, ts_unix: '20261007142817' }] },
+    event: 'failed',
+  });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[H2D 停止码 0x05008051] 陈年 HMS + 同值镜像 → 已取消不重排',
+    calls.tableWrites.some((w) => w.id === 'rH2dStop' && w.fields['申请状态'] === '已取消')
+    && !dispatcher.queue.some((t) => t.recordId === 'rH2dStop'),
+    JSON.stringify({ writes: calls.tableWrites }));
+
+  calls.tableWrites.length = 0;
+  const loopTask = {
+    recordId: 'rLoop', applicationNo: '2026L', fileToken: 'tok_l', fileSource: 'mirror',
+    lastPrintFailAt: Date.now() - 5 * 60 * 1000, // 5 分钟前刚失败过一次
+  };
+  dispatcher.printing.set(1, loopTask);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 70001, printError: 0, hms: [{ code: '0701-2000' }] }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[复打熔断] 30 分钟内二次失败 → 转放弃池不重排（热修68）',
+    dispatcher.givenUp.has('rLoop') && !dispatcher.queue.some((t) => t.recordId === 'rLoop'),
+    JSON.stringify({ givenUp: [...dispatcher.givenUp.keys()], queue: dispatcher.queue.map((t) => t.recordId) }));
+  dispatcher.givenUp.delete('rLoop');
+
   // 6h. A1 老世代停止指纹（2026-10-29 热修61，R20261028-005/003 实案）：print_error 落
   // 0x03008015 人因码、fail_reason 不上报——printError 通道入识别 + 不算故障证据
   calls.tableWrites.length = 0;
