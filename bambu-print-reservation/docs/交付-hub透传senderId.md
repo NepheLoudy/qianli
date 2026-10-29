@@ -107,3 +107,22 @@ replyText = await handlePrintCommand(cmd.command, cmd.args, senderId);
 
 改完请回到 **bambu-print-reservation 会话**报一句「hub 已透传 senderId」，我再复跑一次
 端到端绑定验证并关单。若你判断这处改动属于别的项目边界，请明确说明改由谁接——**不要在本会话改 hub 代码**。
+
+---
+
+## 附：私聊单项豁免（2026-10-29，已改 hub）
+
+**问题**：队员私聊发 `/print-bind 码` 被回「⚠️ 指令仅支持在群聊中 @机器人 使用，私聊指令暂未开放」——
+hub 的 `isP2pCommandAllowed` 是全局私聊白名单（只管白名单账号），而绑定功能本身就是「绑私信通道」，
+白名单又要求先有 open_id（只有私聊发码才能拿到）→ 鸡生蛋，永远绑不上。
+
+**改法**（`server/src/services/chatService.js` 约 846–851 行，5 行）：
+```js
+const p2pExempt = cmd.command === '/print-bind';
+if (!isGroup && !p2pExempt && !isP2pCommandAllowed(senderId, message.chat_id)) { ...原拦截... }
+```
+仅豁免这一条指令，其余私聊规则不变（查看类 `/print-*`、其他域指令仍要白名单或进群）。
+
+**状态**：本地提交 `852d2cf` + 已推 GitHub；**部署待本机回到 192.168.31.x 局域网**
+（2026-10-29 07:2x 桌面机脱离 LAN，SSH/3001 全不可达）。回到 LAN 后执行：
+`cd ticket-pm/project-management-robot && npm run push` 即完成重启。
