@@ -82,7 +82,9 @@ function parseCommand(text) {
 
 async function postJson(url, body) {
   try {
-    // command 模式投递附共享 X-API-Token：下游（approval 等）09-29 起管理端点挂鉴权，裸转发会 403（v154 审查修复）
+    // 全部出站 POST 附共享 X-API-Token（历史口径统一附带；command 模式下游（approval 等）09-29 起
+    // 管理端点挂鉴权靠它过闸）。2026-10-30 审查批注释勘误：原注释只提 command 模式与实现不符——
+    // 现网消费者均在本机回环无泄露路径，未来新增指向外部的 CONSUMERS 时需重新评估附带范围
     const headers = { 'Content-Type': 'application/json' };
     if (process.env.GATEWAY_API_TOKEN) headers['X-API-Token'] = process.env.GATEWAY_API_TOKEN; // 与 auth.js 同源（config 未导出该键）
     const res = await fetchWithTimeout(url, {

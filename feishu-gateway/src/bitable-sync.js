@@ -29,10 +29,14 @@ const STATE_FILE = path.join(resolveDataDir(), 'usage-sync-state.json');
 let state = { sigs: {} };
 try { state = Object.assign(state, JSON.parse(fs.readFileSync(STATE_FILE, 'utf-8'))); } catch (err) { /* 首次空表 */ }
 let stateDirty = false;
+// 原子写（2026-10-30 审查批：与 usage.js flushStats 同模式，防崩溃截断）
 setInterval(() => {
   if (!stateDirty) return;
   stateDirty = false;
-  fs.writeFile(STATE_FILE, JSON.stringify(state), () => {});
+  const tmp = `${STATE_FILE}.tmp`;
+  fs.writeFile(tmp, JSON.stringify(state), () => {
+    fs.rename(tmp, STATE_FILE, () => {});
+  });
 }, 60 * 1000).unref();
 
 // SIGINT/SIGTERM 落盘（照 usage.js 惯例）：pm2 restart 前把未刷的签名状态写回，重启不重写全表。
@@ -110,7 +114,7 @@ async function runSync({ force = false } = {}) {
         console.warn('[使用统计同步] 写表失败（下轮重试）:', date, err.message);
       }
     }
-    // 只保留最近 35 天的签名（usage 本身保留 30 天）
+    // 只保留最近保留窗内的签名（与 usage 保留天数同长，30 天——2026-10-30 注释勘误：原写 35 天）
     for (const d of Object.keys(state.sigs)) {
       if (!days[d]) delete state.sigs[d];
     }

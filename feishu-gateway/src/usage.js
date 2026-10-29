@@ -27,14 +27,27 @@ const FILE = path.join(dataDir, 'usage-stats.json');
 let stats = { v: 1, names: {}, days: {}, funFeats: {}, funCmds: {}, mentions: {} };
 try {
   stats = Object.assign(stats, JSON.parse(fs.readFileSync(FILE, 'utf-8')));
-} catch (err) { /* 首次运行空表起步 */ }
+} catch (err) {
+  // 坏文件改名留存（2026-10-30 审查批 P2：崩溃截断后空表起步+回写会静默清零 30 天统计资产）
+  if (fs.existsSync(FILE)) {
+    try { fs.renameSync(FILE, `${FILE}.corrupt-${Date.now()}`); } catch (e2) { /* 留存失败仅日志 */ }
+    console.error('[使用统计] stats 文件解析失败，已改名留存后空表起步:', err.message);
+  }
+}
 
 let dirty = false;
+// 原子写（2026-10-30 审查批 P2）：先写 .tmp 再 rename 替换，进程强杀落在写中间也不会截断正式文件
+function flushStats(cb) {
+  const tmp = `${FILE}.tmp`;
+  fs.writeFile(tmp, JSON.stringify(stats), () => {
+    fs.rename(tmp, FILE, () => { if (cb) cb(); });
+  });
+}
 setInterval(() => {
   if (!dirty) return;
   dirty = false;
-  fs.writeFile(FILE, JSON.stringify(stats), () => {});
-}, 60 * 1000);
+  flushStats();
+}, 60 * 1000).unref();
 process.on('SIGINT', () => {
   try { fs.writeFileSync(FILE, JSON.stringify(stats)); } catch (err) { /* 退出不等落盘 */ }
   process.exit(0);
@@ -45,9 +58,11 @@ process.on('SIGTERM', () => {
 });
 
 const pad = (n) => String(n).padStart(2, '0');
+// 日桶按东八区固定偏移截取（2026-10-30 审查批 P2：与 bitable-sync toMs 的 +08:00 统一口径，
+// 宿主 TZ 变化不再导致日桶边界漂移）
 function dayKeyOffset(offsetDays) {
-  const d = new Date(Date.now() + offsetDays * 86400000);
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const d = new Date(Date.now() + 8 * 3600000 + offsetDays * 86400000);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
 }
 function today() {
   return dayKeyOffset(0);

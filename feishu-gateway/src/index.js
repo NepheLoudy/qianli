@@ -19,6 +19,7 @@ let wsRetryTimer = null;
 let wsRetryCount = 0;
 let wsClient = null;          // 当前 WSClient 实例（重试时整体新建）
 let wsStatusTimer = null;     // 连接状态巡检（兜底 SDK 静默失败场景）
+let wsSdkState = null;        // SDK 原始连接态透出（2026-10-30 审查批 P2 可观测性：reconnecting 等此前 health 恒报 running）
 const WS_RETRY_BASE_MS = 2 * 1000;      // 首次重试 2s(2026-09-14 提速:校园网被踢秒级自愈后尽快恢复事件流)
 const WS_RETRY_MAX_MS = 5 * 60 * 1000;  // 封顶 5 分钟
 const WS_CONNECTING_GIVE_UP_MS = Number(process.env.WS_CONNECTING_GIVE_UP_MS) || 5 * 60 * 1000; // connecting 恒挂兜底阈值（v21 遗留死常量 WS_START_WATCHDOG_MS 的本来语义，v154 落地实现）无响应看门狗
@@ -26,7 +27,7 @@ const WS_CONNECTING_GIVE_UP_MS = Number(process.env.WS_CONNECTING_GIVE_UP_MS) ||
 app.get('/api/health', (req, res) => {
   const full = {
     status: 'ok',
-    ws: wsLastError ? `error: ${wsLastError}` : wsStarted ? 'running' : wsConnecting ? 'connecting' : 'stopped',
+    ws: wsLastError ? `error: ${wsLastError}` : wsStarted ? (wsSdkState && wsSdkState !== 'connected' ? `running(${wsSdkState})` : 'running') : wsConnecting ? 'connecting' : 'stopped',
     uptime: process.uptime(),
     defaultTarget: config.defaultTarget,
     consumers: config.consumers,
@@ -170,9 +171,14 @@ function startWs() {
   // 状态巡检（30s）：兜底「SDK 未触发 onError 也未连上」的静默失败场景
   if (!wsStatusTimer) {
     wsStatusTimer = setInterval(() => {
+      // 取 SDK 原始态提前于早退条件：即使巡检处理逻辑被 wsStarted 早退，health 也能透出真实态
+      // （reconnecting/idle 等此前对 health 失明——2026-10-30 审查批 P2-1 可观测性部分；
+      // 巡检对已建连接的行为扩展列待确认，未改动）
+      let stNow = null;
+      try { stNow = wsClient && wsClient.getConnectionStatus ? wsClient.getConnectionStatus() : null; } catch { stNow = null; }
+      wsSdkState = stNow && stNow.state ? stNow.state : null;
       if (!wsClient || wsRetryTimer || wsStarted) return;
-      let st = null;
-      try { st = wsClient.getConnectionStatus ? wsClient.getConnectionStatus() : null; } catch { st = null; }
+      let st = stNow;
       if (st && st.state === 'failed') {
         wsConnecting = false;
         wsConnectingSince = 0;
