@@ -100,7 +100,8 @@ replyText = await handlePrintCommand(cmd.command, cmd.args, senderId);
 | 打印服务接收端 | ✅ 已上线并自测（生码→带 senderId→绑定成功） |
 | 真人飞书端到端 | ⬜ 待一次实发验证（见下） |
 
-**真人验证步骤（30 秒）**：网页右上「🔔 飞书通知」拿 6 位码 → 飞书发 （私聊需在 P2P_COMMAND_OPEN_IDS 白名单内；群里 @机器人 全员可用）→ 期望回「✅ 已绑定飞书私信通知」。
+**真人验证步骤（30 秒）**：网页右上「🔔 飞书通知」拿 6 位码 → 飞书发 `/print-bind 码`
+（私聊需在 P2P_COMMAND_OPEN_IDS 白名单内；群里 @机器人 全员可用）→ 期望回「✅ 已绑定飞书私信通知」。
 
 ## 六、回执要求
 
