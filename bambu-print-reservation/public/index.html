@@ -4,178 +4,117 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>千里战队3D打印预约中心</title>
+<link rel="stylesheet" href="/styles.css?v=20261029">
+<script>
+  /* 主题（亮/暗）持久化——UI 层，与业务逻辑无关 */
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('qli-theme'); } catch (e) { /* 隐私模式忽略 */ }
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme', 'light');
+  })();
+</script>
 <style>
-  /* ============ 千里战队3D打印预约中心 · 工业控制台主题 ============ */
-  :root {
-    --bg0: #0a0d12; --bg1: #10141b; --bg2: #161c26; --inset: #0c1016;
-    --line: #212a36; --line2: #2c3745;
-    --ink: #e8edf4; --muted: #7e8a99; --dim: #55606e;
-    --amber: #ffb02e; --amber2: #ff8f1f; --hot: #ff6a2b;
-    --cyan: #53d6f0; --ok: #35d07f; --warn: #ffb02e; --bad: #ff5d5d;
-    --accent: var(--amber);
-    --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg0); color: var(--ink);
-    padding: 0 16px 40px; min-height: 100vh;
-    background-image:
-      radial-gradient(1200px 500px at 75% -10%, rgba(255, 138, 31, .07), transparent 60%),
-      repeating-linear-gradient(0deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px),
-      repeating-linear-gradient(90deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px);
-    background-attachment: fixed;
-  }
-  .wrap { max-width: 1060px; margin: 0 auto; }
-  /* 页头：徽标块 + 战队名 + 危险条纹分隔 */
-  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 22px 4px 14px; position: relative; }
-  .head::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
-    background: repeating-linear-gradient(-45deg, var(--amber) 0 12px, #131920 12px 24px); opacity: .85; border-radius: 2px; }
-  .brandbar { display: flex; align-items: center; gap: 14px; }
-  .brandmark { width: 46px; height: 46px; flex: 0 0 46px; background: linear-gradient(135deg, var(--amber), var(--hot));
-    clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); display: flex; align-items: center; justify-content: center;
-    font: 800 20px/1 var(--mono); color: #14100a; letter-spacing: -1px; }
-  h1 { font-size: 21px; letter-spacing: 2px; font-weight: 700; }
-  h1 .en { display: block; font: 600 10px/1.4 var(--mono); letter-spacing: 3px; color: var(--muted); text-transform: uppercase; }
-  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .sub a { color: var(--cyan); text-decoration: none; }
-  .userbox { font-size: 13px; text-align: right; }
-  .userbox .role { display: inline-block; padding: 1px 9px; border-radius: 3px; color: #14100a; font: 700 11px/1.6 var(--mono); margin: 0 4px; letter-spacing: 1px; }
-  .r-admin { background: var(--amber); } .r-reviewer { background: var(--cyan); color: #0c2230; } .r-member { background: #8b98a8; color: #10141b; }
-  .userbox button { padding: 3px 10px; font-size: 12px; background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; cursor: pointer; }
-  .userbox a { color: var(--cyan); font-size: 12px; margin-right: 6px; }
-  /* 卡片：切角面板 + 左侧分类色条 */
-  .card { background: var(--bg1); border: 1px solid var(--line); border-radius: 4px;
-    padding: 16px 18px 18px; margin-bottom: 18px; position: relative;
-    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
-  .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: linear-gradient(180deg, var(--amber), transparent 120%); opacity: .7; }
-  .card h2 { font-size: 14px; margin-bottom: 14px; letter-spacing: 1.5px; color: var(--ink); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .card h2 .sub { display: inline; margin: 0; letter-spacing: 0; }
-  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; letter-spacing: .5px; }
-  input[type=text], input[type=number], input[type=password], select {
-    width: 100%; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 3px; font-size: 14px;
-    background: var(--inset); color: var(--ink); transition: border-color .15s;
-  }
-  input:focus, select:focus { outline: none; border-color: var(--amber); }
-  input[type=file] { font-size: 13px; color: var(--muted); }
-  .row { display: flex; gap: 12px; flex-wrap: wrap; }
-  .row > div { flex: 1; min-width: 140px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 10px; }
-  .tabs button { flex: 1; padding: 8px; border: 1px solid var(--line2); background: var(--inset); color: var(--muted); border-radius: 3px; cursor: pointer; font-size: 13px; }
-  .tabs button.on { background: var(--amber); color: #14100a; border-color: var(--amber); font-weight: 700; }
-  .group { border: 1px dashed var(--line2); border-radius: 4px; padding: 10px 12px; margin-top: 12px; background: rgba(255, 176, 46, .025); }
-  .group > .gtitle { font-size: 13px; font-weight: 600; margin-bottom: 4px; cursor: help; }
-  .group > .gdesc { font-size: 11px; color: var(--muted); margin-bottom: 8px; }
-  .opts { display: flex; flex-wrap: wrap; gap: 8px; }
-  .opt { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; padding: 5px 11px; border: 1px solid var(--line2);
-    border-radius: 3px; cursor: pointer; user-select: none; background: var(--inset); color: var(--ink); transition: all .12s; }
-  .opt:hover { border-color: var(--amber); }
-  .opt.on { background: rgba(255, 176, 46, .16); border-color: var(--amber); color: var(--amber); box-shadow: inset 0 0 0 1px rgba(255, 176, 46, .35); }
-  .opt input { display: none; }
-  .hint { font-size: 12px; margin-top: 6px; min-height: 16px; color: var(--muted); }
-  .hint.warn { color: var(--warn); } .hint.bad { color: var(--bad); }
-  button.primary { padding: 10px 22px; border: none; border-radius: 3px; font-size: 14px; font-weight: 700; cursor: pointer;
-    background: linear-gradient(135deg, var(--amber), var(--hot)); color: #14100a; letter-spacing: 2px;
-    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%); }
-  button.ok { background: #123527; color: var(--ok); border: 1px solid #1e5c40; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-  button.bad { background: #3d1614; color: var(--bad); border: 1px solid #6e2a26; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-  button.mini { background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 3px; padding: 3px 9px; cursor: pointer; font-size: 12px; }
-  button:not(:disabled):hover { filter: brightness(1.15); }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-  .actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: 1px; font-family: var(--mono); }
-  .badge { display: inline-block; padding: 2px 9px; border-radius: 3px; font-size: 12px; color: #14100a; font-weight: 700; font-family: var(--mono); letter-spacing: .5px; }
-  .s-待审批 { background: var(--warn); } .s-已通过 { background: var(--cyan); color: #0c2230; }
-  .s-排队中 { background: #8fa4ff; color: #131928; } .s-打印中 { background: var(--hot); animation: pulse 2s ease-in-out infinite; }
-  .s-已完成 { background: var(--ok); color: #0c2417; } .s-已驳回, .s-已取消 { background: #6b7684; color: #10141b; }
-  @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255, 106, 43, .5); } 50% { box-shadow: 0 0 0 6px rgba(255, 106, 43, 0); } }
-  tbody tr { transition: background .12s; }
-  tbody tr:hover { background: rgba(255, 176, 46, .04); }
-  button { transition: filter .12s, transform .05s; }
-  button:not(:disabled):active { transform: translateY(1px); }
-  .histToggle, .paramToggle { color: var(--cyan); cursor: pointer; font-size: 12px; user-select: none; }
-  .histToggle:hover, .paramToggle:hover { text-decoration: underline; }
-  /* taxonomy 组折叠 */
-  .group > .gtitle::after { content: '▾'; float: right; color: var(--muted); font-size: 11px; transition: transform .15s; }
+  /* ============ 千里战队3D打印预约中心 · 印刷品风格（基准 team.cquqianli.cn） ============ */
+  /* 共享设计系统：双主题令牌 / 衬线 / 1px 硬边框 / 粉↔绿 */
+  .page-only { display: none; }
+
+  /* ---- 打印机单行横向滚动（2026-10-17 曼波令：一行左右转） ---- */
+  .printer-grid { display: flex; gap: 16px; overflow-x: auto; padding-bottom: 8px; }
+  .pcard { flex: 0 0 320px; padding: 14px 18px; font-size: 13.5px; }
+  .pcard .st { float: right; }
+
+  /* ---- 提单勾选组（taxonomy）---- */
+  .group { border: 1px dashed var(--line); padding: 12px 16px; margin-top: 14px; background: var(--surface); }
+  .group > .gtitle { font-size: 14px; font-weight: 500; margin-bottom: 4px; cursor: help; user-select: none; }
+  .group > .gtitle::after { content: '▾'; float: right; color: var(--subtle); font-size: 11px; transition: transform .15s; }
   .group.collapsed > .gtitle::after { content: '▸'; }
   .group.collapsed > :not(.gtitle) { display: none; }
-  .group > .gtitle { user-select: none; }
-  /* 已选工况摘要 chips */
-  .selSummary { margin-top: 10px; display: none; align-items: center; flex-wrap: wrap; gap: 6px; }
-  .selSummary .sumChip { display: inline-block; background: rgba(83, 214, 240, .1); border: 1px solid rgba(83, 214, 240, .35); color: var(--cyan); border-radius: 3px; padding: 2px 10px; font-size: 12px; font-family: var(--mono); }
+  .group > .gdesc { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
+  .opts { display: flex; flex-wrap: wrap; gap: 8px; }
+  .opt {
+    display: inline-flex; align-items: center; gap: 5px; font-size: 13.5px;
+    padding: 5px 12px; border: 1px solid var(--line); cursor: pointer; user-select: none;
+    background: var(--card-bg); color: var(--text); transition: border-color .12s, color .12s, background .12s;
+  }
+  .opt:hover { border-color: var(--accent); }
+  .opt.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 500; }
+  .opt input { display: none; }
+  .typedesc { font-size: 12px; color: var(--info); margin-top: 3px; min-height: 14px; }
+
+  /* ---- 已选工况摘要 chips ---- */
+  .selSummary { margin-top: 12px; display: none; align-items: center; flex-wrap: wrap; gap: 6px; }
+  .selSummary .sumChip { display: inline-block; border: 1px solid var(--line); background: var(--surface); color: var(--text); padding: 2px 10px; font-size: 12px; }
   .selSummary .sumClear { color: var(--bad); cursor: pointer; font-size: 12px; user-select: none; }
   .selSummary .sumClear:hover { text-decoration: underline; }
-  .staleTag { display: inline-block; background: #6b7684; color: #10141b; border-radius: 3px; font-size: 11px; padding: 1px 7px; margin-left: 5px; font-family: var(--mono); }
-  .queueLine { font-size: 12px; color: var(--muted); margin-bottom: 6px; line-height: 1.7; }
-  .queueLine b { color: var(--amber); font-family: var(--mono); }
-  /* 移动端：表格卡片化 + 触控目标放大 */
+
+  /* ---- 队列行 / 陈旧标记 / 轨迹开关 ---- */
+  .queueLine { font-size: 13px; color: var(--muted); margin-bottom: 8px; line-height: 1.8; }
+  .queueLine b { color: var(--accent); }
+  .staleTag { display: inline-block; border: 1px solid var(--line); color: var(--subtle); font-size: 11px; padding: 1px 7px; margin-left: 5px; letter-spacing: .08em; }
+  .histToggle, .paramToggle { color: var(--accent); cursor: pointer; font-size: 12.5px; user-select: none; }
+  .histToggle:hover, .paramToggle:hover { text-decoration: underline; }
+
+  /* ---- 比例尺 / 预览 / 模型特征 chips ---- */
+  .scaleRow { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
+  .scaleRow input[type=range] { flex: 1; accent-color: var(--accent); }
+  .scaleVal { min-width: 24px; text-align: center; font-weight: 500; color: var(--accent); }
+  .scaleHint { font-size: 12px; color: var(--subtle); white-space: nowrap; }
+  .convention { font-size: 12px; color: var(--subtle); margin-top: 8px; }
+  .preview { border-left: 3px solid var(--accent); }
+  .preview b { color: var(--accent); }
+  .preview .pv { display: inline-block; margin: 2px 10px 2px 0; }
+  .mfChips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
+  .mfChip { background: var(--surface); border: 1px solid var(--line); padding: 1px 8px; font-size: 11.5px; color: var(--muted); }
+  .mfNotes { margin-top: 6px; line-height: 1.8; }
+  .mfFoot { margin-top: 6px; color: var(--subtle); font-size: 12px; }
+  .revbox { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+
+  /* ---- 用户区 / 角色徽章 ---- */
+  .userbox { font-size: 14px; text-align: right; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+  .userbox button { padding: 3px 10px; font-size: 12.5px; }
+  .userbox a { color: var(--accent); font-size: 12.5px; }
+
+  /* ---- 登录/注册 tabs、按钮语义色 ---- */
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; }
+  .tabs button { min-width: 120px; }
+  .actions { margin-top: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  button.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
+  button.bad { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
+
+  /* ---- 移动端：表格卡片化 ---- */
   @media (max-width: 720px) {
-    body { padding: 0 10px 30px; }
-    .opt { padding: 9px 13px; font-size: 14px; }
-    button.mini { padding: 7px 12px; font-size: 13px; }
-    .card { padding: 12px; }
+    .wrap { width: calc(100% - 20px); }
+    .opt { padding: 8px 12px; font-size: 14px; }
+    button.mini { padding: 6px 11px; font-size: 13px; }
+    .pcard { flex: 0 0 86%; }
     table, tbody, tr, td { display: block; width: 100%; }
     thead { display: none; }
-    tbody tr { border: 1px solid var(--line); border-radius: 4px; padding: 10px; margin-bottom: 10px; background: var(--bg2); }
+    tbody tr { border: 1px solid var(--line); padding: 10px 12px; margin-bottom: 12px; background: var(--card-bg); }
     td { border-bottom: none; padding: 3px 0; }
-    td::before { content: attr(data-label); display: inline-block; min-width: 62px; color: var(--muted); font-size: 11px; }
+    td::before { content: attr(data-label); display: inline-block; min-width: 62px; color: var(--subtle); font-size: 11.5px; letter-spacing: .1em; }
     td:last-child::before { content: none; }
-    .pcard { min-width: 100%; }
   }
-  .pbar { height: 6px; background: var(--inset); border-radius: 2px; overflow: hidden; margin-top: 4px; }
-  .pbar > div { height: 100%; background: linear-gradient(90deg, var(--amber), var(--hot)); }
-  .printer-grid { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; } /* 打印机单行横向滚动（2026-10-17 曼波令：一行左右转，不要多行摊开） */
-  .pcard { flex: 0 0 320px; border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; font-size: 13px; background: var(--bg2); }
-  .pcard .st { float: right; }
-  .detail { font-size: 12px; color: var(--muted); }
-  .detail b { color: var(--ink); }
-  .revbox { margin-top: 10px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg2); color: var(--ink);
-    border: 1px solid var(--line2); border-left: 3px solid var(--amber);
-    padding: 10px 18px; border-radius: 4px; font-size: 13px; display: none; max-width: 80vw; z-index: 10; }
-  .empty { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
-  .convention { font-size: 11px; color: var(--muted); margin-top: 8px; }
-  .scaleRow { display: flex; align-items: center; gap: 10px; padding: 6px 2px; }
-  .scaleRow input[type=range] { flex: 1; accent-color: var(--amber); }
-  .scaleVal { min-width: 22px; text-align: center; font-weight: 700; color: var(--amber); font-family: var(--mono); }
-  .scaleHint { font-size: 11px; color: var(--muted); white-space: nowrap; }
-  .typedesc { font-size: 11px; color: var(--cyan); margin-top: 2px; min-height: 13px; }
-  .warnbar { background: rgba(255, 176, 46, .08); border: 1px solid rgba(255, 176, 46, .35); border-radius: 4px; padding: 8px 12px; font-size: 12px; color: var(--amber); margin-bottom: 10px; }
-  .warnbar button { margin-left: 6px; }
-  select.roleSel { width: auto; padding: 3px 6px; font-size: 12px; }
-  .preview { margin-top: 12px; padding: 10px 12px; background: var(--inset); border: 1px solid var(--line2); border-left: 3px solid var(--cyan); border-radius: 3px; font-size: 12px; }
-  .preview b { color: var(--cyan); }
-  .preview .pv { display: inline-block; margin: 2px 10px 2px 0; font-family: var(--mono); }
-  .mfChips { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px; }
-  .mfChip { background: var(--bg2); border: 1px solid var(--line2); border-radius: 3px; padding: 1px 8px; font-size: 11px; font-family: var(--mono); }
-  .mfNotes { margin-top: 6px; line-height: 1.7; }
-  .mfFoot { margin-top: 6px; color: var(--dim); font-size: 11px; }
-  /* 3D 工况标注工坊（预约页与录入台同构视觉，2026-10-15） */
-  .workbench { margin: 14px 0; padding: 14px 16px 16px; background: rgba(83, 214, 240, .035);
-    border: 1px solid var(--line2); border-left: 3px solid var(--cyan); border-radius: 4px; }
-  .wbHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
-  .wbHead b { font-size: 14px; letter-spacing: 1px; }
-  .wbBadge { display: inline-block; background: var(--cyan); color: #0c2230; font: 800 11px/1.7 var(--mono);
-    padding: 0 7px; border-radius: 3px; letter-spacing: 1px; }
-  dialog { background: var(--bg1); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; padding: 18px; max-width: 560px; width: 92vw; }
-  dialog::backdrop { background: rgba(4, 6, 10, .7); }
 </style>
 </head>
 <body>
-<div class="wrap">
+<header class="site-header">
   <div class="head">
     <div class="brandbar">
-      <div class="brandmark">QL</div>
-      <div>
-        <h1>千里战队3D打印预约中心<span class="en">QIANLI · 3D PRINTING RESERVATION</span></h1>
-        <div class="sub">上传模型 → 3D 标注工况（载荷/支撑/受弯…）→ 规则引擎定参数 → 审批 → 自动分发打印　<a href="/status.html">📺 设备观察台 →</a></div>
+      <div class="brandmark">
+        <b>千里战队打印预约<small>3D PRINTING RESERVATION</small></b>
       </div>
     </div>
     <div class="userbox" id="userbox"></div>
+    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
   </div>
+</header>
+
+<div class="wrap">
+  <div class="queueLine" style="margin-top:14px">上传模型 → 3D 标注工况（载荷/支撑/受弯…）→ 规则引擎定参数 → 审批 → 自动分发打印　<a href="/status.html" style="color:var(--accent)">设备观察台 →</a></div>
 
   <div class="card" id="authCard" style="display:none">
+    <p class="section-label">Account</p>
     <h2>🔐 账号 <span class="sub">自助注册开放（2026-10-28）：账号 + 姓名 + 密码；姓名会显示在群播报里</span></h2>
     <div style="margin-bottom:8px">
       <button class="mini on" id="tabLogin" onclick="switchAuth('login')">登录</button>
@@ -192,11 +131,13 @@
 
   <div id="appBody" style="display:none">
     <div class="card">
+      <p class="section-label">Printers</p>
       <h2>🖨️ 打印机 <span class="sub" style="display:inline">(每 15s 刷新)</span></h2>
       <div id="printerList"><div class="empty">加载中…</div></div>
     </div>
 
     <div class="card">
+      <p class="section-label">Submit</p>
       <h2>📝 提交预约</h2>
       <div class="row">
         <div><label>材料类型（可空——留空则按需求标签自动反推可用材料）</label><input type="text" id="materialType" list="materialList" placeholder="如 PLA / PETG / PLA-CF，不知道就留空" oninput="preflight()"><datalist id="materialList">
@@ -267,11 +208,13 @@
     </div>
 
 <div class="card" id="adminCard" style="display:none">
+      <p class="section-label">Admin</p>
       <h2>👤 用户与角色（管理员）</h2>
       <div id="userList"></div>
     </div>
 
     <div class="card">
+      <p class="section-label">Reservations</p>
       <h2>📋 预约记录 <span class="sub" style="display:inline">(每 15s 自动刷新)</span>
         <label style="display:inline-flex;align-items:center;gap:4px;margin-left:10px;font-size:12px;color:var(--muted)">
           <input type="checkbox" id="onlyPending" onchange="loadList()" style="width:auto">只看待审批</label>
@@ -285,6 +228,22 @@
 <div id="toast"></div>
 <script src="/annotator.js?v=25"></script>
 <script>
+// 主题切换（UI 层）：亮/暗持久化到 localStorage
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('qli-theme', cur); } catch (e) { /* 忽略 */ }
+  const icon = document.getElementById('themeIcon');
+  if (icon) icon.textContent = cur === 'light' ? '☀' : '◐';
+  if (typeof renderThemeIcon === 'function') renderThemeIcon();
+}
+(function initThemeIcon() {
+  document.addEventListener('DOMContentLoaded', () => {
+    const icon = document.getElementById('themeIcon');
+    if (icon) icon.textContent = document.documentElement.getAttribute('data-theme') === 'light' ? '☀' : '◐';
+  });
+})();
+
 // 全局错误遥测（必须最先挂载）：异步静默失败=「界面没反应」类事故总根源，现场留痕
 window.__errs = [];
 window.addEventListener('error', (e) => window.__errs.push('ERR: ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
@@ -1443,5 +1402,8 @@ async function printerCtl(id, action, confirmText) {
   setInterval(() => { if (ME) { loadList(); loadPrinters(); } }, 5000);
 })();
 </script>
+<footer class="site-footer" style="margin-top:60px;padding:26px 0;border-top:1px solid var(--line);text-align:center">
+  <p style="font-size:13px;color:var(--subtle)">千里战队 3D 打印预约中心 · CQU QIANLI ROBOTICS · <a href="/status.html" style="color:var(--accent)">设备观察台</a> · <a href="https://team.cquqianli.cn" target="_blank" rel="noopener" style="color:var(--accent)">战队官网</a></p>
+</footer>
 </body>
 </html>

@@ -4,100 +4,54 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>千里战队3D打印预约中心 · 打印审批台</title>
+<link rel="stylesheet" href="/styles.css?v=20261029">
+<script>
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  document.documentElement.setAttribute('data-theme', cur);
+  try { localStorage.setItem('qli-theme', cur); } catch (e) {}
+  const icon = document.getElementById('themeIcon');
+  if (icon) icon.textContent = cur === 'light' ? '☀' : '◐';
+}
+  (function () {
+    var t = null;
+    try { t = localStorage.getItem('qli-theme'); } catch (e) { /* 忽略 */ }
+    if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t);
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) document.documentElement.setAttribute('data-theme', 'light');
+  })();
+</script>
 <style>
-  /* ============ 打印审批台（2026-10-18 曼波令：admin 独立审批界面） ============ */
-  :root {
-    --bg0: #0a0d12; --bg1: #10141b; --bg2: #161c26; --inset: #0c1016;
-    --line: #212a36; --line2: #2c3745;
-    --ink: #e8edf4; --muted: #7e8a99; --dim: #55606e;
-    --amber: #ffb02e; --amber2: #ff8f1f; --hot: #ff6a2b;
-    --cyan: #53d6f0; --ok: #35d07f; --warn: #ffb02e; --bad: #ff5d5d;
-    --accent: var(--amber);
-    --mono: Consolas, "Cascadia Mono", "Courier New", monospace;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif; background: var(--bg0); color: var(--ink);
-    padding: 0 16px 40px; min-height: 100vh;
-    background-image:
-      radial-gradient(1200px 500px at 75% -10%, rgba(255, 138, 31, .07), transparent 60%),
-      repeating-linear-gradient(0deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px),
-      repeating-linear-gradient(90deg, transparent 0 31px, rgba(120, 150, 190, .045) 31px 32px);
-    background-attachment: fixed;
-  }
-  .wrap { max-width: 1060px; margin: 0 auto; }
-  .head { display: flex; justify-content: space-between; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 22px 4px 14px; position: relative; }
-  .head::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 6px;
-    background: repeating-linear-gradient(-45deg, var(--amber) 0 12px, #131920 12px 24px); opacity: .85; border-radius: 2px; }
-  .brandbar { display: flex; align-items: center; gap: 14px; }
-  .brandmark { width: 46px; height: 46px; flex: 0 0 46px; background: linear-gradient(135deg, var(--amber), var(--hot));
-    clip-path: polygon(0 0, 100% 0, 100% 72%, 72% 100%, 0 100%); display: flex; align-items: center; justify-content: center;
-    font: 800 15px/1 var(--mono); color: #14100a; letter-spacing: -1px; }
-  h1 { font-size: 21px; letter-spacing: 2px; font-weight: 700; }
-  h1 .en { display: block; font: 600 10px/1.4 var(--mono); letter-spacing: 3px; color: var(--muted); text-transform: uppercase; }
-  .sub { color: var(--muted); font-size: 12px; margin-top: 4px; }
-  .sub a { color: var(--cyan); text-decoration: none; }
-  .userbox { font-size: 13px; text-align: right; }
-  .userbox .role { display: inline-block; padding: 1px 9px; border-radius: 3px; color: #14100a; font: 700 11px/1.6 var(--mono); margin: 0 4px; letter-spacing: 1px; }
-  .r-admin { background: var(--amber); } .r-reviewer { background: var(--cyan); color: #0c2230; } .r-member { background: #8b98a8; color: #10141b; }
-  .userbox button { padding: 3px 10px; font-size: 12px; background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; cursor: pointer; }
-  .userbox a { color: var(--cyan); font-size: 12px; margin-right: 6px; }
-  .card { background: var(--bg1); border: 1px solid var(--line); border-radius: 4px;
-    padding: 16px 18px 18px; margin-bottom: 18px; position: relative;
-    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px)); }
-  .card::before { content: ''; position: absolute; left: 0; top: 10px; bottom: 10px; width: 3px; background: linear-gradient(180deg, var(--amber), transparent 120%); opacity: .7; }
-  .card h2 { font-size: 14px; margin-bottom: 14px; letter-spacing: 1.5px; color: var(--ink); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .card h2 .sub { display: inline; margin: 0; letter-spacing: 0; }
-  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; letter-spacing: .5px; }
-  input[type=text], input[type=number], input[type=password], select {
-    width: 100%; padding: 8px 10px; border: 1px solid var(--line2); border-radius: 3px; font-size: 14px;
-    background: var(--inset); color: var(--ink); transition: border-color .15s;
-  }
-  input:focus, select:focus { outline: none; border-color: var(--amber); }
-  .hint { font-size: 12px; margin-top: 6px; min-height: 16px; color: var(--muted); }
-  .hint.bad { color: var(--bad); }
-  button.primary { padding: 10px 22px; border: none; border-radius: 3px; font-size: 14px; font-weight: 700; cursor: pointer;
-    background: linear-gradient(135deg, var(--amber), var(--hot)); color: #14100a; letter-spacing: 2px; }
-  button.ok { background: #123527; color: var(--ok); border: 1px solid #1e5c40; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-  button.bad { background: #3d1614; color: var(--bad); border: 1px solid #6e2a26; border-radius: 4px; padding: 6px 14px; cursor: pointer; font-size: 13px; }
-  button.mini { background: var(--bg2); color: var(--ink); border: 1px solid var(--line2); border-radius: 3px; padding: 3px 9px; cursor: pointer; font-size: 12px; }
-  button:not(:disabled):hover { filter: brightness(1.15); }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-  .actions { margin-top: 12px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .badge { display: inline-block; padding: 2px 9px; border-radius: 3px; font-size: 12px; color: #14100a; font-weight: 700; font-family: var(--mono); letter-spacing: .5px; }
-  .s-待审批 { background: var(--warn); } .s-已通过 { background: var(--cyan); color: #0c2230; }
-  .s-排队中 { background: #8fa4ff; color: #131928; } .s-打印中 { background: var(--hot); }
-  .s-已完成 { background: var(--ok); color: #0c2417; } .s-已驳回, .s-已取消 { background: #6b7684; color: #10141b; }
-  .detail { font-size: 12px; color: var(--muted); }
-  .detail b { color: var(--ink); }
-  .empty { color: var(--muted); font-size: 13px; padding: 16px 0; text-align: center; }
-  dialog { background: var(--bg1); color: var(--ink); border: 1px solid var(--line2); border-radius: 4px; padding: 18px; max-width: 560px; width: 92vw; }
-  dialog::backdrop { background: rgba(4, 6, 10, .7); }
-  .qitem { border: 1px solid var(--line2); border-radius: 4px; padding: 12px 14px; margin-bottom: 12px; background: var(--bg2); }
-  .qitem .qhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 6px; }
-  .qitem .qhead b { font-size: 14px; }
-  .qitem .qline { font-size: 13px; margin: 3px 0; }
-  .qitem .qline .lbl { color: var(--muted); font-size: 12px; margin-right: 4px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
-  th { color: var(--muted); font-weight: 500; font-size: 11px; letter-spacing: 1px; font-family: var(--mono); }
-  #toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: var(--bg2); color: var(--ink);
-    border: 1px solid var(--line2); border-radius: 4px; padding: 10px 18px; font-size: 13px; display: none; z-index: 99; max-width: 90vw; }
-  .roleTag { font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 3px; background: var(--cyan); color: #0c2230; }
+  /* ============ 审批台页面专属（共享设计系统见 /styles.css） ============ */
+  .head { width: min(1320px, calc(100% - 32px)); }
+  .brandmark b:after { background: var(--accent); }
+  .userbox { font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .userbox button { padding: 3px 10px; font-size: 12.5px; }
+
+  /* 审批队列卡片 */
+  .qitem { border: 1px solid var(--line); padding: 16px 20px; margin-bottom: 16px; background: var(--card-bg); transition: border-color .16s; }
+  .qitem:hover { border-color: var(--accent); }
+  .qitem .qhead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+  .qitem .qhead b { font-size: 16px; font-weight: 500; }
+  .qitem .qline { font-size: 13.5px; margin: 3px 0; }
+  .qitem .qline .lbl { color: var(--subtle); font-size: 12px; margin-right: 6px; letter-spacing: .08em; }
+  .roleTag { font-size: 11.5px; padding: 1px 8px; border: 1px solid var(--info); color: var(--info); letter-spacing: .1em; }
 </style>
 </head>
 <body>
-<div class="wrap">
+<header class="site-header">
   <div class="head">
     <div class="brandbar">
-      <div class="brandmark">审</div>
-      <div>
-        <h1>打印审批台<span class="en">Approval Console</span></h1>
-        <div class="sub">待审批队列与分发决策 · <a href="/">← 返回预约中心</a></div>
-      </div>
+      <div class="brandmark"><b>打印审批台<small>APPROVAL CONSOLE</small></b></div>
     </div>
-    <div class="userbox" id="userbox" style="display:none"></div>
+    <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
+      <div class="userbox" id="userbox" style="display:none"></div>
+      <button class="theme-toggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
+      <a href="/" style="font-size:13px;color:var(--accent)">← 预约中心</a>
+    </div>
   </div>
+</header>
+
+<div class="wrap">
 
   <div id="loginBox" style="display:none">
     <div class="card" style="max-width:420px;margin:40px auto">
