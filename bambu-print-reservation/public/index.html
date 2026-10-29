@@ -294,7 +294,8 @@ let TAXONOMY = null;
 let ME = null;
 let authMode = 'login';
 let COLORS = [];         // 颜色字典（/api/print/colors，datalist + 未识别提示）
-let PRINTER_NAMES = [];  // 已登记打印机名（/api/printers，指定打印机 datalist 与 givenUp 恢复下拉）
+let PRINTER_NAMES = []; // 已登记打印机名（/api/printers，指定打印机 datalist 与 givenUp 恢复下拉）
+let GIVEN_UP_IDS = new Set(); // 放弃池单号集合（列表行显形用，loadGivenUp 刷新）
 const $ = (id) => document.getElementById(id);
 
 /** HTML 转义：displayName/文件名/理由等用户可控字段一律过这里再进 innerHTML（防存储型 XSS） */
@@ -1215,13 +1216,19 @@ async function loadList() {
     const receiptTag = r.status === '已完成'
       ? (r.receipt ? `<br><span class="detail">📦 已回执（${esc(r.receipt.by)}）</span>` : '<br><span class="detail" style="color:var(--warn)">📦 待取件回执</span>')
       : '';
+    // 放弃池显形（2026-10-29）：重试耗尽的单状态仍写「排队中」（人工恢复白名单需要），
+    // 列表里看不出它其实已不在队列——R20261029-002 实案曼波误以为在排队等位。
+    // 命中 givenUp 即标红提示 + 给出恢复入口
+    const deadTag = GIVEN_UP_IDS.has(r.id)
+      ? `<br><span class="detail" style="color:var(--bad)">⚠️ 分发失败·放弃池待恢复</span>`
+      : '';
     // 改派（2026-10-27 曼波令）：排队中滞留的模型直投单（STEP/STL，分发时刻才切片）
     // 物理上可在同品牌空闲机间改派——reviewer 一键入口；3mf 直通件机型锁定不显示
     const reassignBtn = r.status === '排队中' && isReviewer() && /\.(step|stp|stl|obj)$/i.test(r.fileName || '')
       ? `<button class="mini" onclick="recoverGivenUp('${r.id}')" title="指定打印机立即分发（同品牌机）">改派</button>` : '';
     return `<tr>
       <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span></td>
-      <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${receiptTag}${liveProg}</td>
+      <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${receiptTag}${deadTag}${liveProg}</td>
       <td data-label="发起人">${esc(r.applicant || '?')}${mine ? '<br><span class="detail">(我)</span>' : ''}<br><span class="detail">${esc(r.fileName || '')}</span></td>
       <td data-label="需求">${esc(r.materialType || '?')}${r.color ? '×' + esc(r.color) : ''}${r.isUrgent ? ' ⚡' : ''}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
       <td data-label="参数与轨迹" class="detail">${srcTag}${params ? '<b>参数</b> ' + params + '<br>' : ''}${rules ? '<b>依据</b> ' + rules + '<br>' : ''}${hist}</td>
@@ -1299,6 +1306,7 @@ async function loadGivenUp() {
   renderQueueBar(data.queue, data.printing); // 队列明细+ETA 条（全员）
   if (!isReviewer()) { $('givenUpBar').innerHTML = ''; return; }
   const given = data.givenUp || [];
+  GIVEN_UP_IDS = new Set(given.map((g) => g.recordId));
   if (!given.length) { $('givenUpBar').innerHTML = ''; return; }
   $('givenUpBar').innerHTML = `<div class="warnbar">⚠️ <b>${given.length}</b> 单自动重试耗尽待人工恢复：` +
     given.map(g => `#${esc(g.recordId)} ${esc(g.fileName || '')}（${g.error ? '原因：' + esc(g.error) + '；' : ''}<button class="mini" onclick="recoverGivenUp('${g.recordId}')">指定打印机恢复</button><button class="mini" onclick="dismissGivenUp('${g.recordId}')" title="不要了：移出放弃池，预约单落「已取消」">丢弃</button>`).join('　') + `</div>`;
