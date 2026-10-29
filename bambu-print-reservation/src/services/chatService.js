@@ -235,6 +235,28 @@ async function handlePrintPendingCommand() {
   return lines.join('\n');
 }
 
+/**
+ * 飞书自助绑定（2026-10-29）：用户在网页生成 6 位绑定码 → 飞书发「/print-bind 码」→
+ * 打印服务按 hub 透传的 senderId（飞书 open_id）把该身份绑到生码账号，之后打印进程
+ * 事件即可私信到人。senderId 缺失时给出明确指引（hub 未透传的降级提示）。
+ */
+async function handlePrintBindCommand(args, ctx) {
+  const code = String((args && args[0]) || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return '❌ 用法：/print-bind 六位绑定码\n绑定码在打印预约页面账号区点「生成飞书绑定码」获取（5 分钟内有效）';
+  }
+  const senderId = (ctx && (ctx.senderId || ctx.openId)) || '';
+  if (!senderId) {
+    return '❌ 未取到你的飞书身份（对话枢纽未透传 senderId）——请让管理员先在运维台手动绑定，或等 hub 升级后重试';
+  }
+  try {
+    const user = require('./authStore').bindByCode(code, senderId);
+    return `✅ 已绑定飞书私信通知：账号「${user.username}」（${user.displayName}）\n今后打印完成/失败/取消/驳回等进程事件会私信到这里`;
+  } catch (err) {
+    return `❌ ${err.message}`;
+  }
+}
+
 const commandHandlers = {
   '/help': handleHelpCommand,
   '/print-help': handlePrintHelpCommand,
@@ -242,20 +264,24 @@ const commandHandlers = {
   '/print-ams': handlePrintAmsCommand,
   '/print-list': handlePrintListCommand,
   '/print-pending': handlePrintPendingCommand,
+  '/print-bind': handlePrintBindCommand, // 飞书自助绑定（2026-10-29）
   // /print-dispatch 已移除（2026-10-05 曼波定：聊天通道仅保留查看类指令）——
   // 人工指定分发的管理动作走 HTTP（页面/运维台，reviewer 及以上）
 };
 
 /**
  * 统一指令执行入口（hub 经网关 /api/chat/command 转发的唯一对话出口）
+ * @param {string} command
+ * @param {string[]} args
+ * @param {{senderId?:string}} [ctx] 发送者身份（飞书 open_id，hub 透传；2026-10-29）
  * @returns {Promise<string>} 回复文本
  */
-async function executeCommand(command, args) {
+async function executeCommand(command, args, ctx) {
   const handler = commandHandlers[command];
   if (!handler) {
     return `❌ 未知指令：${command}\n发送 /print-help 查看可用指令`;
   }
-  return handler(args || []);
+  return handler(args || [], ctx || {});
 }
 
 module.exports = {

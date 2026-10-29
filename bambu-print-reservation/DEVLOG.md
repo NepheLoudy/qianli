@@ -804,3 +804,12 @@
 
 - **能力**：`POST /api/auth/users/:id/delete`（admin）+ 用户管理页每行「删除」按钮——删除账号并清空其全部会话；边界：不能删自己、不能删最后一个 admin；历史预约单保留（申请人姓名随单落档，submittedBy 悬挂引用只影响 DM 私信，页面状态照常可见）。
 - 全量 32 套全绿，已上线。（同日按曼波令删除 qianli 账号）
+
+### v57 热修65 · 2026-10-29 · 随本提交落地 · feat
+
+**飞书自助绑定接收端（配套 hub 透传 senderId）**
+
+- **链路**：网页登录态点「🔔 飞书通知」→ `POST /api/auth/bind-code` 生成 6 位一次性码（5 分钟、内存态不落盘）→ 用户在飞书发 `/print-bind 码` → hub 转发带 `senderId` → `authStore.bindByCode` 把该 open_id 绑到生码账号 → 此后打印进程事件私信到人。
+- **降级**：hub 未透传 senderId 时 `/print-bind` 返回明确提示（不误绑）；`/api/chat/command` 兼容 `senderId`/`openId` 两种字段名。admin 手动绑定（用户管理页）仍保留为旁路。
+- **跨项目待办**：hub `handlePrintCommand` 需透传 senderId（project-management-robot 会话，见交付说明）——在此之前该指令按降级提示回复。
+- 测试：新增 bind-code-test 7 断言（码格式/绑定成功/一次性/无身份降级/非法码/垃圾 openId 拒/删号边界）；全量 33 套全绿，已上线。

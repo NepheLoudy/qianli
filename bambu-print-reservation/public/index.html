@@ -368,10 +368,20 @@ function renderIdentity() {
   $('appBody').style.display = 'block';
   box.innerHTML = `你好，<b>${esc(ME.displayName)}</b><span class="role r-${ME.role}">${ME.role}</span>
     ${isReviewer() ? '<a href="/train.html" style="font-size:12px;margin-right:4px">🎓 训练录入台</a><a href="/approve.html" style="font-size:12px;margin-right:4px">📋 审批台</a>' : ''}
+    <button onclick="genBindCode()" title="生成飞书私信通知绑定码：在飞书给机器人发 /print-bind 码">🔔 飞书通知</button>
     <button onclick="changePassword()">改密码</button>
     <button onclick="logout()">退出</button>`;
   $('adminCard').style.display = isAdmin() ? 'block' : 'none';
   loadUsers();
+}
+
+/** 生成飞书私信通知绑定码（2026-10-29）：6 位一次性码 5 分钟有效——在飞书给对话机器人
+ *  发「/print-bind 码」完成绑定，之后打印完成/失败/取消/驳回都会私信到本人 */
+async function genBindCode() {
+  const res = await fetch('/api/auth/bind-code', { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return toast('❌ ' + (data.error || '生成失败'));
+  prompt(`🔔 飞书私信通知绑定码（${Math.round((data.expiresInSeconds || 300) / 60)} 分钟内有效，一次性）：\n\n${data.code}\n\n在飞书里给对话机器人发送：/print-bind ${data.code}\n绑定成功后，打印完成/失败/取消/驳回等事件会私信你。`, data.code);
 }
 
 async function loadUsers() {

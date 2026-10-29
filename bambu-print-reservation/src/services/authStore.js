@@ -265,4 +265,38 @@ const authStore = {
   },
 };
 
+// ============================================================
+// 飞书自助绑定码（2026-10-29）：网页登录态生成 6 位一次性码（5 分钟有效，内存态）——
+// 用户在飞书发「/print-bind 码」，hub 转发时带 senderId（open_id），打印服务据此把
+// 该 open_id 绑到生成码的账号。码只在内存：重启即失效（重新生成即可），不落盘不留痕。
+// 前置依赖：hub 的 handlePrintCommand 需透传 senderId（跨项目改动，见交付说明）。
+// ============================================================
+const BIND_CODE_TTL_MS = 5 * 60 * 1000;
+const bindCodes = new Map(); // code → { userId, expiresAt }
+
+authStore.createBindCode = function createBindCode(userId) {
+  const user = load().users.find((u) => u.id === userId);
+  if (!user) throw new Error('用户不存在');
+  const now = Date.now();
+  for (const [c, v] of bindCodes) if (v.expiresAt < now) bindCodes.delete(c); // 惰性清理
+  // 6 位数字码（避开易混 0/O、1/I 的字母码场景——纯数字最省事）；碰撞重抽
+  let code;
+  do { code = String(Math.floor(100000 + Math.random() * 900000)); } while (bindCodes.has(code));
+  bindCodes.set(code, { userId, expiresAt: now + BIND_CODE_TTL_MS });
+  return { code, expiresInSeconds: Math.round(BIND_CODE_TTL_MS / 1000) };
+};
+
+/** 用绑定码把 openId 绑到对应账号；码无效/过期/已用均报错（一次性消费） */
+authStore.bindByCode = function bindByCode(code, openId) {
+  const key = String(code || '').trim();
+  const entry = bindCodes.get(key);
+  if (!entry) throw new Error('绑定码无效或已使用——请在打印预约页面重新生成');
+  if (entry.expiresAt < Date.now()) { bindCodes.delete(key); throw new Error('绑定码已过期（5 分钟内有效）——请重新生成'); }
+  const oid = String(openId || '').trim();
+  if (!oid) throw new Error('未取到你的飞书身份（open_id）——请确认是在飞书里直接和机器人对话');
+  bindCodes.delete(key); // 一次性
+  const result = authStore.setFeishuOpenId(entry.userId, oid);
+  return result;
+};
+
 module.exports = authStore;

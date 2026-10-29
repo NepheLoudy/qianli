@@ -217,6 +217,16 @@ app.post('/api/auth/users/:id/feishu', requireUser('admin'), (req, res) => {
   }
 });
 
+// 生成飞书绑定码（2026-10-29 自助绑定）：登录态可生成 6 位一次性码（5 分钟，内存态）——
+// 用户在飞书给机器人发「/print-bind 码」完成绑定，打印进程事件即可私信到人
+app.post('/api/auth/bind-code', requireUser(), (req, res) => {
+  try {
+    res.json(authStore.createBindCode(req.user.id));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // 删除账号（2026-10-29 曼波令）：admin 管理 action——不能删自己/最后一个 admin，
 // 该用户全部会话随删失效；历史预约单不受影响（申请人姓名已随单落档）
 app.post('/api/auth/users/:id/delete', requireUser('admin'), (req, res) => {
@@ -1895,13 +1905,15 @@ function chatCommandGuard(req, res, next) {
 
 app.post('/api/chat/command', chatCommandGuard, async (req, res) => {
   try {
-    const { command, args } = req.body;
+    const { command, args, senderId, openId } = req.body || {};
 
     if (!command) {
       return res.status(400).json({ error: '指令不能为空' });
     }
 
-    const reply = await executeCommand(command, args || []);
+    // 发送者身份（2026-10-29 自助绑定）：hub 透传 senderId（飞书 open_id）——/print-bind 用；
+    // 未透传时该指令返回明确降级提示，其余指令不受影响
+    const reply = await executeCommand(command, args || [], { senderId: senderId || openId || '' });
     res.json({ reply });
   } catch (err) {
     console.error('处理指令失败:', err);
