@@ -126,3 +126,18 @@ if (!isGroup && !p2pExempt && !isP2pCommandAllowed(senderId, message.chat_id)) {
 **状态**：✅ 已部署上线（2026-10-29 07:5x）——提交 `852d2cf` 已推 GitHub，knowledge-tracker 重启完成，现网文件 849/850 行确认含 p2pExempt。原卡点（本机脱离实验室 LAN）已恢复。
 （2026-10-29 07:2x 桌面机脱离 LAN，SSH/3001 全不可达）。回到 LAN 后执行：
 `cd ticket-pm/project-management-robot && npm run push` 即完成重启。
+
+---
+
+## 附二：取件回执指令（2026-10-29，已部署）
+
+打印完成私信改为「已完成 + 6 位取件码」，申请人回 `/print-pickup 码` 即完成回执
+（校验归属 → 单据落回执 → 清闸放行队列 → 清机端残留）。该指令同样需要在私聊可用，
+故 hub 的 `p2pExempt` 扩为：
+
+```js
+const p2pExempt = cmd.command === '/print-bind' || cmd.command === '/print-pickup';
+```
+
+已部署：提交 `81c0759`（SFTP 直传，GitHub 443 不通已降级），knowledge-tracker 重启完成，
+现网文件 850 行确认。打印服务侧：热修67（`471b31e`）。
