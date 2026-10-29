@@ -386,7 +386,17 @@ async function loadUsers() {
       </select></td>
       <td class="detail">${u.feishuOpenId ? `✅ 已绑定 <button class="mini" onclick="setFeishuOpenId('${u.id}', '')">解除</button>` : `<button class="mini" onclick="setFeishuOpenId('${u.id}')">绑定</button>`}</td>
       <td class="detail">${esc((u.lastLoginAt || '').replace('T', ' ').slice(0, 16)) || '从未登录'}</td>
-      <td><button class="mini" onclick="resetPwd('${u.id}')">重置密码</button></td></tr>`).join('') + '</table>';
+      <td><button class="mini" onclick="resetPwd('${u.id}')">重置密码</button> <button class="mini" onclick="deleteUser('${u.id}', '${esc(u.username)}')">删除</button></td></tr>`).join('') + '</table>';
+}
+
+/** 删除账号（2026-10-29）：admin 管理 action——账号与全部会话即删，历史预约单保留 */
+async function deleteUser(id, username) {
+  if (!confirm(`删除账号「${username}」？\n\n该账号将无法登录（会话全部失效）；其历史预约单保留在列表中。`)) return;
+  const res = await fetch(`/api/auth/users/${id}/delete`, { method: 'POST' });
+  const data = await res.json().catch(() => ({}));
+  if (res.ok) toast(`✅ 已删除账号 ${data.deleted}（${data.displayName}）`);
+  else toast('❌ ' + (data.error || '删除失败'));
+  loadUsers();
 }
 
 /** 绑定/解除飞书 openId（2026-10-28 曼波令「打印进程私信告知申请人」）：打印完成/失败/

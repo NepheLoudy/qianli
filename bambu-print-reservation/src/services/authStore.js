@@ -238,6 +238,27 @@ const authStore = {
     return authStore.safeUser(user);
   },
 
+  /**
+   * 删除账号（2026-10-29 曼波令）：admin 管理 action——边界：不能删自己、不能删最后
+   * 一个 admin；该用户的全部会话随删失效。历史预约单不受影响（applicant/displayName
+   * 已随单落档，submittedBy 变为悬挂引用仅影响 DM 私信——单据页面状态照常可见）。
+   */
+  deleteUser(userId, operatorId) {
+    if (String(userId) === String(operatorId)) throw new Error('不能删除自己当前登录的账号');
+    const data = load();
+    const user = data.users.find((u) => u.id === userId);
+    if (!user) throw new Error('用户不存在');
+    if (user.role === 'admin' && data.users.filter((u) => u.role === 'admin').length <= 1) {
+      throw new Error('这是最后一个管理员账号，不能删除——请先提升另一名管理员');
+    }
+    data.users = data.users.filter((u) => u.id !== userId);
+    for (const [token, sess] of Object.entries(data.sessions || {})) {
+      if (sess && sess.userId === userId) delete data.sessions[token];
+    }
+    save(data);
+    return { deleted: user.username, displayName: user.displayName };
+  },
+
   /** 剔除敏感字段 */
   safeUser(user) {
     return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, createdAt: user.createdAt, lastLoginAt: user.lastLoginAt, feishuOpenId: user.feishuOpenId || null };

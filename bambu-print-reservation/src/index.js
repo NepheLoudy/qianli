@@ -217,6 +217,16 @@ app.post('/api/auth/users/:id/feishu', requireUser('admin'), (req, res) => {
   }
 });
 
+// 删除账号（2026-10-29 曼波令）：admin 管理 action——不能删自己/最后一个 admin，
+// 该用户全部会话随删失效；历史预约单不受影响（申请人姓名已随单落档）
+app.post('/api/auth/users/:id/delete', requireUser('admin'), (req, res) => {
+  try {
+    res.json(authStore.deleteUser(req.params.id, req.user.id));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ---------- 定制窗口（规则见顶层 AGENTS「机器人后端定制窗口」）：定制项全景只读 ----------
 
 app.get('/api/print/policy', (req, res) => {
