@@ -257,6 +257,34 @@ async function handlePrintBindCommand(args, ctx) {
   }
 }
 
+/**
+ * 取件回执（2026-10-29）：打印完成 DM 里带 6 位取件码，申请人直接回 `/print-pickup 码`——
+ * 校验归属（账号已绑飞书则必须本人回）→ 单据落回执 → 放行该机队列 → 清机端残留
+ * （拓竹 clean_print_error / 闪铸清屏弹窗）。等价于网页「确认取件」按钮。
+ */
+async function handlePrintPickupCommand(args, ctx) {
+  const code = String((args && args[0]) || '').trim();
+  if (!/^\d{6}$/.test(code)) {
+    return '❌ 用法：/print-pickup 六位取件码\n取件码在「打印完成」的私信里，也可在预约页面点「确认取件」';
+  }
+  try {
+    const dispatcher = require('./dispatcher');
+    const senderId = (ctx && (ctx.senderId || ctx.openId)) || '';
+    const r = await dispatcher.confirmPickupByCode(code, senderId, (recordId) => {
+      const rec = require('./reservationStore').get(recordId);
+      if (!rec || !rec.submittedBy) return '';
+      const user = require('./authStore').getUserById(rec.submittedBy);
+      return (user && user.feishuOpenId) || '';
+    });
+    const cleanNote = r.cleaned && r.cleaned.error
+      ? '（机端残留清理未成功，可在机器屏幕点掉弹窗）'
+      : '，机端状态已清理';
+    return `✅ 已确认取件 #${r.recordId}${cleanNote}${r.queueResumed ? '\n队列已继续，下一件马上开始打印' : ''}`;
+  } catch (err) {
+    return `❌ ${err.message}`;
+  }
+}
+
 const commandHandlers = {
   '/help': handleHelpCommand,
   '/print-help': handlePrintHelpCommand,
@@ -265,6 +293,7 @@ const commandHandlers = {
   '/print-list': handlePrintListCommand,
   '/print-pending': handlePrintPendingCommand,
   '/print-bind': handlePrintBindCommand, // 飞书自助绑定（2026-10-29）
+  '/print-pickup': handlePrintPickupCommand, // 取件回执（2026-10-29：DM 取件码回复即回执+清机端）
   // /print-dispatch 已移除（2026-10-05 曼波定：聊天通道仅保留查看类指令）——
   // 人工指定分发的管理动作走 HTTP（页面/运维台，reviewer 及以上）
 };

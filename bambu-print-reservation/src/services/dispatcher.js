@@ -250,6 +250,7 @@ const STATE_FILE = process.env.DISPATCH_STATE_FILE || path.join(__dirname, '..',
 try { fs.mkdirSync(path.dirname(STATE_FILE), { recursive: true }); } catch { /* 目录不可建时退化为不持久化，分发本身不受影响 */ }
 const KNOWN_CAP = 2000;
 const GIVEN_UP_CAP = 200; // givenUp 持久化截尾（人工恢复通道的容量护栏）
+const PICKUP_CODE_TTL_MS = 24 * 3600 * 1000; // 取件码有效期（2026-10-29）：取件可能隔天，给足 24h
 
 // ============================================================
 // 打印分发引擎：任务队列 + 空闲触发匹配
@@ -315,6 +316,7 @@ class Dispatcher {
     // 下一件（板上件没取走就开新件会撞板/挤料，且装配件要先试装）。回执接口清闸并
     // 触发匹配；状态落盘防重启丢闸
     this.receiptHold = new Map();
+    this.pickupCodes = new Map(); // 取件码 → {recordId, printerId, expiresAt}（内存态）
     this.humanStops = new Map();  // printerId → {at, reason}：系统发起的停止意图（failed/idle 事件消费）
     this.inFlight = [];           // 分发进行中的任务（已出队未入 printing；落盘携带，重启重回队列）
     this.dispatching = new Set(); // 正在分发中的 printerId（人工指定 vs 自动匹配互斥闸门；
@@ -1254,11 +1256,16 @@ class Dispatcher {
     // 打完等回执闸（2026-10-28 曼波令）：板上件被确认取走前，本机不开打下一件。
     // 续打单（hasMore）同样置闸——取件后再打下一盘
     this.receiptHold.set(printer.id, task.recordId);
+    // 取件码（2026-10-29 曼波令「私信提醒完成时问是否取件」）：DM 里带 6 位码，
+    // 申请人回 /print-pickup 码 即完成回执——顺带清机端残留（完成弹窗/故障位）
+    const pickup = this.issuePickupCode(printer.id, task.recordId);
     this.persistState();
-    console.log(`[分发] ${task.applicationNo || task.recordId} @ ${printer.name} 完成——等预约界面回执取件后继续队列`);
+    console.log(`[分发] ${task.applicationNo || task.recordId} @ ${printer.name} 完成——等取件回执后继续队列（取件码 ${pickup ? pickup.code : '未发'}）`);
     // 私信申请人（2026-10-28 曼波令「群播全面关闭转私信」）：fire-and-forget 永不阻塞收尾
     require('./reservation').notifyApplicantDm(task.recordId,
-      `✅ 你的打印件已完成（${printer.name}）${task.startedAt ? '' : ''}——请到实验室取件，并在预约界面点「确认取件」后队列才会继续`);
+      pickup
+        ? `✅ 你的打印件已完成（${printer.name}）\n\n到实验室取件后，直接回复这条格式确认：\n/print-pickup ${pickup.code}\n\n（24 小时内有效；确认后我会清理打印机状态并放行队列里的下一件）`
+        : `✅ 你的打印件已完成（${printer.name}）——请到实验室取件，并在预约界面点「确认取件」后队列才会继续`);
 
     // 份数续打判定先于状态写入：remaining>0 时单据回「排队中」而非「已完成」——
     // 全部件完成才算完成，否则队列里挂着续件、表上却是终态（意图-执行断裂）
@@ -1564,6 +1571,63 @@ class Dispatcher {
   /** 回执闸清单（queue 快照消费：页面显示哪台机卡在「等待取件回执」） */
   listReceiptHold() {
     return [...this.receiptHold.entries()].map(([printerId, recordId]) => ({ printerId, recordId }));
+  }
+
+  /**
+   * 取件码发放（2026-10-29 曼波令「DM 提醒完成时问是否取件」）：6 位数字、24 小时有效、
+   * 内存态（重启失效，页面按钮仍可回执兜底）。码 → {recordId, printerId}，一次性消费。
+   */
+  issuePickupCode(printerId, recordId) {
+    if (!recordId || String(recordId).startsWith('manual-')) return null;
+    const now = Date.now();
+    for (const [c, v] of this.pickupCodes) if (v.expiresAt < now) this.pickupCodes.delete(c);
+    // 同单重复发放时作废旧码（续打多盘/重试场景保持一单一码）
+    for (const [c, v] of this.pickupCodes) if (v.recordId === recordId) this.pickupCodes.delete(c);
+    let code;
+    do { code = String(Math.floor(100000 + Math.random() * 900000)); } while (this.pickupCodes.has(code));
+    this.pickupCodes.set(code, { recordId, printerId, expiresAt: now + PICKUP_CODE_TTL_MS });
+    return { code, expiresInHours: Math.round(PICKUP_CODE_TTL_MS / 3600000) };
+  }
+
+  /**
+   * 取件码回执（飞书回复 /print-pickup 码）：校验归属 → 单据落回执 → 清闸放行队列 →
+   * 清机端残留（拓竹 clean_print_error / 闪铸清屏弹窗）。清残留失败不影响回执（只记日志）。
+   * @param {(id:string)=>string} getBoundOpenId 单据 → 绑定 openId（归属校验，空则不校验）
+   */
+  async confirmPickupByCode(code, senderId, getBoundOpenId) {
+    const key = String(code || '').trim();
+    const entry = this.pickupCodes.get(key);
+    if (!entry) throw new Error('取件码无效或已使用——可在预约页面点「确认取件」');
+    if (entry.expiresAt < Date.now()) { this.pickupCodes.delete(key); throw new Error('取件码已过期（24 小时）——请在预约页面点「确认取件」'); }
+    const bound = getBoundOpenId ? String(getBoundOpenId(entry.recordId) || '') : '';
+    // 归属校验（2026-10-29）：账号已绑飞书时必须本人回执；未绑定则不校验（码即凭据）
+    if (bound && senderId && bound !== String(senderId)) {
+      throw new Error('这个取件码不属于你的账号——请用本人飞书回复，或在预约页面点「确认取件」');
+    }
+    this.pickupCodes.delete(key);
+    // 单据回执（失败也继续清闸：码已验证，不让账面问题卡住队列）
+    let receiptBy = '飞书回复';
+    try {
+      const rec = reservationStore.get(entry.recordId);
+      if (rec) {
+        const out = reservationStore.acknowledgeReceipt(entry.recordId, { displayName: receiptBy, id: String(senderId || '') });
+        receiptBy = (out.receipt && out.receipt.by) || receiptBy;
+      }
+    } catch (err) {
+      console.warn('[分发] 取件码回执落档失败（继续清闸）:', err.message);
+    }
+    const ack = this.acknowledgeReceipt(entry.recordId);
+    // 清机端残留（完成弹窗/故障位）：清理失败只记日志——回执成功是主目标
+    let cleaned = null;
+    try {
+      const pid = Number.isFinite(Number(entry.printerId)) ? Number(entry.printerId) : entry.printerId;
+      cleaned = await printerManager.cleanPrintErrorOnPrinter(pid);
+    } catch (err) {
+      console.warn('[分发] 取件后清机端状态失败:', err.message);
+      cleaned = { error: err.message };
+    }
+    console.log(`[分发] 取件码回执：${entry.recordId}（printer=${entry.printerId}）——闸清 ${ack.held ? '已放行' : '（无闸）'}，清残留 ${cleaned && cleaned.error ? '失败' : '已发'}`);
+    return { recordId: entry.recordId, printerId: entry.printerId, queueResumed: Boolean(ack.held), receiptBy, cleaned };
   }
 
   /**
