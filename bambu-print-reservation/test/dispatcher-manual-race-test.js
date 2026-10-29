@@ -237,6 +237,29 @@ function taskOf(rid, appNo) {
     && dispatcher.queue.some((t) => t.recordId === 'rWithEv'),
     JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
 
+  // 6h. A1 老世代停止指纹（2026-10-29 热修61，R20261028-005/003 实案）：print_error 落
+  // 0x03008015 人因码、fail_reason 不上报——printError 通道入识别 + 不算故障证据
+  calls.tableWrites.length = 0;
+  const a1Stop = { recordId: 'rA1Stop', applicationNo: '2026Y', fileToken: 'tok_y', fileSource: 'mirror' };
+  dispatcher.printing.set(1, a1Stop);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 0, printError: 50364437, hms: [] }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[A1 停止指纹] print_error=0x03008015 无 HMS → 已取消不重排',
+    calls.tableWrites.some((w) => w.id === 'rA1Stop' && w.fields['申请状态'] === '已取消')
+    && !dispatcher.queue.some((t) => t.recordId === 'rA1Stop'),
+    JSON.stringify({ writes: calls.tableWrites, queue: dispatcher.queue.map((t) => t.recordId) }));
+
+  calls.tableWrites.length = 0;
+  const a1Real = { recordId: 'rA1Real', applicationNo: '2026Z', fileToken: 'tok_z', fileSource: 'mirror' };
+  dispatcher.printing.set(1, a1Real);
+  dispatcher.queue.length = 0;
+  listeners.jobEvent({ printer: { ...PRINTER, failReason: 0, printError: 50364438, hms: [] }, event: 'failed' });
+  await new Promise((r) => setTimeout(r, 30));
+  check('[A1 非表内码] print_error 未知码 → 仍按证据重排（保守不误杀）',
+    calls.tableWrites.some((w) => w.id === 'rA1Real' && w.fields['申请状态'] === '排队中'),
+    JSON.stringify({ writes: calls.tableWrites }));
+
   console.log('\n== 6g. 放弃池人工丢弃：移出池 + 预约单落已取消（2026-10-24 热修50） ==');
   calls.tableWrites.length = 0;
   const given = { recordId: 'rGiven', applicationNo: '2026X', fileToken: 'tok_x', fileSource: 'mirror', dispatchRetries: 3, dispatchError: 'x' };

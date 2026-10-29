@@ -23,6 +23,8 @@ const plaza = require('./plaza');
 const HUMAN_CANCEL_FAIL_CODES = new Set([
   50348044,  // 0x0300400C 拓竹标准人工取消码（P1/X1 实证）
   201359426, // 0x0C008042 H2D 屏幕停机变体码（2026-10-24 R20261024-001 实证）
+  50364437,  // 0x03008015 A1 系屏幕停止码（2026-10-29 R20261028-005/003 实证：A1 老世代
+             // 停止不上报 fail_reason，码落在 print_error 位图——见 failed 分支 printError 通道）
 ]);
 // 系统自己发起的停止（控制台/页面）没有 0300-400C 码：用「停机意图」标记兜住——
 // 标记随任务落盘（humanStopRequested），重启后 failed/idle 事件仍按取消收尾
@@ -386,8 +388,12 @@ class Dispatcher {
           // 2026-10-16 曼波令：机器端人工取消（0300-400C 系列）不重发——其余失败维持重排。
           // 2026-10-19：系统自己发的停止没有该码（R-004 实况 failed 直接回排队中），
           // 以 humanStops/humanStopRequested 标记同样按取消收尾。
-          if (humanStop || humanFlag || isHumanCancelFailReason(printer.failReason)) {
-            console.log(`[分发] ${printer.name} 人工停止（${humanStop ? humanStop.reason : humanFlag ? '停机标记' : `fail_reason=${printer.failReason}`}）→ 按取消收尾，不回排队`);
+          // 2026-10-29（热修61）：A1 老世代停止不上报 fail_reason，人因码落在 print_error
+          // 位图（0x03008015 实证）——码表检查同时覆盖 failReason 与 printError 两通道；
+          // 命中码表的 print_error 不算「故障证据」（热修49 类级反转不被伪证据劫持）。
+          const humanCode = isHumanCancelFailReason(printer.failReason) || isHumanCancelFailReason(printer.printError);
+          if (humanStop || humanFlag || humanCode) {
+            console.log(`[分发] ${printer.name} 人工停止（${humanStop ? humanStop.reason : humanFlag ? '停机标记' : `人因码 ${printer.failReason || printer.printError}`}）→ 按取消收尾，不回排队`);
             this.humanTerminateTask(task, printer).catch((err) =>
               console.error('[分发] 人工终止收尾失败:', err.message)
             );
