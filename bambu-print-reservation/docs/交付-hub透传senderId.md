@@ -90,7 +90,19 @@ replyText = await handlePrintCommand(cmd.command, cmd.args, senderId);
 
 ---
 
-## 五、回执要求
+## 五、验收状态（2026-10-29 07:0x 复核）
+
+| 检查项 | 结果 |
+| --- | --- |
+| hub 源码三处改动 | ✅ 707 行签名 / 718 行转发体 / 879 行调用点，全部就位 |
+| 现网部署文件（/c/qianli/opt/knowledge-tracker） | ✅ 同样三处在位（grep senderId 确认） |
+| hub 进程重启 | ✅ knowledge-tracker 06:50:29 重启（晚于改动，新代码生效） |
+| 打印服务接收端 | ✅ 已上线并自测（生码→带 senderId→绑定成功） |
+| 真人飞书端到端 | ⬜ 待一次实发验证（见下） |
+
+**真人验证步骤（30 秒）**：网页右上「🔔 飞书通知」拿 6 位码 → 飞书发 （私聊需在 P2P_COMMAND_OPEN_IDS 白名单内；群里 @机器人 全员可用）→ 期望回「✅ 已绑定飞书私信通知」。
+
+## 六、回执要求
 
 改完请回到 **bambu-print-reservation 会话**报一句「hub 已透传 senderId」，我再复跑一次
 端到端绑定验证并关单。若你判断这处改动属于别的项目边界，请明确说明改由谁接——**不要在本会话改 hub 代码**。
