@@ -127,6 +127,7 @@
 </div>
 <div id="toast"></div>
 <script src="/annotator.js?v=25"></script>
+<script src="/printer-model-key.js?v=1"></script>
 <script>
 // 打印审批台（2026-10-18 曼波令：admin/reviewer 独立审批界面；预约中心列表回归纯状态展示）
 const $ = (id) => document.getElementById(id);
@@ -505,9 +506,9 @@ async function openApproveDialog(id) {
   // 切片直通件（2026-10-28 曼波令「自动分发只对纯 step 有效」）：内嵌机型锁定切片 profile——
   // 机型级过滤（同型号机）+ 不给自动匹配选项；模型直投单保留品牌过滤 + 自动匹配
   const isSlicedFile = /\.(3mf|gcode|gx|g)$/i.test((rec && rec.fileName) || '');
-  const modelKey = (x) => String(x || '').toLowerCase().replace(/^(bambu lab|flashforge)\s+/, '').replace(/^adventurer\s+/, 'ad').trim();
+  const mk = window.printerModelKey; // 机型归一公共模块（2026-10-29 热修63：X1 Carbon↔X1C 全称↔缩写误拦案）
   let usable = printers.filter((p) => Boolean(p.brand === 'flashforge') === fileIsFf);
-  if (isSlicedFile && mm) usable = usable.filter((p) => { const a = modelKey(mm), b = modelKey(p.model); return a && b && (a.includes(b) || b.includes(a)); });
+  if (isSlicedFile && mm) usable = usable.filter((p) => mk.modelMatch(mm, p.model));
   const preselect = isSlicedFile && usable.length === 1 ? usable[0].name : (mm && usable.length === 1 ? usable[0].name : '');
   const autoOption = isSlicedFile ? '' : '<option value="">自动匹配（按材料/颜色选机）</option>';
   const machineLockNote = isSlicedFile

@@ -22,9 +22,21 @@ async function main() {
   const a1Online = { id: '1', stateStale: false, ams: [{ slot: '外部料架', type: 'PLA', amsId: 254, trayId: 0 }] };
 
   checks.push(['机队无同型号机：禁止提交', async () => {
-    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab X1C', filaments: [{ type: 'PLA' }], printers: [printers[0]], apiStates: [] });
+    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab P1S', filaments: [{ type: 'PLA' }], printers: [printers[0]], apiStates: [] });
     assert.strictEqual(v.blocked, true);
     assert.ok(/同型号登记机/.test(v.errors[0]));
+    assert.ok(/现有机型/.test(v.errors[0]), '报错带机队现有机型清单');
+  }]);
+
+  checks.push(['X1 Carbon 全称↔X1C 缩写：放行（2026-10-29 误拦案回归）', async () => {
+    const x1c = { id: '2', name: 'X1C', model: 'X1C', autoDispatch: true };
+    const x1cStates = [{ id: '2', stateStale: false, ams: [{ slot: 'AMS 0', type: 'PLA' }] }];
+    const v1 = precheckSlicedSubmission({ machineModel: 'X1 Carbon', filaments: [{ type: 'PLA' }], printers: [x1c], apiStates: x1cStates });
+    assert.strictEqual(v1.blocked, false, 'X1 Carbon 应归一匹配 X1C');
+    const v2 = precheckSlicedSubmission({ machineModel: 'Bambu Lab X1 Carbon 0.4 nozzle', filaments: [{ type: 'PLA' }], printers: [x1c], apiStates: x1cStates });
+    assert.strictEqual(v2.blocked, false, '带喷嘴尾缀的长串同样放行');
+    const v3 = precheckSlicedSubmission({ machineModel: 'X1 Carbon', filaments: [{ type: 'PLA' }], printers: [printers[0]], apiStates: [a1Online] });
+    assert.strictEqual(v3.blocked, true, '真·机队无机型的仍拦（A1mini 队无 X1C）');
   }]);
 
   checks.push(['同型号有机但无对应耗材：禁止提交', async () => {

@@ -133,18 +133,12 @@ class ReservationService {
       }
       // 机型相容硬校验（2026-10-28 曼波令「自动分发只对纯 step 有效」）：切片文件内嵌机型
       // 锁定切片 profile——指定同品牌但错型号（A1 mini 的件指到 X1C）同样机端 preset 不匹配。
-      // modelKey 归一（去品牌前缀、adventurer→ad 缩写）后互含判等；无内嵌机型（老文件/提取
-      // 失败）跳过不拦。与审批台 modelKey 前端版同口径，改一处记得两处
+      // 归一用公共模块 printerModelKey（X1 Carbon↔X1C 全称缩写等别名收敛）——与初审/审批台
+      // 前端三处同源；无内嵌机型（老文件/提取失败）跳过不拦
       const embeddedModel = reservation.embeddedParams && reservation.embeddedParams.machineModel;
       if (!isUnslicedFile(reservation) && embeddedModel) {
-        const modelKey = (x) => String(x || '').toLowerCase()
-          .replace(/^(bambu lab|flashforge)\s+/, '')
-          .replace(/^adventurer\s+/, 'ad')
-          .trim();
-        const a = modelKey(embeddedModel);
-        const b = modelKey(pr.model);
-        const compatible = a && b && (a.includes(b) || b.includes(a));
-        if (!compatible) {
+        const { modelMatch: modelCompatible } = require('../utils/printerModelKey');
+        if (!modelCompatible(embeddedModel, pr.model)) {
           throw new Error(`切片文件内嵌机型「${embeddedModel}」，与指定的「${pr.name}」（${pr.model}）不同型号——切片 profile 已锁死，跨型号打印会机端拒收/参数错配。请指定${embeddedModel}对应的登记机，或用「${pr.model}」重新切片后提交`);
         }
       }
@@ -497,14 +491,14 @@ function precheckSlicedSubmission(input = {}) {
   const warnings = [];
   const machineModel = input.machineModel;
   if (!machineModel) return { blocked: false, errors, warnings, targets: '' }; // 无内嵌机型：初审跳过（老文件/提取失败，不误杀）
-  const modelKey = (x) => String(x || '').toLowerCase().replace(/^(bambu lab|flashforge)\s+/, '').replace(/^adventurer\s+/, 'ad').trim();
+  // 机型归一用公共模块（2026-10-29 热修63：X1 Carbon↔X1C 全称↔缩写误拦案）——
+  // 与审批校验/审批台前端三处同源，别再各写各的正则
+  const { modelMatch, modelKey } = require('../utils/printerModelKey');
   const want = modelKey(machineModel);
-  const targets = (input.printers || []).filter((p) => {
-    const b = modelKey(p.model);
-    return b && (want.includes(b) || b.includes(want));
-  });
+  const targets = (input.printers || []).filter((p) => modelMatch(machineModel, p.model));
   if (!targets.length) {
-    errors.push(`机队中没有「${machineModel}」同型号登记机——切片文件已锁定机型，提交了也无法分发；请用机队现有机型重新切片后再提交`);
+    const fleet = (input.printers || []).map((p) => p.model).filter(Boolean).join('、') || '（空）';
+    errors.push(`机队中没有「${machineModel}」同型号登记机（现有机型：${fleet}）——切片文件已锁定机型，提交了也无法分发；请用机队现有机型重新切片后再提交`);
     return { blocked: true, errors, warnings, targets: '' };
   }
   const targetNames = targets.map((p) => p.name).join('、');

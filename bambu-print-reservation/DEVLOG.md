@@ -788,3 +788,12 @@
 - **③群播全面关闭→私信申请人**：announce 改为全量丢弃（含完成卡）；打印进程事件改 DM 到申请人——authStore 用户表加 feishuOpenId（admin 用户管理页绑定/解除，POST /api/auth/users/:id/feishu），notifyApplicantDm 按单据 submittedBy→账号→openId 发私信（未绑定静默跳过页面兜底）；挂钩事件：审批通过/驳回、打印完成（带取件提醒）、失败重排（带重试进度）、人工取消、放弃池丢弃。提单审批提醒（话题群）保留为审批人工作入口。
 - **待办**：自助绑定飞书需 hub 转发 senderId（handlePrintCommand 加第三参两行改动）——当前 admin 人工填 openId 过渡。
 - 全量 32 套全绿，已上线。
+
+### v57 热修63 · 2026-10-29 · 随本提交落地 · fix
+
+**机型归一公共模块：X1 Carbon 全称被初审误拦「没有该机型」（曼波实测案）**
+
+- **实案**：队员交 X1C 切片被程序初审拒绝——Bambu Studio 内嵌机型串是全称「X1 Carbon」，登记机型号是缩写「X1C」，初审的字符串互含判等不覆盖全称↔缩写变体 → 误判「机队无同型号机」。
+- **修复**：机型归一抽公共模块（src/utils/printerModelKey.js + public/printer-model-key.js 前端同逻辑版）——①小写/去品牌前缀/adventurer→ad；②去空格连字符、剥尾部喷嘴直径（"x1 carbon 0.4"→"x1carbon"）；③别名表收敛全称↔缩写（x1carbon→x1c 等 13 项）；④匹配=canon 相等或前缀互吞。三处消费方（初审/审批校验/审批台机型过滤）全部换 require/引用，不再各写各的正则。
+- **文案**：初审拒绝信息附机队现有机型清单，交件人自查内嵌串写的是什么。
+- 测试：precheck-test 加回归断言（X1 Carbon/带喷嘴尾缀长串/真无机型仍拦），9 断言全绿；全量 32 套全绿，已上线。
