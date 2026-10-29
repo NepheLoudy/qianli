@@ -123,6 +123,6 @@ if (!isGroup && !p2pExempt && !isP2pCommandAllowed(senderId, message.chat_id)) {
 ```
 仅豁免这一条指令，其余私聊规则不变（查看类 `/print-*`、其他域指令仍要白名单或进群）。
 
-**状态**：本地提交 `852d2cf` + 已推 GitHub；**部署待本机回到 192.168.31.x 局域网**
+**状态**：✅ 已部署上线（2026-10-29 07:5x）——提交 `852d2cf` 已推 GitHub，knowledge-tracker 重启完成，现网文件 849/850 行确认含 p2pExempt。原卡点（本机脱离实验室 LAN）已恢复。
 （2026-10-29 07:2x 桌面机脱离 LAN，SSH/3001 全不可达）。回到 LAN 后执行：
 `cd ticket-pm/project-management-robot && npm run push` 即完成重启。
