@@ -295,15 +295,10 @@ function materialMatch(required, trayType) {
  * 窗口结束原样补发（打印机控制/写表/队列匹配不延迟，只有消息延后）
  */
 function announce(name, card, onError, targetUrl) {
-  // 群播报降噪到极致（2026-10-28 曼波令「机械组播报停了，仅保留打印成功」）：
-  // 除「✅ 打印完成」卡外全部丢弃（排队/重试/失败/放弃/改派/换料/缺料等一律不发，
-  // 不积压不补发——状态页面与放弃池可见；失败单的故障轨迹都在单据 history 里）。
-  // 静默期闸失效后仍走此过滤，完成卡不受影响（完成卡内容自带取件提醒）
-  const isFinishCard = card && card.header && card.header.title
-    && String(card.header.title.content || '').includes('打印完成');
-  if (!isFinishCard) return;
-  if (quietHours.gatePayload('webhook-card', card, name)) return;
-  sendMessage(card, targetUrl).catch(onError);
+  // 群播全面关闭（2026-10-28 曼波令「机械组播报全面关闭」）：打印进程改私信申请人本人
+  // （notifyApplicantDm，见各事件钩子）——完成/失败/取消等状态 DM 到人，页面与放弃池兜底。
+  // 此函数保留骨架供将来定向播报复活，当前一律丢弃（含完成卡）
+  return;
 }
 
 class Dispatcher {
@@ -1261,6 +1256,9 @@ class Dispatcher {
     this.receiptHold.set(printer.id, task.recordId);
     this.persistState();
     console.log(`[分发] ${task.applicationNo || task.recordId} @ ${printer.name} 完成——等预约界面回执取件后继续队列`);
+    // 私信申请人（2026-10-28 曼波令「群播全面关闭转私信」）：fire-and-forget 永不阻塞收尾
+    require('./reservation').notifyApplicantDm(task.recordId,
+      `✅ 你的打印件已完成（${printer.name}）${task.startedAt ? '' : ''}——请到实验室取件，并在预约界面点「确认取件」后队列才会继续`);
 
     // 份数续打判定先于状态写入：remaining>0 时单据回「排队中」而非「已完成」——
     // 全部件完成才算完成，否则队列里挂着续件、表上却是终态（意图-执行断裂）
@@ -1349,6 +1347,8 @@ class Dispatcher {
         config.status.CANCELLED,
         '已被人工取消（打印机屏幕或控制台）——系统不自动重发（如需继续请「复刻」该单）'
       ), 'human-terminate');
+      require('./reservation').notifyApplicantDm(task.recordId,
+        `⏹ 你的打印单已被人工停止（打印机屏幕或控制台）——系统不自动重发；如需继续，请在预约页面用「复刻」重新提交`);
     } else if (isMirrorTask(task)) {
       await bitableApi
         .updateRecord(config.bitable.reservationTableId, task.recordId, {
@@ -1378,6 +1378,8 @@ class Dispatcher {
 
     if (isLocalTask(task)) {
       storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `打印失败重排：${reason}`), 'fail');
+      require('./reservation').notifyApplicantDm(task.recordId,
+        `⚠️ 你的打印单失败（${String(reason || '未知').slice(0, 80)}），已自动重新排队（第 ${task.dispatchRetries}/${config.dispatch.maxRetries} 次重试）——若反复失败会转入放弃池等人工处理`);
       // 入库样本失败回填（2026-10-16）：重试若成功会再覆盖为「成功」——末次真实结果为准
       try {
         const rec = reservationStore.get(task.recordId);
@@ -1580,6 +1582,8 @@ class Dispatcher {
         config.status.CANCELLED,
         '放弃池人工丢弃——不再分发（如需打印请重新预约）'
       ), 'given-up-dismiss');
+      require('./reservation').notifyApplicantDm(recordId,
+        `⏹ 你的打印单此前多次分发失败，已被人工从放弃池丢弃——不再自动重试；如需打印请在预约页面用「复刻」重新提交`);
     } else if (isMirrorTask(task)) {
       await bitableApi
         .updateRecord(config.bitable.reservationTableId, recordId, {

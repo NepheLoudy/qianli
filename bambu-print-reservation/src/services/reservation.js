@@ -262,11 +262,13 @@ class ReservationService {
   }
 
   async notifyReviewResult(reservation, result, comment, queueInfo = null) {
-    // 审批结果卡停发（2026-10-28 曼波令「机械组播报仅保留打印成功」补漏）：此前走
-    // sendMessage 直发机械组主群、绕过 announce 过滤——代批一单群里多一张卡。审批是
-    // 审批人自己的操作（结果页面立即可见，申请人看列表状态），无需群播回执。
-    // 提单审批提醒（notifyReviewers→审批话题群）是审批人的工作入口，不受此令影响
-    return;
+    // 群卡停发（热修58）→ 改私信申请人（2026-10-28 曼波令「打印进程私信告知」）：
+    // 通过/驳回都 DM 到人；未绑定飞书的账号静默跳过（页面状态可见）
+    const approved = result === config.reviewResult.APPROVED;
+    const text = approved
+      ? `✅ 你的预约单已通过审批${queueInfo && queueInfo.ahead > 0 ? `，当前前方排队 ${queueInfo.ahead} 单` : '，即将开始打印'}`
+      : `❌ 你的预约单被驳回${comment ? `：${comment}` : ''}`;
+    notifyApplicantDm(reservation.id, text);
   }
 
   // ---------- 取消 ----------
@@ -544,5 +546,30 @@ function precheckSlicedSubmission(input = {}) {
   return { blocked: false, errors, warnings, targets: targetNames };
 }
 
+/**
+ * 打印进程私信申请人（2026-10-28 曼波令「群播全面关闭，转私信告知」）：按单据
+ * submittedBy → 账号 → feishuOpenId 发 DM；未绑定飞书的账号跳过（页面状态可见）。
+ * fire-and-forget：DM 失败只记日志，绝不影响事件主流程。
+ */
+function notifyApplicantDm(recordId, text) {
+  setImmediate(() => {
+    try {
+      const rec = store.get(recordId);
+      const user = rec && rec.submittedBy
+        ? require('./authStore').getUserById(rec.submittedBy)
+        : null;
+      const openId = user && user.feishuOpenId;
+      if (!openId) return; // 未绑定：静默跳过（页面可见）
+      const { sendTextToUser } = require('../feishu/bot');
+      const name = (rec.applicant || user.displayName || recordId);
+      sendTextToUser(openId, `${text}\n—— 打印预约机器人（单 ${rec.id} · ${rec.fileName || ''} · 申请人 ${name}）`)
+        .catch((err) => console.warn('[DM] 私信发送失败:', err.message));
+    } catch (err) {
+      console.warn('[DM] 私信组装失败:', err.message);
+    }
+  });
+}
+
 module.exports.createSampleFromReservation = createSampleFromReservation;
 module.exports.precheckSlicedSubmission = precheckSlicedSubmission;
+module.exports.notifyApplicantDm = notifyApplicantDm;

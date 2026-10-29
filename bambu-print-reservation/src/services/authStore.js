@@ -217,9 +217,30 @@ const authStore = {
     return load().users.map(authStore.safeUser);
   },
 
+  /** 按 id 查用户（含敏感口径内部用：DM 通知链取 openId） */
+  getUserById(userId) {
+    return load().users.find((u) => u.id === userId) || null;
+  },
+
+  /**
+   * 绑定飞书 openId（2026-10-28 曼波令「打印进程私信告知申请人」）：打印进程事件
+   * （完成/失败/取消/驳回）按此 DM 申请人。admin 端点写入；openId 格式浅校验（ou_ 前缀
+   * 为飞书 open_id 惯例，历史值可能不同故只拦截明显垃圾）。
+   */
+  setFeishuOpenId(userId, openId) {
+    const oid = String(openId || '').trim();
+    if (oid && !/^[\w-]{16,64}$/.test(oid)) throw new Error('openId 格式可疑（应为 ou_ 开头的飞书开放平台标识）');
+    const data = load();
+    const user = data.users.find((u) => u.id === userId);
+    if (!user) throw new Error('用户不存在');
+    user.feishuOpenId = oid || null;
+    save(data);
+    return authStore.safeUser(user);
+  },
+
   /** 剔除敏感字段 */
   safeUser(user) {
-    return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, createdAt: user.createdAt, lastLoginAt: user.lastLoginAt };
+    return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, createdAt: user.createdAt, lastLoginAt: user.lastLoginAt, feishuOpenId: user.feishuOpenId || null };
   },
 };
 

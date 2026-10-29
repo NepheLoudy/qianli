@@ -206,6 +206,17 @@ app.post('/api/auth/users/:id/role', requireUser('admin'), (req, res) => {
   }
 });
 
+// 绑定飞书 openId（2026-10-28 曼波令「打印进程私信告知申请人」）：admin 在用户管理页
+// 为账号填写飞书 open_id——打印完成/失败/取消/驳回等进程事件 DM 到人。自助绑定待 hub
+// 透传 senderId 后加绑定指令（当前人工填）
+app.post('/api/auth/users/:id/feishu', requireUser('admin'), (req, res) => {
+  try {
+    res.json(authStore.setFeishuOpenId(req.params.id, (req.body || {}).openId));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // ---------- 定制窗口（规则见顶层 AGENTS「机器人后端定制窗口」）：定制项全景只读 ----------
 
 app.get('/api/print/policy', (req, res) => {

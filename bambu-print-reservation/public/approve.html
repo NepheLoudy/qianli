@@ -530,7 +530,31 @@ async function openApproveDialog(id) {
   const filNote = fil.length > 1
     ? `<div class="detail" style="margin-bottom:6px">🧵 文件含 <b>${fil.length}</b> 种用料——逐条指定槽位，留自动的按该条用料类型/颜色匹配</div>`
     : '';
+  // 3mf 切片件预览卡（2026-10-28 曼波令「审批界面预览 3mf」）：切片导出件无内嵌网格
+  // （Orca 打开也是看盘面图）——直接展示文件内嵌缩略图（切片器渲染的盘面俯视）+ 关键
+  // 切片元数据；模型直投单走下方 3D 预览链路，此处不重复
+  const previewCard = isSlicedFile
+    ? (() => {
+        const embed = (rec && rec.embeddedParams) || {};
+        const mins = Number(embed.estMinutes);
+        const fils = (embed.filaments || []).map(f => esc(f.type)).join(' + ');
+        return `<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start">
+          <img src="/api/reservations/${esc(id)}/thumbnail" alt="切片盘面预览"
+               style="width:170px;max-height:170px;object-fit:contain;border:1px solid #55555a;border-radius:4px;background:#0d1117"
+               onerror="this.parentElement.querySelector('.thumbFallback').style.display='';this.remove()">
+          <div class="detail" style="flex:1;line-height:1.7">
+            <div><b>切片产物预览</b>（文件内嵌盘面图——即 Orca 打开所见盘上布置）</div>
+            <div>📦 内嵌机型：<b>${esc(embed.machineModel || '未识别')}</b></div>
+            <div>⏱ 切片预估：${mins > 0 ? Math.round(mins) + ' 分钟' : '未记录'}</div>
+            <div>🧵 用料：${fils || '未记录'}</div>
+            <div>🛏 板型：${esc(embed.bedType || '未记录')}</div>
+            <div class="thumbFallback" style="display:none;color:var(--warn)">缩略图缺失（老切片器产物）</div>
+          </div>
+        </div>`;
+      })()
+    : '';
   dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">✅ 通过并分发（${esc(id)}）</h3>`
+    + previewCard
     + `<div class="detail" style="margin-bottom:8px">指定分发目标与用料（都可留自动匹配）；指定后该机不可用会滞留等人工、不静默改派</div>`
     + machineLockNote + modelNote + brandHint + filNote
     + `<label>目标打印机</label><select id="apPrinter" onchange="renderApTrays()">${autoOption}${opts}</select>`
