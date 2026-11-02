@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 push 归档提交。本仓库远程为 `github.com/NepheLoudy/bambu-print-reservation`——它由 bambu 独立仓库演化而来（v9 起转型 monorepo），故早期版本即 bambu 的早期历史（细节见 [bambu-print-reservation/DEVLOG.md](bambu-print-reservation/DEVLOG.md)）。v1~v25 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](AGENTS.md)）。
 
-当前最新：**v159**（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
+当前最新：**v160**（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
 
 ## 阶段一 · bambu 独立仓库时期（2026-07-15 ~ 07-21）
 
@@ -1368,3 +1368,11 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - **registry 补登三处**：duty quickAction 测试数 13→20 套（zklink 系列扩容后漂移）；ticket windows 补 GET /api/tickets/unclosed-by-group（两仓联动契约端点漏登记）；hub permissions 补 /print-bind、/print-pickup 私聊豁免两条（v135/v136 文档欠账）。
 - **四仓全量审查修复批（四个只读子代理分仓审查 + 主会话修复，各自 DEVLOG 详录）**：ticket-bot v93 播报卡消毒（hub 修了下游没修源头的跨仓缺口）+ pm v137 消毒一致性/关键词防互答/文档同步 + approval v90 form_alert_live 冲刷注册（P1）/回执诚实性/台账白名单/时区统一/消毒补网/.env.example 补 17 键 + gateway v40 统计落盘原子写/日桶钉东八区/health 透出 SDK 真实态。全部桩测试全绿（新增 stub-test-card-sanitize 11 断言、stub-test-form-alert-live 4 断言、keyword-post 补断言）。
 - 审查遗留待确认清单见各仓 DEVLOG（approval 静默重跑 7 次/gateway reconnecting 行为面/pm 宽口径 @判定 等——均按「不揣测设计意图」原则记录两种读法，未擅动）。
+
+### v160 · 2026-11-03 · 随本提交落地 · fix
+
+**ticket-bot v94 对账卡死 48.8h 事故修复批联动（顶层同步 LOGIC-MAP）**
+
+- **事故**：11-01 00:04 实验室网络故障窗口内，ticket-bot 一轮播报对账的出站请求永久悬挂，互斥标志 reconcileRunning 恒 true，每分钟兜底对账停摆 48.8h；同窗口网关长连接反复断连，曼波 11-01 18:17 提的宣运组工单（reczz28UVdw6cZmI）create 事件被吞——事件路径+对账兜底双通道全灭，工单不播报。11-03 排障定位后手动 /api/bot/reconcile 补播成功 + restart 清场恢复。
+- **ticket-bot v94 修复**（63c832c，详见该仓 DEVLOG）：client.js token fetch 补 AbortSignal.timeout(15s)（出站 fetch 无界清零）+ 新增 utils/taskGate.js 互斥看门狗闸门（单轮悬挂超阈值强制复位放行 + 令牌防误复位）五定时任务全接入 + stub-test-task-gate 6 断言全量 8 套绿；v93 批的 bot.js sanitize 与 webhook signal 此前未部署成功，随本批补落地现网（md5 已核对一致）。
+- 顶层 ticket-pm/LOGIC-MAP.md §1.4 补「互斥闸门+看门狗」段；本条为顶层联动归档。
