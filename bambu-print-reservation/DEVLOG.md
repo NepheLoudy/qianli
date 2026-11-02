@@ -1122,6 +1122,7 @@
 - **[P1] tier2 特征字段错配**：featureDeriveSafe 按 sample.model.features 取特征对象，预约记录的字段是 modelFeatures → tier2 派生特征（悬垂/接触/曲面/孔）恒空全体按中位数填补 → 两形态兼容。
 - **P2 群**：列表 DTO 对数组 sourceFile 逐元素剥 storedPath（v62 收口对多源单失效的泄露面回补）；预约提交 10 处失败路径 removeUploads 改 `...srcFiles` 全量清临时文件；多模型 buffer/sliceBuf 建样后即释（12×80MB 峰值内存）；工程 3mf 内嵌参数作 baseline 加数值安全域钳制+布尔字符串归一（ironing/brim 此前 typeof 门恒不等、从未可采纳）；paramModelStore 仅 SyntaxError 才隔离（对齐 v62 口径，防瞬时 fs 错误抹掉 active 槽）+mtime 读缓存（每次提交全量 JSON.parse 热点）；tier2 剔除已驳回/已取消单（被否决参数不得当弱正样本）+行数封顶 800；>50MB 3mf 硬拦（超出探测上限不得按切片直通）+工程件探测 catch 旁路收紧（已判非切片后解析异常硬拦而非「按切片产物继续」）；OBJ 源文件提交口打回（三分支解析器皆不收、此前永远静默配不上对）；approve 预览 jgetT 超时真 abort 底层请求+单据拉取失败可见提示；viz 全局按钮锁豁免同步切换钮（主题/折叠/热力图开关 2.5s 内二击不再被吞）；多模型批量文件清单不再被首件预览整面板顶掉（mfPreview 子容器）；训练台 toast 支持多行。
 - **已知取舍（记录在案）**：param-model/fit 同步训练阻塞事件循环 ~14s（reviewer/admin 门内，v61 已声明；现网样本量上来后避开打印高峰训练）；ridge 分支置信度 0.6 为族级先验、无逐单置信度（门控对 ridge 形同虚设，暂以文档披露）；tier2 增长靠 800 行封顶+读缓存缓解，rows 采样与 MLP 早停留 backlog。
+- **部署**：2026-11-03 04:07 SFTP 上线现网（曼波令「全部部署落地」）——pm2 restart ↺26 online、/api/health 200 六机全连积压 0；收尾 ECONNRESET 为已知 sshd 频率保护误报，人工复核通过未重推。
 
 ### v83 · 2026-11-01 · 顶层归档 `c74cb5a` · feat
 
