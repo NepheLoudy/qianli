@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 push 归档提交。本仓库远程为 `github.com/NepheLoudy/bambu-print-reservation`——它由 bambu 独立仓库演化而来（v9 起转型 monorepo），故早期版本即 bambu 的早期历史（细节见 [bambu-print-reservation/DEVLOG.md](bambu-print-reservation/DEVLOG.md)）。v1~v25 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](AGENTS.md)）。
 
-当前最新：**v161**（2026-11-03，bambu v59→v83 批量会话遗留归档+全量审查修复批联动——24 版积压入库、P0×1/P1×11/P2×18 修复、37 套测试全绿，bambu DEVLOG v83 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
+当前最新：**v162**（2026-11-03，DEVLOG 锚点哈希回填批+magpie 调用策略 v2.4 归档——纯 docs）。上一版 v161（2026-11-03，c74cb5a，bambu v59→v83d 批量会话遗留归档+全量审查修复批（bambu v84）联动——27 版积压入库、P0×1/P1×11/P2×17 修复、37 套测试全绿，bambu DEVLOG v84 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
 
 ## 阶段一 · bambu 独立仓库时期（2026-07-15 ~ 07-21）
 
@@ -1358,7 +1358,7 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - 测试总账：gateway 三桩+冒烟全绿、duty 17 套全绿；其余仓本轮无改动。
 - 哈希回填：v157=`04efc29`。
 
-## v159 · 2026-10-30 · 随本提交落地 · feat
+## v159 · 2026-10-30 · d94b10c · feat
 
 **运维台印刷品 UI 重置 + 人机工效迭代 + 四仓全量审查修复批联动**
 
@@ -1369,7 +1369,7 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - **四仓全量审查修复批（四个只读子代理分仓审查 + 主会话修复，各自 DEVLOG 详录）**：ticket-bot v93 播报卡消毒（hub 修了下游没修源头的跨仓缺口）+ pm v137 消毒一致性/关键词防互答/文档同步 + approval v90 form_alert_live 冲刷注册（P1）/回执诚实性/台账白名单/时区统一/消毒补网/.env.example 补 17 键 + gateway v40 统计落盘原子写/日桶钉东八区/health 透出 SDK 真实态。全部桩测试全绿（新增 stub-test-card-sanitize 11 断言、stub-test-form-alert-live 4 断言、keyword-post 补断言）。
 - 审查遗留待确认清单见各仓 DEVLOG（approval 静默重跑 7 次/gateway reconnecting 行为面/pm 宽口径 @判定 等——均按「不揣测设计意图」原则记录两种读法，未擅动）。
 
-### v160 · 2026-11-03 · 随本提交落地 · fix
+### v160 · 2026-11-03 · 2277e3f · fix
 
 **ticket-bot v94 对账卡死 48.8h 事故修复批联动（顶层同步 LOGIC-MAP）**
 
@@ -1377,11 +1377,18 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - **ticket-bot v94 修复**（63c832c，详见该仓 DEVLOG）：client.js token fetch 补 AbortSignal.timeout(15s)（出站 fetch 无界清零）+ 新增 utils/taskGate.js 互斥看门狗闸门（单轮悬挂超阈值强制复位放行 + 令牌防误复位）五定时任务全接入 + stub-test-task-gate 6 断言全量 8 套绿；v93 批的 bot.js sanitize 与 webhook signal 此前未部署成功，随本批补落地现网（md5 已核对一致）。
 - 顶层 ticket-pm/LOGIC-MAP.md §1.4 补「互斥闸门+看门狗」段；本条为顶层联动归档。
 
-### v161 · 2026-11-03 · 随本提交落地 · fix
+### v161 · 2026-11-03 · c74cb5a · fix
 
 **bambu v59→v83 批量会话遗留归档 + 全量审查修复批（bambu v83）联动——24 版积压入库，37 套测试全绿**
 
-- **归档主体**：bambu-print-reservation v59~v82 共 24 版（均已 SFTP 上线但从未入库，v160 批声明遗留）随本提交全部归档——机队悬浮坞（v59）/印刷品 UI 重构（v58 风格系）/viz「工程图纸」组件库（v64）/参数智能层 kNN+岭回归（v60）→MLP 化（v61）/全量审查修复批（v62）/平台使用手册（v63）/多模型批量上传+几何指纹自动配对（v76）/预约单多源全链适配（v80）等。
-- **v83 全量审查修复批**（曼波令「全量审查+debug 修复一块提交」）：三域（训练ML/前端/核心服务）并行子代理审查×双源交叉验证（hy3-verifier+deepseek cross-check），32 项发现 31 证实（1 项推翻、1 项两验各对一半），修复 P0×1/P1×11/P2×18——带孔件 DNA 必炸（v68 起坏）/多模型配对排列爆栈+贪心泄漏/多源入库回填断链/切片签名死零/3mf 实例化丢件/PCA 混维 NaN/热力图 UTC+8 错位/放弃坞 404/工程件闸门 catch 旁路等；新增 geometry-dna-test + 7 条回归断言，37 套全绿。逐条详录见 bambu DEVLOG v83。
+- **归档主体**：bambu-print-reservation v59~v83d 共 27 个版本条目（均已 SFTP 上线但从未入库，v160 批声明遗留）随本提交全部归档——机队悬浮坞（v59）/印刷品 UI 重构（v58 风格系）/viz「工程图纸」组件库（v64）/参数智能层 kNN+岭回归（v60）→MLP 化（v61）/全量审查修复批（v62）/平台使用手册（v63）/多模型批量上传+几何指纹自动配对（v76）/预约单多源全链适配（v80）/AMS 手动同步+列表 DTO 三轮裁剪 218KB→87KB+审批台骨架屏与键盘快捷流（v83/v83 续/v83c/v83d，会话中途并发落盘的 11-01 条目）等。
+- **v84 全量审查修复批**（曼波令「全量审查+debug 修复一块提交」；编号备注：v83 已被 11-01 AMS 批占用、本批提交信息中 v83 字样即指本批）：三域（训练ML/前端/核心服务）并行子代理审查×双源交叉验证（hy3-verifier+deepseek cross-check），32 项发现 31 证实（1 项推翻、1 项两验各对一半），修复 P0×1/P1×11/P2×17——带孔件 DNA 必炸（v68 起坏）/多模型配对排列爆栈+贪心泄漏/多源入库回填断链/切片签名死零/3mf 实例化丢件/PCA 混维 NaN/热力图 UTC+8 错位/放弃坞 404/工程件闸门 catch 旁路等；新增 geometry-dna-test + 7 条回归断言，37 套全绿。逐条详录见 bambu DEVLOG v84。
 - **文档收尾**：bambu DEVLOG 头部指针 v64→v83 补正（漂移 19 版，高频复发项再现）+ v58/v59 锚点哈希回填（ee34bda/39fc504）；USER-GUIDE.md 补一盘多件多选口径（§2/§5）；registry bambu 段补参数智能层与训练端点登记；桌面《机器人总成使用指南.html》核对无需同步（本批无指令/播报/卡片变化，OBJ 打回不涉及指南既有陈述）。
 - **会话遗留清理**：`.ref-site.html`/`.ref-styles.css`（v58 UI 对齐用战队官网参考快照，使命完成）与 `scripts/fix-viz.tmp.js`（v81 一次性修图脚本）删除。
+
+### v162 · 2026-11-03 · 随本提交落地 · docs
+
+**DEVLOG 锚点哈希回填批 + magpie 调用策略 v2.4 归档（纯 docs）**
+
+- bambu DEVLOG v60→v83d 的「随本提交落地」占位按本批归档提交 c74cb5a 回填（27 条目——含会话中途并发落盘的 v83/v83 续/v83c/v83d）；顶层 v159/v160/v161 回填 d94b10c/2277e3f/c74cb5a；v158 锚点存疑不回填（其批内容与 1075f36/fdc9cc8 均仅部分吻合，宁缺勿错）；v161 条目同步勘误：归档版本数 24→27、审查批编号 v83→v84（「vN 只增不复用」——v83 已被 11-01 AMS 同步批占用）。
+- `docs/magpie-调用策略.md` 收编入库：magpie 模型调用策略 v2.4（均衡负载·并行开发·健康感知）——枪柜盘点/常设工位群（dev-worker 系/cross-check/expert-review + hy3 免费基础工位）/接单 SOP/临期积分优先消耗/pool-listener v0.2；即「子代理撞并发换平台」规则的底层策略文档。
