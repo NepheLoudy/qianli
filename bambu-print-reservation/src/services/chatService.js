@@ -151,7 +151,9 @@ async function handlePrintListCommand() {
 
   const lines = ['📋 打印预约列表', ''];
 
-  reservations.forEach((res, i) => {
+  // 审查修复（v62）：截断展示——飞书消息有长度上限，单量增长后全量拼接会直接发送失败
+  const SHOW = 20;
+  reservations.slice(0, SHOW).forEach((res, i) => {
     let statusIcon = '📋';
 
     switch (res.status) {
@@ -202,6 +204,7 @@ async function handlePrintListCommand() {
     lines.push('');
   });
 
+  if (reservations.length > SHOW) lines.push(`… 其余 ${reservations.length - SHOW} 条见打印预约页面`);
   return lines.join('\n');
 }
 
@@ -306,10 +309,12 @@ const commandHandlers = {
  * @returns {Promise<string>} 回复文本
  */
 async function executeCommand(command, args, ctx) {
-  const handler = commandHandlers[command];
-  if (!handler) {
+  // 审查修复（v62）：hasOwn 防原型链——`/toString`、`/constructor` 这类指令名
+  // 会命中 Object.prototype 成员，把函数当 handler 调
+  if (!Object.prototype.hasOwnProperty.call(commandHandlers, command)) {
     return `❌ 未知指令：${command}\n发送 /print-help 查看可用指令`;
   }
+  const handler = commandHandlers[command];
   return handler(args || [], ctx || {});
 }
 

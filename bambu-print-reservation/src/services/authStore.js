@@ -31,6 +31,10 @@ function load() {
       sessions: data.sessions && typeof data.sessions === 'object' ? data.sessions : {},
     };
   } catch (err) {
+    // 审查修复（v62）：与 reservationStore 同口径收紧——只有 JSON 解析失败（内容真坏）
+    // 才隔离按空启动；EPERM/EBUSY 等瞬时 fs 错误上抛（登录/注册 500 保留现场），
+    // 防杀软扫描瞬间把仅存的账号表改名隔离
+    if (!(err instanceof SyntaxError)) throw err;
     // 损坏隔离（2026-10-08 同 reservationStore 口径）：坏文件改名留档，防止下一次
     // register/save 把仅存的账号表静默覆盖；隔离件可人工抢救
     const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -273,6 +277,9 @@ const authStore = {
 // ============================================================
 const BIND_CODE_TTL_MS = 5 * 60 * 1000;
 const bindCodes = new Map(); // code → { userId, expiresAt }
+const BIND_FAIL_LIMIT = 5;
+const BIND_FAIL_LOCK_MS = 10 * 60 * 1000;
+const bindFailures = new Map(); // openId → { count, lockedUntil }（审查修复 v62：防 6 位码暴力枚举）
 
 authStore.createBindCode = function createBindCode(userId) {
   const user = load().users.find((u) => u.id === userId);
@@ -286,15 +293,29 @@ authStore.createBindCode = function createBindCode(userId) {
   return { code, expiresInSeconds: Math.round(BIND_CODE_TTL_MS / 1000) };
 };
 
-/** 用绑定码把 openId 绑到对应账号；码无效/过期/已用均报错（一次性消费） */
+/** 用绑定码把 openId 绑到对应账号；码无效/过期/已用均报错（一次性消费）。
+ *  审查修复（v62）：按 openId 限流——错误尝试 ≥5 次锁 10 分钟（对齐 login 口径）。
+  *  绑成 = 受害者账号进程私信改绑攻击者 openId，不能给暴力枚举留门。 */
 authStore.bindByCode = function bindByCode(code, openId) {
+  const oid = String(openId || '').trim();
+  const fail = bindFailures.get(oid);
+  if (fail) {
+    if (fail.lockedUntil > Date.now()) throw new Error(`绑定码错误次数过多，请 ${Math.ceil((fail.lockedUntil - Date.now()) / 60000)} 分钟后再试`);
+    if (fail.count >= BIND_FAIL_LIMIT && fail.lockedUntil <= Date.now()) bindFailures.delete(oid); // 锁定期过重置
+  }
+  const recordFail = () => {
+    const cur = bindFailures.get(oid) || { count: 0, lockedUntil: 0 };
+    cur.count += 1;
+    if (cur.count >= BIND_FAIL_LIMIT) { cur.lockedUntil = Date.now() + BIND_FAIL_LOCK_MS; cur.count = 0; }
+    bindFailures.set(oid, cur);
+  };
   const key = String(code || '').trim();
   const entry = bindCodes.get(key);
-  if (!entry) throw new Error('绑定码无效或已使用——请在打印预约页面重新生成');
-  if (entry.expiresAt < Date.now()) { bindCodes.delete(key); throw new Error('绑定码已过期（5 分钟内有效）——请重新生成'); }
-  const oid = String(openId || '').trim();
+  if (!entry) { recordFail(); throw new Error('绑定码无效或已使用——请在打印预约页面重新生成'); }
+  if (entry.expiresAt < Date.now()) { bindCodes.delete(key); recordFail(); throw new Error('绑定码已过期（5 分钟内有效）——请重新生成'); }
   if (!oid) throw new Error('未取到你的飞书身份（open_id）——请确认是在飞书里直接和机器人对话');
   bindCodes.delete(key); // 一次性
+  bindFailures.delete(oid); // 成功清计数
   const result = authStore.setFeishuOpenId(entry.userId, oid);
   return result;
 };

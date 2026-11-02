@@ -173,6 +173,10 @@ input[type="checkbox"] { width: auto; accent-color: var(--accent); }
 datalist { /* 原生下拉，无样式需求 */ }
 
 /* ---------- 按钮（千里文字风 + 实底主按钮） ---------- */
+/* ---------- 按钮底座系统（v67 交互底层批）----------
+   艺术语言 = 「盖章」：主按钮按压下沉 1px（章落纸面），次级描边呼吸；
+   状态完备：hover 呼吸 / active 下沉 / :focus-visible 焦点环（键盘可达）/
+   disabled 灰化 / .btn-loading 自旋（异步提交防重复点）。 */
 button, .btn {
   font: inherit;
   font-size: 14px;
@@ -182,20 +186,41 @@ button, .btn {
   color: var(--text);
   padding: 9px 18px;
   border-radius: 0;
-  transition: border-color .16s, color .16s, background .16s, transform .16s;
+  position: relative;
+  transition: border-color .16s, color .16s, background .16s, transform .1s, box-shadow .16s, opacity .16s;
 }
-button:hover { border-color: var(--accent); color: var(--accent); }
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:active:not(:disabled) { transform: translateY(1px); }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 button.primary {
   background: var(--accent);
   border-color: var(--accent);
   color: var(--accent-ink);
   font-weight: 500;
+  box-shadow: 0 1px 0 color-mix(in srgb, var(--accent) 55%, #000);
 }
-button.primary:hover { filter: brightness(1.06); color: var(--accent-ink); }
+button.primary:hover:not(:disabled) { filter: brightness(1.06); color: var(--accent-ink); }
+button.primary:active:not(:disabled) { transform: translateY(2px); box-shadow: none; }
+button.primary:disabled { background: color-mix(in srgb, var(--accent) 45%, var(--card-bg)); border-color: transparent; color: var(--accent-ink); opacity: .7; }
 button.mini { padding: 4px 12px; font-size: 12.5px; }
 button.on { border-color: var(--accent); color: var(--accent); font-weight: 500; }
 button:disabled { opacity: .45; cursor: not-allowed; }
 button:disabled:hover { border-color: var(--line); color: var(--text); }
+/* 危险/幽灵/加载态 */
+button.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); font-weight: 500; }
+button.ok:hover:not(:disabled) { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 18%, var(--card-bg)); color: var(--ok); }
+button.bad, button.danger { border-color: var(--bad); color: var(--bad); background: transparent; }
+button.bad:hover:not(:disabled), button.danger:hover:not(:disabled) { background: var(--bad-soft); color: var(--bad); border-color: var(--bad); }
+button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+button.ghost:hover:not(:disabled) { color: var(--accent); }
+button.btn-loading { pointer-events: none; opacity: .75; color: transparent !important; }
+button.btn-loading::after {
+  content: ''; position: absolute; inset: 0; margin: auto;
+  width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  border-top-color: var(--accent); animation: btn-spin .7s linear infinite;
+}
+@keyframes btn-spin { to { transform: rotate(360deg); } }
 
 /* ---------- 状态徽章（硬边框印刷风） ---------- */
 .badge {
@@ -419,3 +444,204 @@ dialog .actions { display: flex; gap: 10px; margin-top: 16px; }
 .site-nav a.on:after { transform: scaleX(1); }
 @media (max-width: 1100px) { .site-nav a { font-size: 13px; } }
 @media (max-width: 860px) { .site-nav { display: none; } /* 移动端收进页脚链接 */ }
+
+/* ============================================================
+   可视化组件（v64 工程图纸批）——「墨线制图」语言：
+   1px 细实线 + 蓝图网格底纹 + 衬线数字 + 主题令牌配色，双主题自适应
+
+   ⭐ 使用强度节奏（v66 曼波定，新可视化必读）：元素的视觉体积/位置与其
+   使用频率和信息价值匹配——高频操作占首屏黄金位；中频参考紧凑常驻
+   （时间带 34px）；低频回顾默认折叠成一行数字摘要，点开才渲染
+   （热力日历/星图模式）。新增图表先问：谁看、多久看一次、值几屏。
+   ============================================================ */
+.viz-card { border: 1px solid var(--line); background: var(--card-bg); padding: 12px 14px; position: relative; }
+.viz-card h4 { margin: 0 0 8px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--subtle); font-weight: 500; }
+.viz-grid { background-image: repeating-linear-gradient(0deg, color-mix(in srgb, var(--line) 38%, transparent) 0 1px, transparent 1px 16px), repeating-linear-gradient(90deg, color-mix(in srgb, var(--line) 38%, transparent) 0 1px, transparent 1px 16px); }
+.viz-svg { display: block; width: 100%; height: auto; }
+.viz-svg.viz-heatmap, .viz-svg.viz-radar { width: auto; max-width: 100%; margin: 0 auto; }
+.viz-gridline { stroke: var(--line); stroke-width: .5; opacity: .45; }
+.viz-axisline { stroke: var(--line); stroke-width: 1; }
+.viz-tick { font: 9px var(--font-serif, Georgia, serif); fill: var(--subtle); }
+.viz-axislabel { font: 9px var(--font-serif, Georgia, serif); fill: var(--muted); letter-spacing: .08em; }
+.viz-empty { font: italic 11px var(--font-serif, Georgia, serif); fill: var(--subtle); }
+.viz-empty-box { padding: 14px; text-align: center; color: var(--subtle); font-style: italic; font-size: 12px; border: 1px dashed var(--line); }
+.viz-legend { font-size: 11px; color: var(--muted); margin-right: 10px; display: inline-flex; align-items: center; gap: 5px; }
+.viz-swatch { width: 14px; height: 2px; display: inline-block; }
+.viz-swatch-nozzle { background: var(--accent); }
+.viz-swatch-bed { background: var(--warn); }
+.viz-swatch-target { background: repeating-linear-gradient(90deg, var(--subtle) 0 3px, transparent 3px 6px); height: 1px; }
+.viz-line { fill: none; stroke-width: 1.6; }
+.viz-line-nozzle { stroke: var(--accent); }
+.viz-line-bed { stroke: var(--warn); }
+.viz-line-target { stroke: var(--subtle); stroke-width: 1; stroke-dasharray: 4 3; }
+.viz-dot-nozzle { fill: var(--accent); }
+/* 弧形仪表 */
+.viz-gauge-track { fill: none; stroke: var(--line); stroke-width: 5; stroke-linecap: butt; }
+.viz-gauge-arc { fill: none; stroke: var(--accent); stroke-width: 5; }
+.viz-gauge-arc-line { stroke-width: 5; }
+.viz-gauge-num { font: 700 17px var(--font-serif, Georgia, serif); fill: var(--text); }
+/* 余量环（conic-gradient） */
+.viz-donut { --p: 0; --dc: var(--ok); width: 44px; height: 44px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; position: relative;
+  background: conic-gradient(var(--dc) calc(var(--p) * 1%), var(--line) 0); }
+.viz-donut::before { content: ''; position: absolute; inset: 5px; border-radius: 50%; background: var(--card-bg); }
+.viz-donut-num { position: relative; font: 700 11px var(--font-serif, Georgia, serif); color: var(--text); }
+.viz-donut-num i { font-style: normal; font-size: 8px; color: var(--subtle); }
+/* 参数指纹（对称差异条） */
+.viz-fp-row { display: grid; grid-template-columns: 88px 1fr 132px; align-items: center; gap: 8px; padding: 3px 0; }
+.viz-fp-label { font-size: 12px; color: var(--muted); text-align: right; }
+.viz-fp-svg { height: 16px; width: 100%; }
+.viz-fp-axis { stroke: var(--subtle); stroke-width: 1; stroke-dasharray: 2 2; }
+.viz-fp-bar { opacity: .88; }
+.viz-fp-up { fill: var(--accent); }
+.viz-fp-down { fill: var(--warn); }
+.viz-fp-val { font-size: 12px; color: var(--text); }
+.viz-fp-val i { color: var(--subtle); font-style: normal; font-size: 11px; }
+.viz-fp-note { margin-top: 6px; font-size: 10.5px; color: var(--subtle); }
+/* 星图数据点 */
+.viz-pt { stroke: var(--card-bg); stroke-width: 1; }
+.viz-pt-ok { fill: var(--ok); }
+.viz-pt-bad { fill: var(--bad); }
+.viz-pt-muted { fill: var(--subtle); opacity: .55; }
+/* 热力日历 */
+.viz-hm { stroke: none; }
+.viz-hm-l0 { fill: color-mix(in srgb, var(--line) 40%, transparent); }
+.viz-hm-l1 { fill: color-mix(in srgb, var(--accent) 25%, var(--card-bg)); }
+.viz-hm-l2 { fill: color-mix(in srgb, var(--accent) 50%, var(--card-bg)); }
+.viz-hm-l3 { fill: color-mix(in srgb, var(--accent) 75%, var(--card-bg)); }
+.viz-hm-l4 { fill: var(--accent); }
+.viz-hm-lx { fill: transparent; }
+/* 队列 ETA 时间带 */
+.viz-tl { display: flex; gap: 2px; height: 30px; max-width: 100%; overflow: hidden; }
+.viz-tl-seg { min-width: 34px; border: 1px solid var(--line); background: var(--surface); padding: 3px 5px; overflow: hidden; position: relative; display: flex; flex-direction: column; justify-content: flex-start; gap: 2px; transition: border-color .2s; }
+.viz-tl-seg .viz-tl-name { display: block; max-height: 26px; }
+.viz-tl-seg .viz-tl-min { flex: none; }
+.viz-tl-seg:hover { border-color: var(--accent); }
+.viz-tl-now { border-color: var(--accent); background: var(--accent-soft); }
+.viz-tl-urgent { border-top: 3px solid var(--warn); }
+.viz-tl-est { background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--line) 55%, transparent) 0 4px, transparent 4px 9px); }
+.viz-tl-name { font-size: 10px; color: var(--text); white-space: nowrap; text-overflow: ellipsis; overflow: hidden; max-width: 180px; display: block; }
+.viz-tl-min { font: 700 11px var(--font-serif, Georgia, serif); color: var(--muted); }
+.viz-tl-foot { margin-top: 6px; font-size: 11px; color: var(--subtle); }
+.viz-tl-foot b { color: var(--text); }
+/* 模拟舱 */
+.viz-bay-frame { fill: none; stroke: var(--subtle); stroke-width: 1.2; }
+.viz-bay-gantry { stroke: var(--muted); stroke-width: 2.4; }
+.viz-bay-bed { stroke: var(--warn); fill: var(--warn); }
+.viz-bay-part { fill: var(--accent); fill-opacity: .28; stroke: var(--accent); stroke-width: 1; stroke-dasharray: none; }
+.viz-bay-head { fill: var(--text); }
+.viz-bay-nozzle { fill: var(--bad); }
+.viz-bay-live .viz-bay-gantry { stroke: var(--accent); }
+/* 竞技场条形 */
+.viz-mae-row { display: grid; grid-template-columns: 88px 1fr; gap: 8px; align-items: center; padding: 3px 0; }
+.viz-mae-label { font-size: 12px; color: var(--muted); text-align: right; }
+.viz-mae-track { position: relative; height: 16px; background: var(--surface); border: 1px solid var(--line); }
+.viz-mae-base { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--muted) 25%, transparent); border-right: 1px dashed var(--muted); }
+.viz-mae-bar { position: absolute; inset: 2px auto 2px 0; background: var(--accent); opacity: .85; }
+.viz-mae-num { position: absolute; right: 4px; top: 1px; font: 700 10.5px var(--font-serif, Georgia, serif); color: var(--text); }
+.viz-mae-num i { font-style: normal; color: var(--subtle); font-weight: 400; font-size: 9.5px; margin-left: 4px; }
+/* 纸屑（克制版） */
+.viz-confetti { position: fixed; top: -8px; z-index: 60; width: 6px; height: 10px; opacity: 0; pointer-events: none;
+  animation: viz-fall 1.6s ease-in forwards; }
+@keyframes viz-fall {
+  0% { opacity: 0; transform: translateY(0) rotate(0); }
+  12% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--dx, 40px), 220px) rotate(var(--rot, 180deg)); }
+}
+/* 骨架屏 */
+.viz-skeleton { background: linear-gradient(90deg, var(--surface) 25%, color-mix(in srgb, var(--line) 45%, var(--surface)) 50%, var(--surface) 75%); background-size: 200% 100%; animation: viz-shimmer 1.3s infinite; border-radius: 2px; color: transparent !important; }
+@keyframes viz-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+/* 生命体征行（观察台机队卡内三栏） */
+.vizline { display: grid; grid-template-columns: 104px 64px 1fr; gap: 8px; align-items: center; margin: 6px 0; padding: 6px 8px; border: 1px solid var(--line); }
+@media (max-width: 720px) { .vizline { grid-template-columns: 1fr 1fr; } .viz-spark-cell { grid-column: 1 / -1; } }
+.viz-bay-cell svg { max-height: 96px; margin: 0 auto; }
+.viz-gauge-cell { text-align: center; }
+
+/* 概览摘要条（v66 曼波定「使用强度节奏」：低频回顾折叠成一行数字，热力图点开才展开） */
+.overview-strip { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; border: 1px solid var(--line); background: var(--surface); padding: 10px 14px; }
+.overview-num { font: 700 22px var(--font-serif, Georgia, serif); color: var(--text); min-width: 34px; }
+.overview-cap { font-size: 11.5px; color: var(--subtle); margin-right: 14px; letter-spacing: .04em; }
+
+/* ---------- 行动分区（v67 第一性原理：按用户任务分区，非统一时间流） ---------- */
+.actZone { margin-bottom: 14px; border: 1px solid var(--accent); background: var(--accent-soft); padding: 10px 12px; }
+.actZone .zoneHead { font-weight: 700; font-size: 13.5px; color: var(--text); margin-bottom: 6px; }
+.actZone table { background: var(--card-bg); }
+.histZone { margin-top: 14px; }
+.zoneHead { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 13px; color: var(--muted); margin-bottom: 6px; letter-spacing: .04em; }
+.histZone table { opacity: .82; }
+/* ---------- 左侧状态坞（v67 与右机队坞对称的两翼） ---------- */
+#statusDock {
+  position: fixed;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 45;
+  width: 190px;
+  border: 1px solid var(--line);
+  background: var(--card-bg);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .14);
+  transition: width .18s, transform .18s;
+}
+#statusDock .ld-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+#statusDock .ld-title { font-size: 10px; letter-spacing: .18em; color: var(--subtle); font-weight: 600; }
+#statusDock .ld-summary { font-size: 11.5px; color: var(--muted); margin-left: auto; }
+#statusDock .ld-fold { border: none; background: transparent; padding: 2px 6px; font-size: 12px; color: var(--subtle); }
+#statusDock .ld-body { padding: 6px 0; max-height: 52vh; overflow-y: auto; }
+#statusDock .ld-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 14px; cursor: default; }
+#statusDock .ld-row[data-href] { cursor: pointer; }
+#statusDock .ld-row[data-href]:hover { background: var(--accent-soft); }
+#statusDock .ld-num { font: 700 16px var(--font-serif, Georgia, serif); min-width: 26px; }
+.ld-num--accent { color: var(--accent); }
+.ld-num--ok { color: var(--ok); }
+.ld-num--warn { color: var(--warn); }
+.ld-num--bad { color: var(--bad); }
+.ld-num--dim { color: var(--subtle); }
+.ld-num--info { color: var(--muted); }
+#statusDock .ld-cap { font-size: 11.5px; color: var(--muted); }
+#statusDock .ld-empty { padding: 8px 14px; font-size: 12px; color: var(--subtle); }
+#statusDock.collapsed { width: 46px; }
+#statusDock.collapsed .ld-body, #statusDock.collapsed .ld-summary { display: none; }
+#statusDock.collapsed .ld-head { border-bottom: none; justify-content: center; }
+body.ld-host { }
+@media (max-width: 1200px) { #statusDock { display: none; } }
+
+/* ---------- 表格 sticky 表头（v67 交互体验） ---------- */
+.card table thead th { position: sticky; top: 0; background: var(--card-bg); z-index: 2; }
+.card .card table thead th { top: auto; }
+
+/* 状态坞 v71：行动流 + 事件流（不再放机队计数——右坞管空间，左坞管事情） */
+.ld-sec { padding: 7px 14px 3px; font-size: 9.5px; letter-spacing: .16em; color: var(--subtle); text-transform: uppercase; font-weight: 600; border-bottom: 1px dashed var(--line); margin-bottom: 3px; }
+.ld-todo { display: flex; align-items: center; gap: 7px; padding: 5px 14px; }
+.ld-todo:hover { background: var(--accent-soft); }
+.ld-tmark { font-size: 12px; }
+.ld-tid { font: 600 12px var(--font-serif, Georgia, serif); color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-act { padding: 2px 10px; font-size: 11.5px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+.ld-act:hover { background: var(--accent); color: var(--accent-ink); }
+.ld-evt { display: flex; align-items: baseline; gap: 6px; padding: 4px 14px; font-size: 12px; }
+.ld-evt:hover { background: var(--surface); }
+.ld-eicon { font-size: 11px; }
+.ld-etext { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ld-etext b { font-family: var(--font-serif, Georgia, serif); }
+.ld-etext i { color: var(--subtle); font-style: normal; font-size: 11px; }
+.ld-etime { font-size: 10.5px; color: var(--subtle); white-space: nowrap; }
+
+/* FAB 缺失控件高亮（v74 功能键：滚动定位 + 勾边脉冲 2.6s） */
+.fab-missing { animation: fabMissing 1.3s ease-out 2; outline: 2px solid var(--accent); outline-offset: 2px; }
+@keyframes fabMissing {
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 60%, transparent); }
+  70% { box-shadow: 0 0 0 14px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+/* 雷达图（v79 样本几何指纹） */
+.viz-radar-ring { fill: none; stroke: var(--line); stroke-width: .6; }
+.viz-radar-spoke { stroke: var(--line); stroke-width: .6; }
+.viz-radar-main { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: var(--accent); stroke-width: 1.4; }
+.viz-radar-cmp { fill: none; stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+
+/* 审批台键盘选中卡（v83d J/K/E 快捷流） */
+.qitem.kbd-active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 8px 24px rgba(0,0,0,.16); transform: translateX(-4px); }
+.qitem { transition: transform .15s, box-shadow .15s, border-color .15s; }

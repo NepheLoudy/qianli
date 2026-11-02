@@ -23,16 +23,22 @@ function collectHoles(spatial, modelFeatures) {
   const holes = [];
   for (const s of (Array.isArray(spatial) ? spatial : [])) {
     if (s && s.type === 'circle' && Array.isArray(s.c) && Array.isArray(s.n)) {
-      holes.push({ n: s.n.map(Number), r: Number(s.r) || 0, src: 'spatial' });
+      holes.push({ c: s.c.map(Number), n: s.n.map(Number), r: Number(s.r) || 0, src: 'spatial' });
     }
   }
   const mfHoles = modelFeatures && modelFeatures.holes;
   const circles = mfHoles && Array.isArray(mfHoles.circles) ? mfHoles.circles : [];
   for (const c of circles) {
     if (c && Array.isArray(c.c) && Array.isArray(c.n)) {
-      // 体检孔与标注孔同位置去重（半径相近且圆心相近）
-      const dup = holes.some((h) => Math.abs(h.r - (Number(c.r) || 0)) < 0.3);
-      if (!dup) holes.push({ n: c.n.map(Number), r: Number(c.r) || 0, src: 'mesh' });
+      // 体检孔与标注孔同位置去重：半径相近 **且圆心相近** 才算同一颗孔。
+      // 审查修复（v62）：原实现只比半径——标注 1 个 Ø5 孔会把网格检出的其余
+      // 同径孔（4 颗安装孔是常态）全当重复丢掉，孔数特征被系统性少计
+      const dup = holes.some((h) => {
+        if (!(Math.abs(h.r - (Number(c.r) || 0)) < 0.3)) return false;
+        const d = Math.hypot(h.c[0] - c.c[0], h.c[1] - c.c[1], h.c[2] - c.c[2]);
+        return d < 0.5;
+      });
+      if (!dup) holes.push({ c: c.c.map(Number), n: c.n.map(Number), r: Number(c.r) || 0, src: 'mesh' });
     }
   }
   return holes;

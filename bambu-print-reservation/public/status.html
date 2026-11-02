@@ -71,10 +71,13 @@
   .gline { display: flex; gap: 6px; margin-top: 6px; }
   .dangerNote { font-size: 11.5px; color: var(--bad); margin: 4px 0; }
   button.bad { border-color: var(--bad); color: var(--bad); background: var(--bad-soft); }
-  button.ok { border-color: var(--ok); color: var(--ok); background: var(--ok-soft); }
   .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--text); color: var(--bg); border: none; padding: 8px 18px; display: none; z-index: 9; }
   .loginBox { max-width: 360px; margin: 80px auto; border: 1px solid var(--line); background: var(--card-bg); padding: 24px 26px; }
   .meta { color: var(--subtle); font-size: 11.5px; margin-top: 6px; }
+.qk-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border: 1px solid var(--line); border-top: none; background: var(--card-bg); font-size: 13px; flex-wrap: wrap; }
+.qk-row:first-child { border-top: 1px solid var(--line); }
+.qk-row:hover { background: var(--surface); }
+.qk-badge { font-size: 11.5px; border: 1px solid; padding: 1px 8px; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -94,19 +97,24 @@
     <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
       <div class="userbox" id="userbox"></div>
       <nav class="site-nav"><a href="/">预约中心</a><a href="/approve.html">审批台</a><a href="/train.html">训练台</a><a href="/status.html" class="on">观察台</a></nav>
-    <button class="theme-toggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
-      <a href="/index.html" style="font-size:13px;color:var(--accent)">← 预约中心</a>
+    <button class="theme-toggle" data-no-loading="1" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
     </div>
   </div>
 </header>
 
 <div class="wrap" id="appBody" style="display:none">
-  <div class="detail" style="padding:14px 0 0">拓竹（MQTT 推送）+ 闪铸（HTTP 轮询）双链路 · 画面经本服务内网代理 · 设备全量控制 · 每 5s 刷新</div>
+  <div class="detail" style="padding:14px 0 8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span>拓竹（MQTT 推送）+ 闪铸（HTTP 轮询）双链路 · 画面经本服务内网代理 · 设备全量控制 · 每 5s 刷新</span><button class="mini" id="amsSyncBtn" onclick="amsSync(this)" title="让拓竹机重推全部状态（换料后立即刷新料盘）">🔄 AMS 同步</button></div>
+  <!-- v70 单据快捷操作：回执/复刻/取消不用回主界面翻（曼波令） -->
+  <div class="card" id="quickOps" style="margin-top:12px">
+    <h3 style="margin:0 0 8px;font-size:14px">📋 单据快捷操作 <span class="detail" style="font-weight:400">——待取件/进行中的单直接在此确认与处理（15s 刷新）</span></h3>
+    <div id="quickOpsList"><div class="detail">加载中…</div></div>
+  </div>
   <div class="grid" id="fleet"><div class="detail">加载中…</div></div>
 </div>
 <div class="toast" id="toast"></div>
 
 <script src="/vendor/jmuxer.min.js"></script>
+<script src="/viz.js?v=1"></script>
 <script>
 function toggleTheme() { const c = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', c); try { localStorage.setItem('qli-theme', c); } catch (e) {} const i = document.getElementById('themeIcon'); if (i) i.textContent = c === 'light' ? '☀' : '◐'; }
 const $ = (id) => document.getElementById(id);
@@ -121,10 +129,84 @@ let IS_ADMIN = false;    // admin：危险指令（停止/gcode/动机械）
 // 每台拓竹机的解码器现场（camera kind=p1stream/rtsp 共用）：ws / decoder / canvas 句柄
 const h264Sessions = new Map();
 
+async function amsSync(btn) {
+  btn.disabled = true; const old = btn.textContent; btn.textContent = '⏳ 同步中…';
+  try {
+    const res = await fetch('/api/printers/ams-sync', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '同步失败');
+    const ok = (data.results || []).filter((r) => r.ok).length;
+    setTimeout(() => { loadFleet(); loadQuickOps(); }, 1500); // 推送回流需 1~2s
+    toast('🔄 已触发 ' + ok + ' 台拓竹机全量重推——料盘数据 1~2 秒内刷新');
+  } catch (e) { toast('❌ ' + e.message); btn.disabled = false; btn.textContent = old; return; }
+  btn.disabled = false; btn.textContent = old;
+}
 function toast(msg) {
   const t = $('toast');
   t.textContent = msg; t.style.display = 'block';
   clearTimeout(t._timer); t._timer = setTimeout(() => { t.style.display = 'none'; }, 3200);
+}
+
+// ---------- 单据快捷操作（v70 曼波令：回执/复刻/取消不用回主界面翻） ----------
+// 数据源同主界面 /api/reservations；操作按钮只对「我的单或 reviewer」显示（后端权限为准）
+let QUICK_ME = null;
+async function loadQuickOps() {
+  if (!QUICK_ME) {
+    try { const r = await fetch('/api/auth/me'); QUICK_ME = r.ok ? await r.json() : null; } catch { QUICK_ME = null; }
+  }
+  if (!QUICK_ME) { const b0 = $('quickOpsList'); if (b0) b0.innerHTML = '<div class="detail">登录后可见</div>'; return; }
+  let records = [];
+  try {
+    const res = await fetch('/api/reservations');
+    if (res.status === 401) { QUICK_ME = null; return; }
+    records = await res.json();
+  } catch { return; } // 静默——下一轮再试
+  const isReviewer = QUICK_ME.role === 'reviewer' || QUICK_ME.role === 'admin';
+  const actionable = records.filter((r) =>
+    (r.status === '已完成' && !r.receipt)
+    || (['待审批', '排队中', '打印中'].includes(r.status) && (isReviewer || r.submittedBy === QUICK_ME.id)));
+  actionable.sort((a, b) => {
+    const rank = (r) => (r.status === '已完成' ? 0 : r.status === '打印中' ? 1 : r.status === '排队中' ? 2 : 3);
+    return rank(a) - rank(b);
+  });
+  const box = $('quickOpsList');
+  if (!box) return;
+  if (!actionable.length) { box.innerHTML = '<div class="detail">没有需要处理的单据——全部安好</div>'; return; }
+  box.innerHTML = actionable.map((r) => {
+    const mine = r.submittedBy === QUICK_ME.id;
+    const badge = { '已完成': 'var(--ok)', '打印中': 'var(--accent)', '排队中': 'var(--muted)', '待审批': 'var(--warn)' }[r.status] || 'var(--muted)';
+    const ops = [];
+    if (r.status === '已完成' && !r.receipt) ops.push(`<button class="ok" onclick="qkReceipt('${esc(r.id)}')">📦 确认取件</button>`);
+    if (mine || isReviewer) ops.push(`<button class="mini" onclick="qkReprint('${esc(r.id)}')">复刻</button>`);
+    if (mine || isReviewer) ops.push(`<button class="mini ghost" onclick="qkCancel('${esc(r.id)}')">取消</button>`);
+    return `<div class="qk-row">
+      <b>${esc(r.id)}</b><span class="qk-badge" style="color:${badge};border-color:${badge}">${esc(r.status)}</span>
+      <span class="detail">${esc(r.applicant || '?')}${mine ? '(我)' : ''} · ${esc(r.fileName || '')}</span>
+      <span style="margin-left:auto;display:flex;gap:6px">${ops.join('')}</span></div>`;
+  }).join('');
+}
+async function qkReceipt(id) {
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/receipt`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) { toast(`📦 已回执 #${id}${data.queueResumed ? '，队列继续' : ''}`); Viz.confetti(document.body); }
+  else toast('❌ ' + (data.error || '回执失败'));
+  loadQuickOps();
+}
+async function qkReprint(id) {
+  if (!confirm(`复刻 ${id}？将以你的名义生成新预约单（带原勾选与参数，重新审批）`)) return;
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/reprint`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`✅ 已复刻为新单 ${data.id}，等待审批`);
+  else toast('❌ ' + (data.error || '复刻失败'));
+  loadQuickOps();
+}
+async function qkCancel(id) {
+  if (!confirm(`确认取消 ${id}？`)) return;
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`✅ ${id} 已取消`);
+  else toast('❌ ' + (data.error || '取消失败'));
+  loadQuickOps();
 }
 
 function applyRole() {
@@ -154,8 +236,19 @@ function enter() {
   $('appBody').style.display = 'block';
   $('statusHeader').style.display = '';
   $('userbox').innerHTML = `<span class="sub">${esc(ME.displayName)}（${esc(ME.role)}）</span> <button onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.reload())">退出</button>`;
-  loadFleet();
-  setInterval(loadFleet, 5000);
+  // 轮询守卫（审查修复 v62）：页面隐藏暂停、恢复立即拉一轮
+  startPolling(() => { loadFleet(); loadQuickOps(); }, 5000);
+  loadQuickOps();
+}
+// 页面隐藏时暂停轮询（审查修复 v62，四页同款口径）
+let __pollTimer = null;
+function startPolling(fn, ms) {
+  if (__pollTimer) clearInterval(__pollTimer);
+  __pollTimer = setInterval(fn, ms);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
+    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
+  });
 }
 
 // ---------- 机队渲染 ----------
@@ -196,8 +289,11 @@ function staleNoteHtml(p) {
 
 function trayHtml(t) {
   const sw = t.colorHex ? `<span class="swatch" style="background:#${esc(t.colorHex)}"></span>` : '';
+  // 余量环（v64 生命体征）：机端上报百分比才有环，闪铸克数口径不出环（单位不同不硬画）
+  const donut = t.remain != null && t.remain > 0
+    ? `<span style="float:right">${Viz.donut(Math.round(t.remain), { title: esc(t.slot) + ' ' })}</span>` : '';
   const remain = t.remain != null && t.remain > 0 ? ` · 余 ${Math.round(t.remain)}%` : '';
-  return `<div class="tray${t.active ? ' active' : ''}" title="${t.active ? '当前供料槽' : ''}">${sw}<b>${esc(t.slot)}</b>${remain}<br>${esc(t.type || '—')}</div>`;
+  return `<div class="tray${t.active ? ' active' : ''}" title="${t.active ? '当前供料槽' : ''}">${donut}${sw}<b>${esc(t.slot)}</b>${remain}<br>${esc(t.type || '—')}</div>`;
 }
 
 function amsSection(p) {
@@ -448,7 +544,7 @@ function controlPanelHtml(p) {
         ? `<div class="detail">余量约 ${remain}g</div>`
         : `<div class="pbar" style="height:4px;margin-top:3px"><div style="width:${Math.min(100, remain)}%"></div></div><div class="detail">剩余 ${remain}%</div>`) : ''}
       ${p.brand === 'flashforge' ? '' : `<div style="margin-top:4px"><button class="mini" ${idle && !t.active ? '' : 'disabled'} title="${idle ? '切到此槽进料' : '非空闲态/当前槽不可切'}"
-        onclick="cmdPost(${p.id},'ams/switch',{amsId:${switchArgs.amsId},trayId:${switchArgs.trayId}},'切到 ${esc(t.slot)} 进料？（先退旧料再进新料）')">切此槽</button></div>`}</div>`;
+        onclick="cmdPost(${p.id},'ams/switch',{amsId:${switchArgs.amsId},trayId:${switchArgs.trayId}},${jsq(`切到 ${t.slot} 进料？（先退旧料再进新料）`)})">切此槽</button></div>`}</div>`;
   }).join('') : '<span class="detail">无料站信息</span>';
   // AMS 单元级数据（2026-10-16 全量排查）：湿度双值/AMS 内温/烘干倒计时
   const amsU = Array.isArray(p.amsUnits) ? p.amsUnits[0] : null;
@@ -542,7 +638,9 @@ async function printSdcardFile(id, name) {
 
 async function delSdcardFile(id, name) {
   if (!confirm(`删除 /sdcard/${name}？不可恢复`)) return;
-  await cmdPost(id, 'files/delete', { name }, null, true);
+  const ok = await cmdPost(id, 'files/delete', { name }, null, true);
+  // 审查修复（v62）：删除失败不更新本地缓存——原实现乐观过滤会让列表与机端不一致
+  if (!ok) { setTimeout(loadFleet, 800); return; }
   const files = (filesCache.get(id) || []).filter((f) => f.name !== name);
   filesCache.set(id, files);
   const box = $(`filesBox${id}`);
@@ -597,8 +695,9 @@ function errorSection(p) {
   const hot = [];
   const cold = [];
   if (printing || failedActive) {
-    if (p.printError) hot.push(`⛔ 打印错误码 <b>${p.printError}</b>${tr(p.printError)}（详情见打印机屏幕）`);
-    if (p.failReason && p.failReason !== p.printError) hot.push(`⚠️ 失败原因码 <b>${p.failReason}</b>${tr(p.failReason)}`);
+    // 审查修复（v62）：固件侧字符串也过 esc——与本页 esc 纪律一致（固件可控，非用户可控，防御性转义）
+    if (p.printError) hot.push(`⛔ 打印错误码 <b>${esc(p.printError)}</b>${tr(p.printError)}（详情见打印机屏幕）`);
+    if (p.failReason && p.failReason !== p.printError) hot.push(`⚠️ 失败原因码 <b>${esc(p.failReason)}</b>${tr(p.failReason)}`);
   } else if (residue) {
     const code = p.failReason || p.printError || 0;
     const codeLine = code ? `失败码 <b>${code}</b>${tr(code)}；` : '';
@@ -612,7 +711,7 @@ function errorSection(p) {
   for (const h of (p.hms || [])) {
     const known = HMS_KNOWN[`${h.attr}-${h.code}`];
     const ts = hmsTs(h);
-    const line = `🔔 HMS ${h.attr}-${h.code}${known ? '：' + esc(known) : '（未收录码——看打印机屏幕获取详情）'}`;
+    const line = `🔔 HMS ${esc(`${h.attr}-${h.code}`)}${known ? '：' + esc(known) : '（未收录码——看打印机屏幕获取详情）'}`;
     // 离线时 HMS 来自离线前快照（可能已在屏上消除）——不进红色活跃区，降级进快照折叠区
     if (p.stateStale) { cold.push(line); continue; }
     if (ts && now - ts > 24 * 3600 * 1000) cold.push(line);
@@ -659,6 +758,30 @@ async function clearResidue(id, name) {
   setTimeout(loadFleet, 3000);
 }
 
+// ---------- v64 生命体征墨线 ----------
+// 温度历史双层来源：后端环形缓冲（/api/printers/history，30s 拉一轮）+ 页面级最新
+// 实测点插值（5s 轮询数据）——接口不必高频，曲线仍然连续
+let __histCache = { at: 0, byId: {} };
+function hydrateVitals(printers) {
+  for (const p of printers) {
+    const cell = document.getElementById(`spark-${p.id}`);
+    if (!cell) continue;
+    const live = (__histCache.byId[p.id] || []).slice(-359);
+    if (p.nozzleTemp != null || p.bedTemp != null) {
+      const last = live[live.length - 1];
+      if (!last || Date.now() - last.ts >= 5000) {
+        live.push({ ts: Date.now(), nozzle: p.nozzleTemp, bed: p.bedTemp, nozzleTarget: p.nozzleTargetTemp, bedTarget: p.bedTargetTemp });
+      }
+    }
+    cell.innerHTML = Viz.sparkline(live, { showTarget: true, width: 320, height: 64 });
+  }
+  if (Date.now() - __histCache.at < 30000) return;
+  fetch('/api/printers/history')
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data) => { if (data) __histCache = { at: Date.now(), byId: data }; })
+    .catch(() => { /* 历史拉取失败静默——下一轮再试，本地点还在 */ });
+}
+
 function cardHtml(p) {
   const temps = [
     p.nozzleTemp != null ? `<div class="temp">喷嘴 <b>${p.nozzleTemp}°</b>${p.nozzleTargetTemp != null ? ` <span class="detail">/${p.nozzleTargetTemp}°</span>` : ''}</div>` : '',
@@ -703,6 +826,11 @@ function cardHtml(p) {
     ${camSection(p)}
     ${errorSection(p)}
     ${job}${prog}${layerNote}
+    <div class="vizline viz-grid">
+      <div class="viz-bay-cell">${Viz.printerBay({ progress: p.progress, layerNum: p.layerNum, totalLayers: p.totalLayers, nozzleTemp: p.nozzleTemp, bedTemp: p.bedTemp, status: p.status, printing: p.status === '打印中' || p.status === '暂停' })}</div>
+      <div class="viz-gauge-cell">${Viz.gauge(p.progress || 0, { label: `${Math.round(p.progress || 0)}%`, sub: p.remainingMinutes ? `剩 ${Viz._fmt.fmtMins(p.remainingMinutes)}` : (p.status || '') })}</div>
+      <div class="viz-spark-cell" id="spark-${p.id}"><div class="viz-skeleton" style="height:64px">温度曲线采样中</div></div>
+    </div>
     ${showSummary ? `<div class="temps">${temps || '<span class="detail">温度未上报</span>'}</div>` : ''}
     ${showSummary ? amsSection(p) : ''}
     ${devParts || extras ? `<div class="devLine"><span>${devParts}${devParts && extras ? ' · ' : ''}${extras}</span></div>` : ''}
@@ -732,6 +860,7 @@ async function loadFleet(force = false) {
   if (!Array.isArray(printers) || !printers.length) { $('fleet').innerHTML = '<div class="detail">暂无登记打印机（.env PRINTER_HOSTS）</div>'; return; }
   FLEET = printers;
   $('fleet').innerHTML = printers.map(cardHtml).join('');
+  hydrateVitals(printers); // v64 生命体征墨线（历史缓存 + 本地最新点）
   // h264 会话保持：5s 重渲染会重画 DOM——活会话不重建（解码器动态寻址新画布，
   // 下一帧自动续画），只复活真正死掉的会话；v56 修复：原实现每轮删掉重建，
   // 旧 WS 不关 → 每 5s 泄漏一条 WS+RTSPS 会话，打满 LIVE555 会话额后新会话被拒

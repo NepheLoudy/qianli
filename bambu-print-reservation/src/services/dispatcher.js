@@ -146,6 +146,8 @@ function buildLocalTask(reservation) {
     machineModel: (reservation.embeddedParams && reservation.embeddedParams.machineModel) || null, // 内嵌目标机型（品牌路由权威，2026-10-16）
     materialType: reservation.materialType,
     selection: reservation.selection || {}, // 模型单自动切片用（勾选 → 引擎参数）
+    spatial: reservation.spatial || null,   // 3D 标注随任务带（v62：无快照回退现算 feat 时规则 feat.* 条件才生效）
+    modelFeatures: reservation.modelFeatures || null, // 几何体检快照（同上，feat 派生输入）
     processParams: reservation.processParams || null, // 审批快照（自动切片口径锁定，规则库演进不影响已审批单）
     placement: reservation.placement || null, // 放置四元数（用户手动摆向 → 切片尊重，不再自动改向）
     color: reservation.color,
@@ -364,7 +366,11 @@ class Dispatcher {
   }
 
   start() {
-    if (this.timer) return;
+    // 审查修复（v62）：独立 started 闸——原 `if (this.timer) return` 在审批直连模式下
+    // 恒不设防（timer 只在 else 分支赋值），重复调用 start 会二次 bindPrinterEvents
+    // （收尾逻辑跑两遍）并重跑 restoreState 覆盖内存队列
+    if (this.started) return;
+    this.started = true;
     this.restoreState();
     this.hookExitFlush();
     // printing 幽灵巡检（2026-09-13）：finish 事件落在停机/打印机离线窗口时 completeTask
@@ -565,6 +571,13 @@ class Dispatcher {
       this.receiptHold = new Map(Array.isArray(data.receiptHold) ? data.receiptHold : []);
       for (const t of this.queue) this.known.add(t.recordId);
       for (const [, t] of this.printing) this.known.add(t.recordId);
+      // 审查修复（v62）：printing 映射回灌 manager 的 activeTask——首报文补收尾路径
+      // （FINISH && hasActiveTask 才补 finish/idle）依赖它；缺了会把重启窗口内完成的
+      // 任务丢成最长 12h 的假「打印中」（stale sweep 才收尾），回执闸与队列同步滞留
+      for (const [pid, t] of this.printing) {
+        try { printerManager.updateState(pid, { activeTask: t }); }
+        catch { /* 打印机未登记等：恢复尽力而为 */ }
+      }
       // 分发中断恢复（2026-09-13）：上次退出时正在下载/上传的任务处于「已出队、未入
       // printing」中间态——known 保留会永久拦截重入队（已审批单永不分发）。重回队列
       // 完整重发一次（若打印机已实际开打，重发会覆盖——比静默丢单可感知得多）
@@ -674,6 +687,15 @@ class Dispatcher {
     // 审批终态同步清理 givenUp（2026-09-25）：留着可被 /print-dispatch 复活，
     // 已撤销/驳回的审批会重新驱动真机
     this.givenUp.delete(recordId);
+    // 审查修复（v62）：回执闸/取件码按单清理——续打单首件完成会置闸，此时取消预约，
+    // 原实现不摘闸：闸无 TTL 且只等取件确认/手工 release，该机对自动匹配永久不可见，
+    // 队列对该机停摆
+    for (const [pid, rid] of this.receiptHold.entries()) {
+      if (rid === recordId) this.receiptHold.delete(pid);
+    }
+    for (const [c, v] of this.pickupCodes) {
+      if (v.recordId === recordId) this.pickupCodes.delete(c);
+    }
     for (const [printerId, task] of this.printing) {
       if (task.recordId === recordId) {
         // 打印中取消：停机并释放。停机失败不再静默（v56）——机器可能继续打已取消单，
@@ -699,6 +721,10 @@ class Dispatcher {
         buildJobFailedCard(task, printer, '该单已被取消，但停机指令下发失败——机器可能仍在打印已取消的任务，请人工停止'),
         (e) => console.error('[分发] 停机失败人工介入卡发送失败:', e.message)
       );
+      // 审查修复（v62）：announce 已是空操作（群播关闭），安全类告警补 DM 通道——
+      // 机器继续打已取消单却无人知晓是最不能静默的失败
+      require('./reservation').notifyApplicantDm(task.recordId,
+        `⚠️ 你的打印任务 ${task.recordId} 已取消，但打印机停机指令下发失败——机器可能仍在打印，已通知管理员人工处理`);
     });
   }
 
@@ -1232,6 +1258,14 @@ class Dispatcher {
       plaza.append({ event: '打印开始', title: `${task.applicationNo || task.recordId} → ${printer.name}` });
     } catch (err) {
       console.error(`[分发] 分发失败 ${task.recordId}:`, err.message);
+      // 审查修复（v62）：撤销落在分发 await 链内且随后失败——已撤销任务不回滚不重排：
+      // 原实现无条件回写「排队中」（状态机拒绝 CANCELLED→QUEUED 反复刷错误日志）并
+      // 重新入队空转，下一轮 checkCancelled 中止时再撞一次状态机
+      if (task.cancelled) {
+        console.log(`[分发] 任务 ${task.recordId} 已在分发窗口内被撤销——失败终局，不回滚不重排`);
+        this.printing.delete(printer.id);
+        return;
+      }
       // 回滚状态并重新排队（下一轮再试）；审批来源无表状态可回滚
       if (fromLocal) {
         storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `分发失败回滚：${err.message}`), 'fail-rollback');
@@ -1330,7 +1364,7 @@ class Dispatcher {
       if (!hasMore) {
         try {
           const rec = reservationStore.get(task.recordId);
-          if (rec && rec.sample && rec.sample.sampleEntry && rec.sample.sampleId) {
+          if (rec && rec.sample && rec.sample.sampleEntry && (rec.sample.sampleId || (Array.isArray(rec.sample.sampleIds) && rec.sample.sampleIds.length))) {
             require('./trainingStore').setOutcomeBySource(task.recordId, {
               status: '成功', recordedBy: '打印系统', issues: `打印完成 @ ${printer.name}`,
             });
@@ -1439,7 +1473,7 @@ class Dispatcher {
       // 入库样本失败回填（2026-10-16）：重试若成功会再覆盖为「成功」——末次真实结果为准
       try {
         const rec = reservationStore.get(task.recordId);
-        if (rec && rec.sample && rec.sample.sampleEntry && rec.sample.sampleId) {
+        if (rec && rec.sample && rec.sample.sampleEntry && (rec.sample.sampleId || (Array.isArray(rec.sample.sampleIds) && rec.sample.sampleIds.length))) {
           require('./trainingStore').setOutcomeBySource(task.recordId, {
             status: '失败', recordedBy: '打印系统', issues: String(reason || '').slice(0, 200),
             failCode: printer.failReason || null, // 结构化失败码（拓竹 fail_reason/HMS 位图，2026-10-27 特征标签批）
@@ -1549,6 +1583,26 @@ class Dispatcher {
       if (['空闲', '已完成'].includes(state.status)) {
         console.warn(`[分发] printing 巡检：${task.applicationNo || task.recordId} 打印中已 ${Math.round(ageMs / 3600000)}h 且打印机实况空闲，补完成收尾`);
         this.printing.delete(printerId);
+        // 审查修复（v62）：续打判定先于收尾（对齐 completeTask 口径）——多份单的
+        // 第 1 盘在巡检里直接落「已完成」会让剩余份数静默蒸发
+        const hasMore = isLocalTask(task) && Number(task.remaining) > 0;
+        if (hasMore) {
+          task.remaining -= 1;
+          task.dispatchRetries = 0;
+          task.startedAt = undefined;
+          this.known.add(task.recordId);
+          this.queue.push(task);
+          this.receiptHold.set(printerId, task.recordId); // 续打单同样等取件回执（同 completeTask）
+          const pickup = this.issuePickupCode(printerId, task.recordId);
+          storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `巡检补记：完成 1 件（还剩 ${task.remaining} 件），自动续打下一件`), 'sweep-continue');
+          require('./reservation').notifyApplicantDm(task.recordId,
+            pickup
+              ? `✅ 你的打印件已完成（${state.name || printerId}）\n\n取件后回复：/print-pickup ${pickup.code}\n\n（确认后队列里的下一件才会继续）`
+              : `✅ 你的打印件已完成（${state.name || printerId}）——取件后请在预约界面确认，队列继续`);
+          console.log(`[分发] 巡检份数续打: ${task.applicationNo || task.recordId} 剩余 ${task.remaining} 件重新入队`);
+          released = true;
+          continue;
+        }
         this.completedCount.set(printerId, (this.completedCount.get(printerId) || 0) + 1);
         printerManager.updateState(printerId, { activeTask: null });
         this.receiptHold.set(printerId, task.recordId); // 打完等回执闸（与 completeTask 同口径）
@@ -1734,6 +1788,11 @@ class Dispatcher {
       (p) => p.name === printerName || String(p.id) === String(printerName)
     );
     if (!printer) throw new Error(`未找到打印机「${printerName}」`);
+    // 审查修复（v62）：回执闸对人工直发同样生效——自动匹配把闸当硬条件，人工绕过
+    // 会让新件打在未清板的板上（防撞板目的落空）；确要强发先 release 取件闸
+    if (this.receiptHold.has(printer.id)) {
+      throw new Error(`「${printer.name}」正在等待上一单的取件回执（回执闸挂起）——请先在页面确认取件或手工放行，再人工直发`);
+    }
 
     let task = this.queue.find((t) => t.recordId === recordId || t.applicationNo === recordId);
     let fromGivenUp = false;

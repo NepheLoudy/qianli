@@ -45,6 +45,22 @@ const BASELINE = {
 const PARAM_NAMES = Object.keys(BASELINE);
 // 数组型参数（append 而非覆盖？否——覆盖语义统一，规则里自己写全量数组；此处仅标记类型供校验）
 const ARRAY_PARAMS = new Set(['materialExclude', 'materialPrefer']);
+// 数值参数安全域（v83）：工程 3mf 内嵌参数作 baseline 时钳制——文件不可信，
+// 损坏/恶意极端值（layerHeight:999、nozzleTempDelta:1000）不得直达切片引擎
+const BASELINE_RANGES = {
+  layerHeight: [0.04, 0.6],
+  wallLoops: [1, 16],
+  topShellLayers: [1, 20],
+  bottomShellLayers: [1, 20],
+  infillDensity: [0, 100],
+  supportThresholdAngle: [0, 89],
+  supportDensity: [0, 100],
+  xyHoleComp: [-2, 2],
+  xyContourComp: [-2, 2],
+  brimWidth: [0, 30],
+  temperatureDelta: [-60, 80],
+  nozzleTempDelta: [-80, 120],
+};
 
 // ---------- 出厂种子规则（翻译自 taxonomy 各标签的 mapsHint；文件覆盖后仍可 reset 恢复） ----------
 let RULE_SEQ = 0;
@@ -297,12 +313,30 @@ function whenMatches(when, selection, feat = {}) {
  *   blocked=true 时 params 为 null（表单端/分发链应中止）
  */
 function applyRules(selection, opts = {}) {
-  const gate = taxonomy.validateSelection(selection, { material: opts.material });
-  if (gate.errors.length > 0) {
+  const gate = taxonomy.validateSelection(selection, { material: opts.material });  if (gate.errors.length > 0) {
     return { blocked: true, errors: gate.errors, warnings: gate.warnings, params: null, applied: [], rulesVersion: rulesVersion(), taxonomyVersion: taxonomy.TAXONOMY_VERSION };
   }
 
   const params = { ...BASELINE, materialExclude: [], materialPrefer: [] };
+  // v64 基线覆盖（工程 3mf 自解析）：切片工程件自带作者调好的参数——白名单内数值/布尔/
+  // 枚举键作为起点（材料约束键 materialExclude/Prefer 不采纳：文件不可信，安全因果只
+  // 由用户工况反推），规则引擎的工况修正照常在其上叠加
+  if (opts.baseline && typeof opts.baseline === 'object') {
+    for (const [k, v] of Object.entries(opts.baseline)) {
+      if (!PARAM_NAMES.includes(k) || ARRAY_PARAMS.has(k)) continue;
+      // v83：布尔参数兼容字符串 'true'/'false'（slicerExtract coerce 口径）——
+      // 此前 typeof 门恒不等，工程件的熨烫/裙边设置永远无法被采纳
+      let val = v;
+      if (typeof BASELINE[k] === 'boolean' && typeof v === 'string') val = v === 'true' ? true : v === 'false' ? false : v;
+      if (typeof val !== typeof BASELINE[k]) continue;
+      const range = BASELINE_RANGES[k];
+      if (range && typeof val === 'number') {
+        if (!Number.isFinite(val)) continue;
+        val = Math.min(range[1], Math.max(range[0], val));
+      }
+      params[k] = val;
+    }
+  }
   const applied = [];
   const feat = opts.feat || {};
   for (const rule of rules) {

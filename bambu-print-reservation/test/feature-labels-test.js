@@ -133,5 +133,24 @@ ok('auditSamples：labelSources 涵盖自举来源', () => {
   assert.strictEqual(audit.labelSources.placement, 1);
 });
 
+ok('v83 多源单：多条同源样本 outcome/摆向/切片统计全量回填', () => {
+  const src = 'R-MULTI-V83';
+  const a = trainingStore.create({ createdBy: 't', selection: { temp_class: 't50' }, sourceRecordId: src, model: { features: null, originalName: 'm1.stl' }, slice: null });
+  const b = trainingStore.create({ createdBy: 't', selection: { temp_class: 't50' }, sourceRecordId: src, model: { features: null, originalName: 'm2.stl' }, slice: null });
+  const back = trainingStore.setOutcomeBySource(src, { status: '成功', recordedBy: '打印系统' });
+  assert.ok(back && back.outcome && back.outcome.status === '成功', '返回首条更新结果（单源语义不变）');
+  assert.strictEqual(trainingStore.get(a.id).outcome.status, '成功');
+  assert.strictEqual(trainingStore.get(b.id).outcome.status, '成功', '第二条同源样本也要吃到回填');
+  const o = trainingStore.setOrientationBySource(src, { quaternion: [0, 0, 0, 1], source: 'auto-confirmed' });
+  assert.ok(o && o.ok);
+  assert.strictEqual(trainingStore.get(a.id).orientation.source, 'auto-confirmed');
+  assert.strictEqual(trainingStore.get(b.id).orientation.source, 'auto-confirmed');
+  trainingStore.setSliceStatsBySource(src, { estMinutes: 60, machine: 'X1C' });
+  assert.strictEqual(trainingStore.get(a.id).sliceStats.machine, 'X1C');
+  assert.strictEqual(trainingStore.get(b.id).sliceStats.machine, 'X1C');
+  trainingStore.remove(a.id);
+  trainingStore.remove(b.id);
+});
+
 console.log(`\n特征标签批单测: ${pass} 通过 / ${process.exitCode ? 1 : 0} 失败`);
 if (process.exitCode) process.exit(1);

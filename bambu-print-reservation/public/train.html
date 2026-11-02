@@ -108,8 +108,7 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
     <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
       <div class="userbox" id="userbox"></div>
       <nav class="site-nav"><a href="/">预约中心</a><a href="/approve.html">审批台</a><a href="/train.html" class="on">训练台</a><a href="/status.html">观察台</a></nav>
-    <button class="theme-toggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
-      <a href="/" style="font-size:13px;color:var(--accent)">← 预约中心</a>
+    <button class="theme-toggle" data-no-loading="1" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
     </div>
   </div>
 </header>
@@ -137,7 +136,7 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
       <div class="preview" id="fitBar" style="display:none;margin-top:12px"></div>
 
       <div class="row" style="margin-top:12px">
-        <div><label>模型文件 *（.stl/.step/.stp/.3mf 全功能——STEP 经 CAD 内核网格化后同链体检与 3D 标注）</label><input type="file" id="modelFile" accept=".stl,.3mf,.step,.stp"></div>
+        <div><label>模型文件 *（.stl/.step/.stp/.3mf 全功能；<b>可多选批量</b>——一份切片切了多个模型时全选上，系统按几何指纹自动配对「哪个模型是盘里哪件」）</label><input type="file" id="modelFile" accept=".stl,.3mf,.step,.stp" multiple></div>
         <div><label>已切片产物（.3mf 工程/已切片——自动提取本单切片参数，选填）</label><input type="file" id="sliceFile" accept=".3mf"></div>
       </div>
       <div class="preview" id="modelPanel" style="display:none"></div>
@@ -209,6 +208,7 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
     <div class="card">
       <h2>📚 样本库 <span style="font-weight:400;font-size:12px;color:var(--muted)">——打印完记得回来标结果（成功/失败是将来训练的奖励信号）</span></h2>
       <div class="statChips" id="statChips"></div>
+      <div class="viz-card viz-grid" id="scatterCard" style="margin:8px 0"><h4>Feature Sky · 样本特征星图</h4><div class="viz-empty viz-empty-box">样本加载中…</div></div>
       <div style="margin-bottom:8px" id="exportLine"></div>
       <table>
         <thead><tr><th>样本号</th><th>模型</th><th>工况标注</th><th>切片参数 diff / 拟合</th><th>机型 / 空间标注</th><th>打印结果</th><th>录入</th><th></th></tr></thead>
@@ -221,6 +221,15 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
       <span class="hint" id="fitHint">按「工况 × 几何特征 × 样本实际参数」统计拟合（每特征 ≥3 条样本才有统计意义）；预约勾选入库的真单也在样本池内；候选进下方待审池</span>
     </div>
     <div id="sugList"></div>
+    <div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">
+      <h3 style="font-size:14px;margin:0 0 6px">🧠 参数智能层 <span class="sub" style="display:inline">(审批人)——案例推理 + 岭回归 · LOFO 择优 · 置信度门控</span></h3>
+      <div class="row" style="margin:8px 0">
+        <button class="primary" onclick="runParamModelFit()">⚙️ 训练参数模型</button>
+        <span class="hint" id="pmHint">数值工艺参数（层高/墙/壳/填充/支撑/孔补偿/温差）由「相似专家案例加权融合 + 多变量回归」预测，逐参数按 LOFO 泛化择优——学不会的参数诚实回退规则库；材料/朝向等安全因果仍由规则库承担。adopt 影子模式=建议只透出审批台，生效模式=真实修正切片参数</span>
+      </div>
+      <div id="pmStatus" class="hint"></div>
+      <div id="pmDetail"></div>
+    </div>
   </div>
     </div>
   </div>
@@ -231,7 +240,7 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
 <script>
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.whiteSpace = 'pre-line'; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
 let ME = null;
 let TAXONOMY = null;
 let MODEL_FEATURES = null;   // 当前模型特征分析结果
@@ -271,9 +280,20 @@ async function doLogin() {
 async function logout() { await fetch('/api/auth/logout', { method: 'POST' }); ME = null; renderIdentity(); }
 
 // ---------- taxonomy 渲染（无自动预勾选——人工标注保持纯净；自动建议单独存档） ----------
+// 审查修复（v62）：加载失败必须可见——原裸 await，taxonomy 拉取失败会静默瘫痪整个
+// 录入台（空下拉/无工况区/无错误提示），照 index.html 的红条模式补错误处理
 async function loadTaxonomy() {
-  const res = await fetch('/api/print/taxonomy');
-  TAXONOMY = await res.json();
+  let TAX = null;
+  try {
+    const res = await fetch('/api/print/taxonomy');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    TAX = await res.json();
+  } catch (err) {
+    const box = $('taxonomy');
+    if (box) box.innerHTML = '<div style="color:var(--bad);padding:12px 0">❌ 标签池加载失败（' + esc(err.message) + '）——请刷新重试；持续失败请联系管理员检查服务端</div>';
+    return;
+  }
+  TAXONOMY = TAX;
   $('convention').textContent = 'ℹ️ ' + TAXONOMY.convention;
   const box = $('taxonomy');
   for (const g of TAXONOMY.groups) {
@@ -361,20 +381,39 @@ function clearSelection() {
   collectSelection(); renderSelSummary();
 }
 
-// ---------- 模型特征分析 ----------
+// ---------- 模型特征分析（v76 多模型：多选时列清单+首件预览，全部文件提交时上传） ----------
 $('modelFile').addEventListener('change', analyzeModel);
 const isStepFile = (f) => !!f && /\.(step|stp)$/i.test(f.name);
 async function analyzeModel() {
-  const file = $('modelFile').files[0];
+  const files = Array.from($('modelFile').files || []);
   MODEL_FEATURES = null;
   const panel = $('modelPanel');
-  if (!file) { panel.style.display = 'none'; return; }
+  if (!files.length) { panel.style.display = 'none'; return; }
   panel.style.display = 'block';
-  if (isStepFile(file)) {
-    // STEP 全功能（2026-10-15 occt WASM 支持）：直接进体检（端点按扩展名分派）
-    panel.innerHTML = '🔍 STEP 网格化中（CAD 内核解析）…';
+  // 多模型：列文件清单（全部会随提交上传并自动配对），只对第一件做特征预览与标注
+  if (files.length > 1) {
+    if (files.length > 12) { panel.innerHTML = '<span class="hint" style="color:var(--bad)">一次最多 12 个模型——请分批</span>'; return; }
+    panel.innerHTML = '<b>📦 批量录入 ' + files.length + ' 个模型</b>（提交时全部上传，系统按几何指纹自动配对「哪个是盘里哪件」）<div class="mfNotes">' +
+      files.map((f, i) => '• #' + (i + 1) + ' ' + esc(f.name) + '（' + Math.round(f.size / 1024) + 'KB）').join('<br>') +
+      '</div><div class="detail" style="margin-top:6px">下方特征预览与 3D 标注针对第一件（批量件的工况共用本次勾选）</div>' +
+      '<div id="mfPreview" class="detail" style="margin-top:6px">首件特征分析中…</div>';
+    const file = files[0];
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const res = await fetch('/api/print/model-features', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (res.ok) { MODEL_FEATURES = data; renderModelPanel(data); applyAutoSuggestions(data.suggestions); }
+    } catch { /* 首件预览失败不阻塞批量提交 */ }
+    loadAnnotator();
+    return;
   }
-  panel.innerHTML = '🔍 模型特征分析中…';
+  const file = files[0];
+  MODEL_FEATURES = null;
+  // STEP 全功能（2026-10-15 occt WASM 支持）：直接进体检（端点按扩展名分派）。
+  // 审查修复（v62）：原 if 分支刚写完「STEP 网格化中」就被下一行无条件覆盖——改三元
+  panel.innerHTML = isStepFile(file)
+    ? '🔍 STEP 网格化中（CAD 内核解析，复杂模型可能较慢）…'
+    : '🔍 模型特征分析中…';
   try {
     const fd = new FormData(); fd.append('file', file);
     const res = await fetch('/api/print/model-features', { method: 'POST', body: fd });
@@ -406,7 +445,10 @@ function applyAutoSuggestions(sug) {
 }
 function renderModelPanel(f) {
   const panel = $('modelPanel');
-  if (!f.ok) { panel.innerHTML = '🔍 特征分析跳过：' + esc(f.reason || '未知') + '（可继续录入，特征字段记空）'; return; }
+  // v83：多模型批量模式下渲染进专用子容器——不顶掉「批量文件清单」（清单是「哪些文件
+  // 会上传」的唯一确认信息，被整面板 innerHTML 覆盖后就消失了）
+  const host = document.getElementById('mfPreview') || panel;
+  if (!f.ok) { host.innerHTML = '🔍 特征分析跳过：' + esc(f.reason || '未知') + '（可继续录入，特征字段记空）'; return; }
   let chips = '', notes = [];
   if (f.objects) { // 3mf 多零件
     chips = [`📦 ${f.objectCount} 个零件`];
@@ -420,7 +462,7 @@ function renderModelPanel(f) {
     ];
     notes = (f.suggestions.notes || []).map((n) => '• ' + esc(n));
   }
-  panel.innerHTML = `<b>🔍 模型特征（自动）</b><div class="mfChips">${chips.map((c) => `<span class="mfChip">${c}</span>`).join('')}</div><div class="mfNotes">${notes.join('<br>')}</div>`;
+  host.innerHTML = `<b>🔍 模型特征（自动）</b><div class="mfChips">${chips.map((c) => `<span class="mfChip">${c}</span>`).join('')}</div><div class="mfNotes">${notes.join('<br>')}</div>`;
 }
 
 // ---------- 切片参数提取 ----------
@@ -710,7 +752,7 @@ function resetSlicedState() {
 }
 
 async function loadAnnotator() {
-  const file = $('modelFile').files[0];
+  const file = ($('modelFile').files || [])[0]; // v76 批量：标注挂首件（批量件共用本次标注帧）
   const box = $('annotatorBox');
   if (!file) { box.style.display = 'none'; return; }
   box.style.display = 'block';
@@ -755,12 +797,13 @@ async function loadAnnotator() {
   } catch (err) { $('toolRow').innerHTML = '<span class="hint">3D 工房初始化失败：' + esc(err.message) + '</span>'; }
 }
 
-// ---------- 提交入库 ----------
+// ---------- 提交入库（v75 多模型：一份切片一盘多件 → 逐模型批量入库自动配对） ----------
 async function submitSample() {
-  const model = $('modelFile').files[0];
+  const modelFiles = Array.from($('modelFile').files || []);
   const slice = $('sliceFile').files[0];
   const selection = collectSelection();
-  if (!model) return toast('❌ 请选择模型文件');
+  if (!modelFiles.length) return toast('❌ 请选择模型文件（可多选——一份切片切了多个模型就全选上）');
+  if (modelFiles.length > 12) return toast('❌ 一次最多 12 个模型——大批量请分批录入');
   if (Object.keys(selection).length === 0) return toast('❌ 工况勾选不能为空——没有人工标注的样本不构成训练数据');
   // 使用场景必填（2026-10-18 曼波令）：置顶组未勾选不许入库
   if (!Array.isArray(selection.scene_usage) || selection.scene_usage.length === 0) {
@@ -768,7 +811,7 @@ async function submitSample() {
   }
 
   const fd = new FormData();
-  fd.append('model', model);
+  for (const f of modelFiles) fd.append('model', f);
   if (slice) fd.append('slice', slice);
   fd.append('selection', JSON.stringify(selection));
   fd.append('materialType', $('materialType').value.trim());
@@ -779,12 +822,19 @@ async function submitSample() {
   // 放置平面随样本存档（2026-10-16）：标注坐标在放置后的朝向帧里，四元数必须同步下发
   if (ANNOTATOR && ANNOTATOR.getPlacement()) fd.append('placement', JSON.stringify(ANNOTATOR.getPlacement()));
 
-  const btn = $('submitBtn'); btn.disabled = true; $('submitHint').textContent = '上传分析中…';
+  const btn = $('submitBtn'); btn.disabled = true;
+  $('submitHint').textContent = modelFiles.length > 1 ? `上传分析中（${modelFiles.length} 个模型配对匹配）…` : '上传分析中…';
   try {
     const res = await fetch('/api/training/samples', { method: 'POST', body: fd });
     const data = await res.json();
     if (!res.ok) { $('submitHint').textContent = ''; return toast('❌ ' + ((data.details || {}).errors || [data.error]).filter(Boolean).join('；')); }
-    toast(`✅ 样本 ${data.id} 已入库`);
+    if (data.created) {
+      // 多模型批量入库：配对摘要
+      const lines = (data.samples || []).map((s) => `#${s.id} ← ${s.model}${s.matchedSliceObject != null ? '（盘内件 #' + (s.matchedSliceObject + 1) + (s.lowConfidence ? '·低置信' : '') + '）' : '（切片未含此件）'}`);
+      toast(`✅ ${data.created} 条样本已入库\n` + lines.map(esc).join('\n'));
+    } else {
+      toast(`✅ 样本 ${data.id} 已入库`);
+    }
     $('modelFile').value = ''; $('sliceFile').value = '';
     $('modelPanel').style.display = 'none'; $('slicePanel').style.display = 'none';
     MODEL_FEATURES = null; SLICE_EXTRACTION = null;
@@ -803,8 +853,8 @@ async function loadSamples() {
   const chips = [`共 ${stats.total} 条`, `带切片参数 ${stats.withSlice} 条`, `带几何特征 ${stats.withFeatures} 条`, `已标打印结果 ${stats.withOutcome} 条`]
     .map((c) => `<span class="statChip">${c}</span>`).join('');
   $('statChips').innerHTML = chips;
-  $('exportLine').innerHTML = isReviewer()
-    ? `<button class="mini" onclick="exportJsonl()">⬇ 导出 JSONL（训练管线消费）</button>`
+  renderSampleScatter(samples); // v64 特征星图
+  $('exportLine').innerHTML = isReviewer()    ? `<button class="mini" onclick="exportJsonl()">⬇ 导出 JSONL（训练管线消费）</button>`
     : '';
   const rows = samples.map((s) => {
     const dict = labelsDict();
@@ -883,40 +933,92 @@ if (typeof isReviewer !== 'function') { window.isReviewer = () => ME && ['review
 function renderReviewCard() {
   const card = document.getElementById('reviewCard');
   if (card) card.style.display = isReviewer() ? 'block' : 'none';
-  if (isReviewer()) loadSuggestions();
+  if (isReviewer()) { loadSuggestions(); loadParamModelAudit(); }
 }
 
-function openCorrection(id) {
-  const sample = (window.__samples || []).find((s) => s.id === id);
-  if (!sample) return toast('样本已过期，刷新后重试');
-  const dlg = document.createElement('dialog');
-  dlg.innerHTML = '<h3 style="font-size:14px;margin-bottom:8px">📝 修正建议（' + id + '）</h3>' +
-    '<div class="detail" style="margin-bottom:6px">以该样本的工况勾选为条件，编辑参数生成候选规则（待审池确认后生效）</div>' +
-    '<textarea class="paramEdit" id="corrEdit">' + esc(JSON.stringify((sample.fit && sample.fit.engineParams) || sample.selection || {}, null, 1)) + '</textarea>' +
-    '<div style="margin-top:8px"><label>修正理由（必填）</label><input type="text" id="corrReason" placeholder="如：这个件壁太薄 2 墙不够"></div>' +
-    '<div class="actions" style="margin-top:10px">' +
-    '<button class="ok" onclick="submitCorrection(\'' + id + '\', this.closest(\'dialog\'))">提交建议</button>' +
-    '<button class="mini" onclick="this.closest(\'dialog\').close()">取消</button></div>';
-  document.body.appendChild(dlg);
-  dlg.showModal();
+// ---------- v64 特征星图：样本在「体积 × 悬垂率」平面的分布 ----------
+// 颜色=打印结果（成功绿/失败红/未打印灰），点径=录入置信度——样本库的「星图」：
+// 哪片区域密、哪片是空白、失败点扎堆在哪，一眼看清（训练空白区就是该补样本的方向）
+// ---------- 样本特征星图 v79（曼波令「特征是复杂多元关系，简单图表拟合不了」）：
+// PCA 主成分投影代替拍脑袋选两轴——15 维 DNA/几何特征标准化后协方差幂迭代取前两
+// 主成分，轴标注方差解释率；点击样本弹雷达指纹（8 维归一化结构特征逐样本可读）。
+const PCA_DIM_LABELS = ['孔数', '最大孔径', '最小孔径', '最深孔', '贯通率', '悬垂域数', '悬垂总面积', '最大悬垂域', '最险倾角', '凹角数', '凹角总长', '最小凹角', '壁厚min', '壁厚p10', '壁厚med', '剖面突变', '首层面积', '末层面积', '悬垂环岛', '孔周最小壁', '层数采样', '件高'];
+let __pcaRows = []; // 当前散点「有效行」缓存——showSampleRadar 取全体 min-max 用（v83 修复越界引用）
+function sampleDims(f) {
+  const dna = (f && f.dna && Array.isArray(f.dna.vector)) ? f.dna.vector : [];
+  const num = (v) => (v == null ? NaN : Number(v)); // 0 是合法值，不能 || NaN 当缺失（v83）
+  // 维度池：DNA 22 维（v79 扩维）+ 基础几何 4 维（体积/悬垂/接触/曲面——老样本也有）
+  const base = [
+    num(f && f.volumeCm3),
+    num(f && f.overhang && f.overhang.severePct),
+    num(f && f.contact && f.contact.footprintPct),
+    num(f && f.curvedPct),
+  ];
+  // v83：统一 26 维等宽——样本库 DNA 有 15/22 维代际混存 + 老样本仅 4 维，短行直接进
+  // 协方差会 undefined×…=NaN 污染全图；补 NaN 交由 pcaScatter 按列均值填补
+  const out = new Array(PCA_DIM_LABELS.length).fill(NaN);
+  dna.slice(0, PCA_DIM_LABELS.length).forEach((v, i) => { out[i] = num(v); });
+  return out.concat(base);
 }
-
-async function submitCorrection(id, dlg) {
-  let set;
-  try { set = JSON.parse(dlg.querySelector('#corrEdit').value); } catch { return toast('参数不是合法 JSON'); }
-  const reason = dlg.querySelector('#corrReason').value.trim();
-  if (!reason) return toast('请填写修正理由');
-  const sample = (window.__samples || []).find((s) => s.id === id);
-  const res = await fetch('/api/print/rule-suggestions', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ when: (sample && sample.selection) || {}, set, reason, source: 'correction', sourceRef: id }),
+function renderSampleScatter(samples) {
+  const box = document.getElementById('scatterCard');
+  if (!box) return;
+  const rows = (samples || [])
+    .filter((s) => s.model && s.model.features && (s.model.features.dna || Number(s.model.features.volumeCm3) > 0))
+    .map((s) => {
+      const f = s.model.features;
+      const outcome = (s.outcome && s.outcome.status) || '未打印';
+      const conf = Number.isFinite(Number(s.confidence)) ? Number(s.confidence) : 60;
+      return {
+        name: s.id,
+        color: outcome === '成功' ? 'ok' : (outcome === '失败' || outcome === '部分成功') ? 'bad' : 'muted',
+        r: 2.5 + (conf / 100) * 4,
+        tip: '#' + s.id + '｜' + outcome + '｜点击看几何指纹',
+        dims: sampleDims(f),
+        sample: s,
+      };
+    });
+  const { svg, variance } = Viz.pcaScatter(rows, { width: 620, height: 260 });
+  box.innerHTML = '<h4>Feature Space · 样本特征主成分投影（PCA）</h4>' + svg +
+    '<div class="viz-fp-note">● 成功 ● 失败 ● 未打印 ｜ 22 维几何 DNA + 4 维基础几何标准化后取前两主成分——「数据自己选轴」，轴标签的方差解释率说明投影保真度 ｜ <b>点击任意样本看 26 维几何指纹雷达</b></div>' +
+    '<div id="pcaRadar" style="display:none;margin-top:8px;text-align:center"></div>';
+  // 点击样本 → 雷达指纹（相对全体样本 min-max 归一）
+  __pcaRows = rows.filter((r) => r.dims.some((v) => Number.isFinite(v)));
+  const svgEl = box.querySelector('.viz-svg');
+  if (svgEl) svgEl.addEventListener('click', (e) => {
+    const circle = e.target.closest('circle.viz-pt');
+    if (!circle) return;
+    const idx = [...svgEl.querySelectorAll('circle.viz-pt')].indexOf(circle);
+    const row = __pcaRows[idx];
+    if (!row) return;
+    showSampleRadar(row);
   });
-  const data = await res.json();
-  if (!res.ok) return toast('❌ ' + data.error);
-  toast(data.merged ? '✅ 已合并到既有建议（累计 ' + data.suggestion.count + ' 次）' : '✅ 建议已入待审池');
-  dlg.close();
-  loadSuggestions();
 }
+function showSampleRadar(row) {
+  const box = document.getElementById('pcaRadar');
+  if (!box) return;
+  const dims = row.dims;
+  const n = PCA_DIM_LABELS.length + 4;
+  const labels = PCA_DIM_LABELS.concat(['体积', '悬垂%', '贴底%', '曲面%']);
+  // 归一：全体样本 min-max（跨轮询稳定——用本批 __pcaRows，v83 修复越界引用）
+  const all = __pcaRows.map((r) => r.dims);
+  const axes = labels.map((label, j) => {
+    const col = all.map((d2) => d2[j]).filter((v) => Number.isFinite(v));
+    const mn = Math.min.apply(Math, col);
+    const mx = Math.max.apply(Math, col);
+    const v = dims[j];
+    const norm = (mx - mn) > 1e-9 && Number.isFinite(v) ? (v - mn) / (mx - mn) : 0.05;
+    return { label, value: norm };
+  });
+  box.style.display = 'block';
+  box.innerHTML = '<h4>Fingerprint · '+ esc(row.name) +' 几何指纹（全体样本 min-max 归一）</h4>' + Viz.radar(axes, { size: 230 }) +
+    '<div class="viz-fp-note">外圈=该维度在全体样本中最大，圆心=最小 ｜ 点击图上其它样本切换</div>';
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+// 审查修复（v62）：openCorrection/submitCorrection 已删——「从样本发修正建议」的入口
+// 按钮在 v56 复查批移除后这两个函数成了死代码（依赖的 window.__samples 也无人写入）。
+// 修正建议的实际入口 = 预约记录上的「建议修正」（POST /api/print/rule-suggestions，
+// index.html），待审池/采纳链路不变。
 
 async function runRuleFit() {
   const hint = document.getElementById('fitHint');
@@ -956,7 +1058,116 @@ async function decide(id, action) {
   loadSuggestions();
 }
 
+// ---------- 参数智能层（v60）：训练 / LOFO 模型卡 / 采纳与模式管理 ----------
+const PM_PARAM_LABELS = { layerHeight: '层高', wallLoops: '墙数', topShellLayers: '顶面层', bottomShellLayers: '底面层', infillDensity: '填充%', supportThresholdAngle: '支撑阈值°', supportDensity: '支撑密度%', brimWidth: '裙边mm', xyHoleComp: '孔补偿', xyContourComp: '轮廓补偿', temperatureDelta: '热床Δ°', nozzleTempDelta: '喷嘴Δ°' };
+const PM_CHOICE_LABEL = { knn: '案例推理', ridge: '岭回归', mlp: '神经网络', none: '回退规则' };
+
+async function loadParamModelAudit() {
+  if (!isReviewer()) return;
+  const statusBox = document.getElementById('pmStatus');
+  const detailBox = document.getElementById('pmDetail');
+  if (!statusBox) return;
+  try {
+    const res = await fetch('/api/training/param-model/audit');
+    if (!res.ok) { statusBox.textContent = '参数模型状态加载失败'; return; }
+    const snap = await res.json();
+    const lines = [];
+    if (snap.active) {
+      lines.push('🟢 生效中 <b>v' + esc(snap.active.version) + '</b>（模式：<b>' + (snap.active.mode === 'active' ? '生效——真实修正参数' : '影子——只透出建议') + '</b>，' + esc((snap.active.adoptedAt || '').replace('T', ' ').slice(0, 16)) + ' 由 ' + esc(snap.active.adoptedBy || '?') + ' 采纳）');
+    } else {
+      lines.push('⚪ 当前无生效参数模型——切片参数完全由规则库决定');
+    }
+    if (snap.candidate) {
+      lines.push('🧪 候选待采纳 <b>v' + esc(snap.candidate.version) + '</b>（' + esc((snap.candidate.savedAt || '').replace('T', ' ').slice(0, 16)) + ' 训练）');
+    }
+    statusBox.innerHTML = lines.join('<br>');
+    // 模型卡：生效优先，无生效展示候选
+    const card = snap.active || snap.candidate;
+    if (!card) { detailBox.innerHTML = ''; return; }
+    const stats = card.stats || {};
+    const choices = snap.active ? snap.active.choices : (stats.params || {});
+    const enabled = (stats.enabledParams || []).filter((e) => e.choice !== 'none');
+    const rows = enabled.map((e) => '<tr><td><b>' + esc(PM_PARAM_LABELS[e.param] || e.param) + '</b></td><td>' + PM_CHOICE_LABEL[e.choice] +
+      '</td><td>' + (Number.isFinite(e[`${e.choice}Mae`]) ? e[`${e.choice}Mae`].toFixed(3) : '—') +
+      '</td><td>' + (Number.isFinite(e.baseMae) ? e.baseMae.toFixed(3) : '—') +
+      '</td><td>' + (Number.isFinite(e.knnMae) ? e.knnMae.toFixed(3) : '—') +
+      '</td><td>' + (Number.isFinite(e.ridgeMae) ? e.ridgeMae.toFixed(3) : '—') +
+      '</td><td>' + (e.n || '—') + '</td></tr>').join('');
+    // 神经网络置换重要性：生效或候选模型都透出，只展示采用了 MLP 的参数的 top 特征
+    const mlpInfo = snap.active && snap.active.mlp ? snap.active.mlp : (snap.candidate && snap.candidate.mlp ? snap.candidate.mlp : null);
+    let mlpImportance = '';
+    if (mlpInfo && mlpInfo.importance && snap.learnableParams) {
+      const parts = (stats.enabledParams || []).filter((e) => e.choice === 'mlp').map((e) => {
+        const k = snap.learnableParams.indexOf(e.param);
+        const list = k >= 0 ? ((mlpInfo.importance || [])[k] || []) : [];
+        return '<b>' + esc(PM_PARAM_LABELS[e.param] || e.param) + '</b>：' + list.slice(0, 3).map((f) => esc(f.feature) + '(' + f.score + ')').join('、');
+      }).filter(Boolean);
+      if (parts.length) mlpImportance = parts.join('；');
+    }
+    // v64 竞技场条形：择优 MAE vs 基线（灰条=基线，墨条压过灰条=学得比瞎猜准）
+    const maeViz = enabled.length ? Viz.maeBars(enabled.map((e) => ({
+      label: PM_PARAM_LABELS[e.param] || e.param,
+      mine: e[`${e.choice}Mae`],
+      base: e.baseMae,
+      unit: e.param === 'layerHeight' || e.param === 'xyHoleComp' || e.param === 'xyContourComp' || e.param === 'brimWidth' ? '' : '',
+    })).filter((r) => Number.isFinite(r.mine) && Number.isFinite(r.base))) : '';
+    detailBox.innerHTML = '<div class="detail" style="margin:6px 0">' + esc(stats.note || '') + '</div>' +
+      (rows ? '<table><thead><tr><th>参数</th><th>采用</th><th>择优 MAE</th><th>中位数基线</th><th>案例推理</th><th>岭回归</th><th>样本</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+        '<div class="hint">MAE = 留一家族（LOFO）预测误差，越小越准；「采用」列 = 该参数在泛化检验下优于基线的模型族（案例推理/岭回归/神经网络三族竞技）。置信度门限 ' + esc(snap.confGate) + '：预测置信不足时该单参数自动回退规则库值</div>' : '') +
+      (maeViz ? '<div class="viz-card viz-grid" style="margin:8px 0"><h4>Arena · 三族竞技场（择优 vs 基线）</h4>' + maeViz + '</div>' : '') +
+      (mlpImportance ? '<div class="detail" style="margin-top:6px"><b>🧠 神经网络依据特征</b>（置换重要性 top——打乱该特征后预测漂移越大越要紧）：<br>' +
+        mlpImportance + '</div>' : '') +
+      (isAdmin() ? '<div class="revbox" style="margin-top:8px">' +
+        (snap.candidate ? '<button class="ok" onclick="adoptParamModel(\'shadow\')">🧪 采纳候选（影子模式）</button><button class="ok" onclick="adoptParamModel(\'active\')">🚀 采纳候选（生效模式）</button>' : '') +
+        (snap.active ? '<button class="mini" onclick="setParamModelMode(\'' + (snap.active.mode === 'active' ? 'shadow' : 'active') + '\')">切换为' + (snap.active.mode === 'active' ? '影子' : '生效') + '模式</button><button class="bad" onclick="deactivateParamModel()">下线模型</button>' : '') +
+        '</div>' : '');
+  } catch (e) { statusBox.textContent = '❌ ' + e.message; }
+}
+
+async function runParamModelFit() {
+  const hint = document.getElementById('pmHint');
+  const statusBox = document.getElementById('pmStatus');
+  hint.textContent = '训练中（案例检索 + 岭回归 λ 网格 + LOFO 逐参数择优）…';
+  try {
+    const res = await fetch('/api/training/param-model/fit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    const data = await res.json();
+    if (!res.ok) { hint.textContent = '❌ ' + (data.error || '训练失败'); return; }
+    hint.textContent = data.insufficient
+      ? '⚠️ ' + (data.note || '样本不足以训练')
+      : '✅ ' + (data.note || '训练完成') + (data.candidate ? '｜候选 ' + data.candidate.version + ' 已入待采纳槽' : '');
+    if (statusBox) statusBox.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    loadParamModelAudit();
+  } catch (e) { hint.textContent = '❌ ' + e.message; }
+}
+
+async function adoptParamModel(mode) {
+  const res = await fetch('/api/training/param-model/adopt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+  const data = await res.json();
+  if (!res.ok) return toast('❌ ' + data.error);
+  toast(mode === 'shadow' ? '✅ 已采纳为影子模式——建议只透出审批台' : '🚀 已采纳为生效模式——数值参数将按置信度被模型修正');
+  loadParamModelAudit();
+}
+
+async function setParamModelMode(mode) {
+  const res = await fetch('/api/training/param-model/mode', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode }) });
+  const data = await res.json();
+  if (!res.ok) return toast('❌ ' + data.error);
+  toast('✅ 已切换为 ' + (mode === 'active' ? '生效' : '影子') + '模式');
+  loadParamModelAudit();
+}
+
+async function deactivateParamModel() {
+  if (!confirm('下线后切片参数完全回退规则库口径，确定？')) return;
+  const res = await fetch('/api/training/param-model/deactivate', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) return toast('❌ ' + data.error);
+  toast('✅ 参数模型已下线');
+  loadParamModelAudit();
+}
+
 </script>
+<script src="/viz.js?v=1"></script>
+<script src="/status-dock.js?v=1"></script>
 <script src="/fleet-dock.js?v=1"></script>
 </body>
 </html>

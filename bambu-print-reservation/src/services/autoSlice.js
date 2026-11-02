@@ -106,9 +106,18 @@ function clampCopies(quantity) {
  */
 async function prepareModelPath(sourcePath, fileName, params = {}, placement = null, policy = null) {
   let parsed;
-  if (/\.(step|stp)$/i.test(fileName || '')) {
+  if (/\.3mf$/i.test(fileName || '')) {
+    // v64 工程 3mf 自解析分支：无 plate gcode 的工程件（Bambu Studio/MakerWorld 保存）
+    // 从 3D/Objects 跨文件解出合并网格走摆向——切片直通产物不会进本链（直通单参数内嵌直发）
+    const eng = require('../utils/engine3mf').parseEngineering3mf(fs.readFileSync(sourcePath));
+    if (!eng.ok) throw new Error(`工程 3mf 解析失败：${eng.error || eng.reason}${eng.parts ? `（工程含 ${eng.parts} 个实体，复杂装配请预先切片后提交）` : ''}`);
+    parsed = eng.mesh;
+  } else if (/\.(step|stp)$/i.test(fileName || '')) {
     parsed = await require('../utils/stepMesh').parseCadToParsed(fs.readFileSync(sourcePath), fileName);
     if (parsed.error) throw new Error(`STEP 解析失败：${parsed.error}`);
+    // 审查修复（v62）：摆向搜索前补三角数防线（48→24 候选 × 全顶点变换 × 逐面法线，
+    // 复杂 CAD 网格化后无护栏会占死分发线程分钟级）
+    if (Number(parsed.triangles) > 600 * 1000) throw new Error(`STEP 网格 ${parsed.triangles} 面片超过切片上限 600000——请在 CAD 里降低细分精度导出`);
   } else if (/\.stl$/i.test(fileName || '')) {
     parsed = require('./modelFeatures').parseStl(fs.readFileSync(sourcePath));
     if (parsed.error) throw new Error(`STL 解析失败：${parsed.error}`);
@@ -125,8 +134,7 @@ async function prepareModelPath(sourcePath, fileName, params = {}, placement = n
   }
   if (/\.stl$/i.test(fileName || '') && !orientation.changed) {
     return { path: sourcePath, orientation };
-  }
-  const normalized = modelOrient.normalize(parsed);
+  }  const normalized = modelOrient.normalize(parsed);
   fs.mkdirSync(SLICE_DIR, { recursive: true });
   const out = path.join(SLICE_DIR, `oriented-${Date.now()}-${Math.round(Math.random() * 1e6)}.stl`);
   modelOrient.writeBinaryStl(normalized, out);
@@ -201,7 +209,10 @@ async function ensureSliced(task, printer) {
   // 老单无快照才现算规则。快照参数同时进缓存签名——参数一变缓存自然失效
   let params = task.processParams || null;
   if (!params) {
-    const applied = processRules.applyRules(task.selection || {}, { material: task.materialType || '' });
+    // 审查修复（v62）：回退路径补 feat 派生——带 feat.* 条件的学习规则（候选规则引用
+    // 孔数/悬垂等）在无快照老单上此前静默失效（applyRules 没拿到 feat 字典）
+    const feat = require('./featureDerive').deriveFeatures(task.spatial || [], task.modelFeatures || null, task.selection || {});
+    const applied = processRules.applyRules(task.selection || {}, { material: task.materialType || '', feat });
     if (applied.blocked) throw new Error(`勾选存在硬冲突，无法自动切片：${(applied.errors || []).join('；')}`);
     params = applied.params;
   }
@@ -212,8 +223,9 @@ async function ensureSliced(task, printer) {
       selection: task.selection || {},
       params: params || {},
       placement: task.placement || null,
-      orient: 'v2', // 摆向算法版本（2026-10-19 引入自动摆向）——旧缓存自动失效
+      orient: 'v3', // 摆向算法版本——v62 修复镜像候选（48→24 正当旋转），旧缓存全失效
       policy: ((params && params.orientationPolicy) || orientationPolicyStore.getActive() || {}).version || 'cold-start',
+      bridge: fs.statSync(BRIDGE).mtimeMs, // 切片桥脚本 mtime——桥升级后旧产物不再复用（审查修复 v62）
     }))
     .digest('hex')
     .slice(0, 10);

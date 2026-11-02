@@ -294,6 +294,21 @@ class PrinterClient {
   }
 
   /**
+   * 触发机器全量重推（v82 AMS 手动同步）：复用 bambu-link 的 pushall 指令——
+   * 机器会重发完整 report（含 AMS 料盘/温度/任务），换料后不用等下一轮自然轮询。
+   * 推送经 report topic 回来走既有状态处理链，本方法只负责「让机器重新说话」。
+   */
+  refreshPushAll() {
+    const mqtt = this.client && this.client.getMqttClient && this.client.getMqttClient();
+    if (!mqtt) throw new Error('MQTT 未连接——无法触发 AMS 同步');
+    // sequence 计数器在 bambu-link 实例上（pushall 与其 initialMessage 同序列空间）
+    const seq = ++this.client.sequenceIdCounter;
+    return mqtt.sendCommand(JSON.stringify({
+      pushing: { sequence_id: seq, command: 'pushall', version: 1, push_target: 1 },
+    }), seq, false);
+  }
+
+  /**
    * 归一化打印状态：以 gcode_state 为准（job.stage 是数值型 mc_print_stage，判不准）
    */
   getPrintStatus() {
@@ -324,8 +339,11 @@ class PrinterClient {
       speedLevel,
       lights: state.lights ? { chamber: state.lights.chamber || null, work: state.lights.work || null } : null,
       // 机器助手报错事件（2026-10-15 曼波令上界面）：HMS 硬件通知 + 打印错误/失败码
-      // （原始码展示；HMS 码文本映射见前端 HMS_KNOWN 表，未知码引导看屏）
-      hms: Array.isArray(state.raw?.print?.hms) ? state.raw.print.hms.slice(0, 6) : [],
+      // （原始码展示；HMS 码文本映射见前端 HMS_KNOWN 表，未知码引导看屏）。
+      // 审查修复（v62）：hms 是累积列表（停机不清空、新条目追加在尾部）——slice(0,6)
+      // 取的是最旧 6 条，历史超 6 条的机器上新故障证据全被截掉，freshHmsCount 恒 0
+      // 把真故障误判成人为终止；改取尾部（最新）6 条
+      hms: Array.isArray(state.raw?.print?.hms) ? state.raw.print.hms.slice(-6) : [],
       // 多喷头（2026-10-16 曼波令；H2D 双喷头真机形态：device.extruder.info 各喷头温度、
       // device.nozzle.info 规格、device.nozzle.tar_id 活动喷头）——单喷头机型为 null
       nozzles: (() => {
@@ -1029,7 +1047,9 @@ class PrinterClient {
       // 存储离线诊断（2026-10-26 X1C 553 实案：SD 卡掉卡两天，sdcard 位一直如实上报
       // false 却没人读，三连挂只吐裸 553）——错误信息直接给出人话指引
       let sdOffline = false;
-      try { sdOffline = this.getState()?.sdcard === false; } catch { /* 未连接不猜 */ }
+      // 审查修复（v62）：sdcard 位在原始报文 raw.print.sdcard——bambu-link 归一化状态
+      // 没有该字段，原读法恒 undefined、掉卡人话提示从未出现过
+      try { sdOffline = this.getState()?.raw?.print?.sdcard === false; } catch { /* 未连接不猜 */ }
       throw new Error(
         `FTPS(990) 上传失败（${ftpsErr ? ftpsErr.message : '未知'}），FTP(21) 回退也失败（${err.message}）`
         + (sdOffline ? '；机端存储离线（sdcard=false）——请检查打印机 SD 卡/USB 盘是否在位' : '')

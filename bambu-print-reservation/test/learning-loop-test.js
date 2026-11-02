@@ -123,6 +123,42 @@ check('提取：project_settings.config → 参数映射（含 %/枚举清洗）
   assert.ok(!('supportFillet' in r.params), '白名单外键不应出现');
 });
 
+check('v64 工程件闸门：无 plate gcode → sliced=false（Bambu Studio 02.04 工程件实案）', () => {
+  const r = extractFrom3mf(make3mf({ layer_height: '0.2' }));
+  assert.equal(r.sliced, false, '无 plate gcode 条目 = 工程件');
+});
+
+check('v64 切片产物：含 plate_1.gcode → sliced=true', () => {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip();
+  zip.addFile('Metadata/project_settings.config', Buffer.from(JSON.stringify({ layer_height: '0.2' })));
+  zip.addFile('Metadata/plate_1.gcode', Buffer.from('; gcode header\n; total filament weight = 12.30 g\n'));
+  zip.addFile('Metadata/slice_info.config', Buffer.from('<config><plate><filament type="PLA" used_g="12.3" color="#FF0000" tray_info_idx="AAA"/></plate></config>'));
+  const r = extractFrom3mf(zip.toBuffer());
+  assert.equal(r.sliced, true);
+  assert.equal(r.filaments.length, 1);
+  assert.equal(r.filaments[0].type, 'PLA');
+  assert.equal(r.filaments[0].colorHex, 'FF0000');
+});
+
+check('v64 filaments 兜底：slice_info 无清单（02.04 新格式）→ project_settings 配对提取', () => {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip();
+  zip.addFile('Metadata/project_settings.config', Buffer.from(JSON.stringify({
+    layer_height: '0.2',
+    filament_colour: ['#FFFFFF', '#BECF00'],
+    filament_type: ['PLA', 'PLA'],
+  })));
+  zip.addFile('Metadata/plate_1.gcode', Buffer.from('; gcode\n'));
+  zip.addFile('Metadata/slice_info.config', Buffer.from('<?xml version="1.0"?><config><header/></config>'));
+  const r = extractFrom3mf(zip.toBuffer());
+  assert.equal(r.sliced, true);
+  assert.equal(r.filaments.length, 2, '两色件应出两条耗材');
+  assert.equal(r.filaments[0].colorHex, 'FFFFFF');
+  assert.equal(r.filaments[1].colorHex, 'BECF00');
+  assert.equal(r.filaments[1].type, 'PLA');
+});
+
 check('ironing_type "no ironing"（Orca 2.4 关闭值）→ false，不再把默认关闭误判为开启', () => {
   assert.equal(extractFrom3mf(make3mf({ ironing_type: 'no ironing' })).params.ironing, 'false');
   assert.equal(extractFrom3mf(make3mf({ ironing_type: 'none' })).params.ironing, 'false');

@@ -225,9 +225,11 @@ class ReservationService {
       const snapshot = store.get(id);
       setImmediate(async () => {
         try {
-          const sample = await createSampleFromReservation(snapshot, reviewer);
-          store.setSample(id, { sampleId: sample.id });
-          console.log(`[预约服务] 审批入库：${id} → 样本 ${sample.id}`);
+          const created = await createSampleFromReservation(snapshot, reviewer);
+          // v83 多源单适配：多源分支返回数组——记首条 + 全量 id 表，outcome 回填闸按数组放行
+          const ids = (Array.isArray(created) ? created : [created]).map((s) => s && s.id).filter(Boolean);
+          store.setSample(id, { sampleId: ids[0], sampleIds: ids });
+          console.log(`[预约服务] 审批入库：${id} → 样本 ${ids.join(' / ') || '(无可入库样本)'}`);
         } catch (err) {
           console.warn(`[预约服务] 审批入库失败 ${id}: ${err.message}`);
           try { store.setSample(id, { sampleError: err.message }); } catch { /* 记录失败不阻塞 */ }
@@ -386,6 +388,34 @@ const reservationService = new ReservationService();
 // 3mf 直通样本的几何特征全自动提取（无人工核验）——额外低权重置信度（曼波 2026-10-16 令，训练消费按低权对待）
 const AUTO_FEATURE_CONFIDENCE = 40;
 
+/** v79 多源文件批量入库帮手：以给定特征/网格/配对信息建一条样本（绕过单路径的特征重分析） */
+async function createForRecord(record, ov, reviewer) {
+  let slice = {
+    originalName: record.fileName || 'slice.3mf',
+    buffer: ov.buf,
+    extraction: ov.extraction
+      ? { source: ov.extraction.source, params: ov.extraction.params, estMinutes: ov.extraction.estMinutes, filaments: ov.extraction.filaments, bedType: ov.extraction.bedType }
+      : null,
+  };
+  const notesParts = [`审批入库 · 源单 ${record.id}`];
+  if (ov.sourceRef) notesParts.push(`源文件 ${ov.sourceRef}`);
+  if (ov.sliceObjectName) notesParts.push(`盘内件 ${ov.sliceObjectName}${ov.lowConfidence ? '（低置信配对）' : ''}`);
+  return require('./trainingStore').create({
+    createdBy: reviewer || '审批入库',
+    notes: notesParts.join(' · '),
+    sourceRecordId: record.id,
+    featureSource: 'auto',
+    confidence: ov.lowConfidence ? 30 : AUTO_FEATURE_CONFIDENCE, // 低置信配对再降一档
+    selection: record.selection || {},
+    spatial: record.spatial || [],
+    placement: record.placement || null,
+    orientation: Array.isArray(record.placement) && record.placement.length === 4 ? { quaternion: record.placement, source: 'placement' } : null,
+    materialType: record.materialType || '',
+    model: { originalName: ov.meshName, buffer: ov.meshBuf, features: ov.features },
+    slice,
+  });
+}
+
 async function createSampleFromReservation(record, reviewer) {
   const fs = require('fs');
   if (!record) throw new Error('预约记录不存在');
@@ -401,6 +431,69 @@ async function createSampleFromReservation(record, reviewer) {
   // 提取失败回退切片件口径，不阻塞入库
   let meshBuf = buf;
   let meshName = record.fileName || 'model';
+  // v79 多源文件（一份切片一盘多件）：数组形态 → 逐源文件配对切片 object 建多条样本，
+  // 共享同一份切片参数/工况（一盘共同决策）；单对象形态走原 1:1 路径完全不变
+  if (Array.isArray(record.sourceFile) && record.sourceFile.length) {
+    try {
+      const mf = require('./modelFeatures');
+      const parsedSlice = mf.parse3mfModel(buf);
+      const sliceObjs = (parsedSlice && parsedSlice.objects) || [];
+      const srcList = record.sourceFile;
+      const analyzedSrc = [];
+      for (const sf of srcList) {
+        try {
+          const sb = fs.readFileSync(sf.storedPath);
+          const extM = /\.([a-z0-9]+)$/i.exec(sf.originalName || '') || [];
+          const ext = (extM[1] || '').toLowerCase();
+          const analyzed = ext === 'stl' ? mf.analyzeStl(sb)
+            : (ext === 'step' || ext === 'stp') ? await mf.analyzeStep(sb, sf.originalName)
+            : mf.analyze3mf(sb);
+          analyzedSrc.push({ sf, sb, analyzed });
+        } catch (err) {
+          console.warn(`[训练入库] ${record.id} 源文件 ${sf.originalName} 读取/解析失败（跳过该件）: ${err.message}`);
+        }
+      }
+      if (!analyzedSrc.length) throw new Error('全部源文件解析失败');
+      // 配对：切片 object 签名 × 源文件签名（multiModelMatch；切片无 object 时 1:1 按序）
+      let pairs = null;
+      if (sliceObjs.length) {
+        // v83 修复：切片 object 侧解析不出孔/悬垂（parse3mfModel 产物无此二者），
+        // 标记 unknown 让距离函数按可用维归一——此前恒 0 反而惩罚有孔/悬垂模型
+        const sig = (f, flags) => ({
+          bboxVolCm3: f.bbox ? (f.bbox.x * f.bbox.y * f.bbox.z) / 1000 : 0,
+          triangles: f.triangles || 0,
+          holeCount: f.holes ? f.holes.count : 0,
+          overhangSeverePct: f.overhang ? f.overhang.severePct : 0,
+          ...(flags || {}),
+        });
+        pairs = require('./multiModelMatch').matchModels(
+          sliceObjs.map((o) => sig(o, { holesKnown: false, overhangKnown: false })),
+          analyzedSrc.map((a) => sig(a.analyzed || {})),
+        );
+      }
+      const extraction = (() => { try { return require('./slicerExtract').extractFrom3mf(buf); } catch { return null; } })();
+      const createdSamples = [];
+      for (const p of (pairs ? pairs.pairs : analyzedSrc.map((_, i) => ({ sliceIdx: Math.min(i, sliceObjs.length - 1), modelIdx: i, lowConfidence: false })))) {
+        const a = analyzedSrc[p.modelIdx];
+        if (!a || !a.analyzed || !a.analyzed.ok) continue;
+        const sample = await createForRecord(record, {
+          buf, extraction,
+          features: a.analyzed,
+          meshBuf: a.sb,
+          meshName: a.sf.originalName || meshName,
+          featureSource: 'auto',
+          sourceRef: a.sf.originalName,
+          sliceObjectName: sliceObjs[p.sliceIdx] ? sliceObjs[p.sliceIdx].name : null,
+          lowConfidence: !!p.lowConfidence,
+        }, reviewer);
+        createdSamples.push(sample);
+      }
+      console.log(`[训练入库] ${record.id} 多源文件批量入库 ${createdSamples.length} 条（源文件 ${analyzedSrc.length} 个）`);
+      return createdSamples;
+    } catch (err) {
+      console.warn(`[训练入库] ${record.id} 多源文件批量入库失败（回退单路径）: ${err.message}`);
+    }
+  }
   if (record.sourceFile && record.sourceFile.storedPath) {
     try {
       const sb = fs.readFileSync(record.sourceFile.storedPath);
@@ -495,11 +588,23 @@ function precheckSlicedSubmission(input = {}) {
   // 与审批校验/审批台前端三处同源，别再各写各的正则
   const { modelMatch, modelKey } = require('../utils/printerModelKey');
   const want = modelKey(machineModel);
-  const targets = (input.printers || []).filter((p) => modelMatch(machineModel, p.model));
+  let targets = (input.printers || []).filter((p) => modelMatch(machineModel, p.model));
   if (!targets.length) {
-    const fleet = (input.printers || []).map((p) => p.model).filter(Boolean).join('、') || '（空）';
-    errors.push(`机队中没有「${machineModel}」同型号登记机（现有机型：${fleet}）——切片文件已锁定机型，提交了也无法分发；请用机队现有机型重新切片后再提交`);
-    return { blocked: true, errors, warnings, targets: '' };
+    // v64 修订（Poop-Bucket-Plain-H-Series.3mf 实案）：切片机型不在机队 ≠ 件不能打——
+    // P2S 切的件 H2D 照打（同 BBL 平台/同喷嘴）。口径从「无同型号硬拦」改为
+    // 「同品牌族放行+警告」：品牌判定走 printerModelKey.modelBrand（查表——登记串
+    // 「H2D/A1 mini」不带品牌前缀，正则咬不住）；跨品牌仍硬拦。
+    const { modelBrand } = require('../utils/printerModelKey');
+    const fileBrand = modelBrand(machineModel);
+    const brandMachines = fileBrand === 'unknown' ? [] : (input.printers || []).filter((p) => modelBrand(p.model) === fileBrand);
+    if (!brandMachines.length) {
+      const fleet = (input.printers || []).map((p) => p.model).filter(Boolean).join('、') || '（空）';
+      errors.push(`机队中没有「${machineModel}」同型号或同品牌登记机（现有机型：${fleet}）——切片文件与机队品牌不符，提交了也无法分发；请用机队现有机型重新切片后再提交`);
+      return { blocked: true, errors, warnings, targets: '' };
+    }
+    const brandName = fileBrand === 'bambu' ? '拓竹' : '闪铸';
+    warnings.push(`切片机型「${machineModel}」不在机队——按同品牌兼容处理：将分发到${brandName}机，请审批时确认板型/耗材兼容（喷嘴口径/腔体尺寸差异请人工把关）`);
+    targets = brandMachines;
   }
   const targetNames = targets.map((p) => p.name).join('、');
   // 耗材初审：逐条用料对该机实时料位匹配；状态失联/料位空的机器不参与判定（不误杀）

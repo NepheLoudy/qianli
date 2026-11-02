@@ -2,6 +2,8 @@
 
 页面预约 + 拓竹打印机（MQTT/SFTP/FTPS）全自动分发：切片产出 3mf → 页面提交（源文件+需求标签）→ 页面审批 → 按 AMS 耗材自动选机 → 上传并开始打印 → 全程群播报。
 
+> **新队员从这里开始**：要用平台（提交/审批/取件）看 [USER-GUIDE.md](USER-GUIDE.md)（使用手册）；要改代码看 [ONBOARDING.md](ONBOARDING.md)（开发手册）。本文是功能与 API 参考手册。
+
 > **架构转向（2026-10-05 路线 A）**：断开飞书审批链，转为**自建前后端**——浏览器页面（本服务同源伺服 `public/index.html`）提交预约（源文件上传 + 需求标签勾选）、页面审批（X-API-Token 口令），预约真相源为本服务本地存储（`RESERVATIONS_STORE_FILE`）；多维表格镜像/审批实例事件/自动审批/对账自愈整链退役（`approvalService.js`/`eventSubscription.js` 已随 v46 遗留清理删除，`/api/feishu/event` 端点删除）。飞书仅剩**群 webhook 播报**（通知通道，非数据依赖；`BOT_WEBHOOK_URL` 清空即静默）与 `/api/chat/command` 查询指令入口。需求标签池 + 工艺映射规则库（下两节）为自动切片铺路。
 
 ## 工作流
@@ -165,16 +167,11 @@ npm run push
 ## 测试
 
 ```
-node test/dispatcher-test.js          # 分发引擎匹配逻辑单测（18 项）
-node test/dispatcher-persist-test.js  # 分发引擎状态持久化往返测试（落盘/重启恢复/截尾/损坏隔离兜底）
-node test/dispatcher-manual-race-test.js  # 分发互斥闸门测试（人工指定 vs 自动匹配竞态修复回归，16 项）
-node test/taxonomy-test.js            # 需求标签池单测（结构铁律/校验/冲突/表单提取/收缩标尺，20 项）
-node test/process-rules-test.js       # 工艺映射规则库单测（种子自洽/叠加优先级/材料裁定/收缩规则/热改，23 项）
-node test/local-reservation-test.js   # 本地预约系统单测（存储/状态机/颜色警告/estMinutes/复刻/审批入队集成，26 项）
-node test/auth-test.js                # 账号体系单测（注册/登录限速/会话/角色/中间件双通道，15 项）
-node test/learning-loop-test.js       # 学习链路单测（待审池聚合/采纳转正/撞 id 修复回归/3mf 提取，11 项）
-node test/ops-test.js                 # 运营单测（损坏隔离/审批拦截/estMinutes 提取/ETA/变迁判定/巡检阈值/备份/usage，12 项）
-node test/printer-upload-channel-test.js  # 上传通道分流单测（FTPS 990 优先/FTP 21 回退/SFTP 机型分流/连接参数，8 项）
+npm test    # 35 套全量（每套独立 node 进程）
 ```
 
-> 十套 158 项全绿（2026-10-08：原审批事件解析测试随审批链退役删除，新增断言覆盖收缩标尺/复刻/ETA/损坏隔离/首报文收尾）。
+覆盖：分发引擎（匹配/持久化/闸门竞态）、预约状态机、标签池与规则库、学习回路三件套（param-model 15 断言含 MLP 反向传播正弦证据/饱和曲线竞技场）、几何链路（体检/摆向/分层）、账号与运营、切片与打印机协议。各套清单见 [ONBOARDING.md](ONBOARDING.md) 第 8 节。
+
+## 参数智能层（2026-10-30 v60/v61：几何特征 × 工况 → 切片参数的多变量学习）
+
+规则库管**显式工艺因果与安全硬约束**（材料排除/绝缘禁 CF/耐温档），数值工艺参数（层高/墙/壳/填充/支撑/孔补偿/温差/裙边）由学习模型预测——三族 LOFO 竞技场：**kNN 案例推理**（相似专家案例加权融合，可审计「参考了哪几条」）+ **加权岭回归**（多变量，工况 one-hot 进 X）+ **多层神经网络**（mlp.js 手写多任务共享底座+5 网络集成+置换重要性，纯 JS 零依赖）。每参数按留一家族（LOFO）MAE 与中位数基线比，严格优于基线才上岗，学不会的诚实回退；置信度门控（<0.55 回退）；样本权重消费打印 outcome（失败×0.3）与录入 confidence。训练→candidate→admin 采纳（**shadow 只建议 / active 真修正** 双模式）。模块：`featureVector.js`（统一向量空间，spec 随模型冻结）+ `paramModel.js` + `mlp.js` + `paramModelStore.js`；API `POST /api/training/param-model/fit|adopt|mode|deactivate|preview`、`GET …/audit`；UI 在 train.html「🧠 参数智能层」。学习范式定位与双链路完整解读见 [TRAINING-ARCHITECTURE.md](TRAINING-ARCHITECTURE.md)。

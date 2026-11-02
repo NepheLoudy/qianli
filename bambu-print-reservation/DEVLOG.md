@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 `npm run push`（= 一次部署）。本项目 push.js 为纯 SFTP 直传、无 git 步骤，**版本锚点取顶层 monorepo 中触碰本路径的归档提交**——两次归档之间的个别部署可能无版本记录。v1~v14 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](../AGENTS.md)）。
 
-当前最新：**v59**（2026-10-29，UI 交互自审批：机队悬浮坞+四页统一导航+getApiStates 透出 receiptHold，356 断言全绿）。上一版 v58（2026-10-29，全量 UI 重构——印刷品风格对齐战队官网（styles.css 共享设计系统/双主题），356 断言全绿）。上一版 v57（2026-10-16，真单系列热修共 22 批：真单卡滞修复/清残留状态验证链/方案B 残留放行/人工取消不重发/RUNNING 态收录/喷嘴温度打包解码与左右实证/双机接入（X1C+闪铸A5P）/放置平面 Place on Face/直通单机型全链（内嵌机型权威+指定钉死）/通知分流重整/3mf 几何特征估计链/画面显式连接/多耗材 3mf 逐条栏位全链/双新机观察台按钮（X1C 灯节点+闪铸 cmd/args 信封+摄像头开流）/回执丢失自愈（超时状态验证+队列对账），测试 229 项全绿；其后热修44~68 以「v57 热修NN」子条目记于本节内）。上一版 v56（2026-10-15，设备化观察台+预约页重构批，测试 17 套全绿）。更早版本见下文历史条目。（头部指针曾停留 v57，2026-10-30 维护批补正）
+当前最新：**v83**（2026-11-03，全量审查修复批——三域并行子代理审查×双源交叉验证：32 项发现 31 证实，修复 P0×1/P1×11/P2×18——带孔件 DNA 必炸/多模型配对排列爆栈+贪心泄漏/多源入库回填断链/切片签名死零/3mf 实例化丢件/PCA 混维 NaN/热力图 UTC+8 错位/放弃坞 404 等，37 套测试全绿）。上一版 v82→v76（2026-11-01 一日九连发：多模型批量上传+几何指纹自动配对（v76）、审批台 3mf 预览可观测性（v77）、多选体感修复（v78）、PCA 特征星图+几何 DNA v2 22 维（v79）、预约单多源全链适配（v80）、热力图/时间带两轮修复（v81/v82））。上一版 v75→v59（2026-10-29~11-01：机队悬浮坞（v59）、印刷品 UI 重构（v58）、viz「工程图纸」组件库（v64）、参数智能层 kNN/岭回归（v60）→MLP 化（v61）、全量审查修复批（v62）、平台使用手册（v63）、工程 3mf 闸门等，逐版详录见文末）。更早版本见下文历史条目。
 
 ## 阶段五 · 审批事件字段对齐与分发健壮化（2026-09-05）
 
@@ -842,7 +842,7 @@
 - 补充：0x05008051（H2D 屏幕暂停/停止码）入人因码表。
 - 测试：manual-race 新增 3 条（陈年 HMS→已取消 / H2D 停止码+镜像→已取消 / 30 分钟二次失败→熔断进池）；persist-test 按新语义拆快/慢失败两径。全量 34 套全绿，已上线。
 
-### v58 · 2026-10-29 · 随本提交落地 · feat
+### v58 · 2026-10-29 · 顶层归档 `ee34bda` · feat
 
 **全量 UI 重构：印刷品风格对齐战队官网（team.cquqianli.cn）**
 
@@ -853,7 +853,7 @@
 - **视觉复核**：本地阻断环境起服务，browser 截图四页双主题逐张过目（登录卡/主界面/暗色列表/审批台/观察台），toast 默认隐藏缺失、status header 结构错误、暗色 brand-divider 三处问题当场修。
 - 全量 356 断言全绿（纯呈现层重构，逻辑零改动），已上线。
 
-### v59 · 2026-10-29 · 随本提交落地 · feat
+### v59 · 2026-10-29 · 顶层归档 `39fc504` · feat
 
 **UI 交互自审批：机队悬浮坞 + 四页统一导航 + 取件直达（曼波令「自审交互逻辑并落地」）**
 
@@ -863,3 +863,296 @@
 - **统一导航**：四页 header 加 site-nav（预约中心/审批台/训练台/观察台），当前页 accent 下划线高亮（千里 nav 同款）；移动端收进页脚。
 - **debug 实录**：本地预览注入假机队数据逐项验（六机状态点分类渲染/汇总/折叠/回执弹层文案与按钮）全过；修 dock 空态文案 bug（401 与空机队同文案）；截图管线被页面轮询干扰时改用 DOM 事实验收。
 - 全量 356 断言全绿，已上线。
+
+### v60 · 2026-10-30 · 随本提交落地 · feat
+
+**参数智能层：几何特征 × 工况 → 切片参数的多变量学习链路（曼波令「拟合识别消费链路要智能，不能检测到值就触发规则」）**
+
+- **痛点**：ruleFitter 是单变量分组中位数（特征活跃→参数=常数阈值规则）、applyRules 是 priority 覆盖制——学不出连续响应（孔径↔补偿量）、特征交互（Z 孔×重载）、非线性与不确定性；outcome/sliceStats 信号躺在样本库里学习侧不消费。
+- **特征向量空间**（src/services/featureVector.js 新增）：几何体检原值（bbox/纵横比/体积/孔系/悬垂/接触/曲面）+ featureDerive 派生值 + taxonomy 工况 one-hot + 标尺连续值 → 统一数值向量；spec 随模型冻结（taxonomy 演进旧模型按填补值降级，不崩）。
+- **学习模型**（src/services/paramModel.js 新增）：①kNN 案例推理——几何标准化欧氏 + 工况 Jaccard 混合距离取 top-5 专家案例加权中位融合（连续响应、天然可审计「参考了哪几条案例」）；②加权岭回归——全样本多变量闭式解（工况 one-hot 进 X），λ∈{2,8,32} 网格训练侧择优；③逐参数 LOFO（留一家族出）MAE 与全局中位数基线比，严格优于基线 ≥5% 才启用该参数（kNN/ridge 择一），学不会的诚实回退；④样本权重=outcome（失败×0.3）×confidence——打印结果从此进学习侧；⑤置信度=近邻覆盖度×(1-分歧度)，低于 0.55 逐参数回退规则值。
+- **消费接线**：审批提交处（index.js）规则库基线 → paramModel.applyToParams——枚举/材料/朝向等安全参数模型不碰，数值参数 clamp 在白名单域内；provenance（模型版本/每参数规则值→模型值/来源/置信度/参考案例/LOFO 证据）随单存档（reservationStore.modelProvenance）。
+- **采纳治理**（paramModelStore.js 新增，对齐 orientationPolicyStore 语义）：训练→candidate，admin adopt 才生效；**shadow（建议只透出审批台）/active（真实修正参数）双模式**可随时切换、deactivate 一键回退规则口径。
+- **API 六条**：POST /api/training/param-model/fit、GET …/audit、POST …/adopt（admin）、…/mode（admin）、…/deactivate（admin）、…/preview。
+- **前端**：train.html 治理面板新增「🧠 参数智能层」区块（训练按钮/生效状态/LOFO 逐参数模型卡/影子-生效采纳/切换/下线）；approve.html 待审批卡与详情弹层透明展示模型修正与建议（参数值变化/置信度/参考案例/LOFO MAE vs 基线）。
+- **验证**：param-model-test.js 10 断言（合成样本学回 -0.04×holes_z 线性关系；常数参数 layerHeight 被 LOFO 闸门拒绝修正；clamp 域/枚举不碰/shadow-active/gate 门控/store 流/失败降权）；全量 35 套全绿；隔离实例（临时目录全 env 隔离 AUTH/训练库/规则库/分发状态/备份）浏览器端到端冒烟——训练出卡（wallLoops→案例推理 0.083<2.0、infillDensity→岭回归 0.742<5.83、xyHoleComp→岭回归 0.006<0.049）、影子采纳、审批台渲染函数全过。
+- **部署口径**：现网样本 32 条/27 家族可直接训练；建议先影子模式观察审批台建议质量，曼波点头后切生效模式。
+
+### v61 · 2026-10-30 · 随本提交落地 · feat
+
+**多层神经网络进参数智能层：多任务共享底座 MLP + 集成 + 置换重要性（曼波令「设计可以尽可能复杂，一切只为更好的拟合和集合特征识别效果」）**
+
+- **mlp.js（新，纯 JS 零依赖）**：多任务 MLP——输入 d（几何连续值+交互列+工况 one-hot，同岭回归特征向量）→ 隐层 24（tanh）→ 隐层 12（tanh）→ 输出 12 头（每个可学习参数一个）。手写前向/反向传播 + full-batch Adam + L2 权重衰减 + 样本权重进损失 + 标签 mask（缺标签的头不计损失）；**5 网络集成**（确定性种子 mulberry32，同种子同权重可复现）降方差，网络间分歧兼作置信度依据；权重 4 位小数量化序列化（~50KB）。不引 TF.js——部署目标 96MB pm2 进程，dayjs 事故前车之鉴。
+- **LOFO 三族竞技场**：每参数从 {案例推理 kNN, 岭回归, 神经网络} 按 LOFO MAE（留一家族出）与中位数基线比择优，严格优于基线 ≥5% 才上岗；MLP 门槛 ≥10 行样本（再少纯过拟合）。MLP LOFO 多任务评估：fold 内训一个集成多头同测（逐参数重训贵一个量级，没必要）。存档模型 = 全量样本满配训练（LOFO 只做裁判）。
+- **置信度（MLP 头）**：1 − 集成分歧/(1.5×该参数训练侧标准差)——网络们在某片特征空间吵得越凶，数据支撑越弱，预测越谦逊；门控与回退机制沿用 v60（<0.55 回退规则值）。
+- **置换重要性**：训练后逐特征列打乱测输出漂移（几何/交互列 ×2 次重复），逐参数 top-5「依据特征」随模型卡透出——「几何特征识别效果」从黑盒变成可读清单。
+- **显式交互特征**（featureVector）：6 组物理因果乘积列（竖直孔×刚度档/大孔×孔数/悬空×细长比/接触比×高度/曲面×悬空/轴向载荷×高度）——MLP 隐层能自学交互，但这些列同时喂给岭回归/kNN，把「专家会注意什么组合」写进先验；spec 冻结口径下旧模型自然忽略新列。
+- **超参实证**：400ep@lr0.01 严重欠拟合（正弦 RMSE 3.7）→ 1200ep@lr0.02 收敛（<0.1）；37 样本全流程训练 ~14s（LOFO 6 折 + 满配存档 + 置换重要性），治理操作可接受。
+- **测试**：param-model-test 扩到 15 断言——正弦拟合（反向传播函数级证据）/序列化往返/同种子确定性/饱和曲线（非线性）上 MLP 进闸门 vs 线性数据上诚实让位岭回归/重要性结构；全量 35 套全绿；隔离实例 API 级端到端（37 样本训练→candidate→audit）+ 浏览器治理面板复核（模型卡三族标签/训练按钮/候选槽）。
+- **UI**：模型卡「采用」列支持「神经网络」；模型卡下新增「🧠 神经网络依据特征（置换重要性 top）」（仅展示 MLP 上岗参数）；approve.html provenance 来源标签同步。
+- **竞技场哲学**：MLP 在 37 条线性关系样本上大概率输给岭回归（现网首训就会看到）——这是机制在工作不是缺陷；样本涨到几百条、关系非线性化后它会自己赢回上岗资格。任何新模型族（GBDT/更深层）照同一接口插入 LOFO 竞技即可，学不好永远自动回退。
+
+### v62 · 2026-10-30 · 随本提交落地 · fix
+
+**全量代码审查修复批（曼波令「全量审查程序/交互/设计纰漏」）——四域子代理并行审查，P0×5 / P1×12 / P2×20+ 全部验证后修复，35 套测试全绿**
+
+审查组织：4 个并行子代理按域分工（C 学习切片链 / A 入口路由与飞书 / B 分发与打印机 / D 存储与前端），主会话逐条验证（防误报）后统一修复。D 域结论：无 P0（esc 纪律与存储原子性经全链核对过硬）。
+
+**P0（5 个，全是程序级事故）**
+- `paramModel.js` impute 时序：训练侧 dense 向量在 spec.impute 赋值前计算（缺失特征填 0），预测侧用冻结中位数——同一特征两套坐标，LOFO/coverageRadius/回归全学在失真空间（v60 起潜伏）。修复：impute 赋值前移。
+- `paramModel.js` MLP 竞技场字段名笔误：择优 filter 读 `lofo.mlpMae`（不存在），MLP 的 MAE 在 `info.mlpMae`——v61 主打功能训练完即整体空转（applyToParams 的 mlp 分支为死代码）。修复：mlpMae 合入 lofo 视图；测试补「choice 三族」强断言。
+- `modelOrient.js` 48 候选含镜像：「24 轴向搜索」实际枚举 6 置换×8 符号，其中 24 个 det=−1 是非正当变换（flip 交换顶点序后几何仍是手性镜像）——手性件（螺纹/桨叶）会打出反件。修复：只保留 det>0 的 24 个旋转候选，flip 分支随之删除。
+- `index.js` 提交路由 catch 越块引用：catch 里 `removeUploads(file, srcFile)` 引用 try 内 const——3mf 直通单撞工况校验即 ReferenceError，Express 4 不捕获 async rejection → 进程崩溃（表现为偶发重启请求凭空丢失）。修复：变量声明提到 try 外。
+- `dispatcher.js` restoreState 不回灌 activeTask：重启恢复 printing 映射但 manager 侧 activeTask 空——首报文补收尾路径（FINISH && hasActiveTask）失效，重启窗口内完成的任务卡假「打印中」最长 12h（回执闸/队列同步滞留）。修复：恢复时逐条 `printerManager.updateState(pid, {activeTask})`。
+
+**P1（12 个，择要）**
+- `client.js` hms 截取方向反了：`slice(0,6)` 取累积列表最旧 6 条，新故障证据被截掉——HMS 历史超 6 条的机器上 freshHmsCount 恒 0，真故障误判为人为终止。改 `slice(-6)`。
+- `dispatcher.js` dequeue 不清 receiptHold：续打单取消后取件闸永久滞留（无 TTL），该机对自动匹配永久不可见。补按单清理（含 pickupCodes）。
+- `dispatcher.js` dispatchLocked catch 不看 task.cancelled：撤销落在分发链窗口内且随后失败时已撤销任务被回写「排队中」（撞状态机刷日志）并重新入队空转。补 cancelled 终局。
+- `dispatcher.js` stopWithRetry 耗尽只发 announce（已改空操作）：机器继续打已取消单且无任何渠道告知。补 notifyApplicantDm。
+- `dispatcher.js` sweepStalePrinting 补完成不处理续打：多份单第 1 盘被打成终态，剩余份数蒸发。补 hasMore 判定（对齐 completeTask：回排队+remaining−1+重入队+置闸发取件码）。
+- `index.js` mjpeg handler 全仓唯一无顶层 catch 的 async 路由（tls.connect 同步抛错即崩进程）——整段兜底；拓竹帧流补背压（write 需 drain 时丢帧，实时流语义，对齐 WS 中继口径）。
+- `index.js` SIGTERM 语义坏掉：dispatcher 裸 handler 只冲刷不退出（注册即抑制默认终止，kill 后进程永活）。SIGINT/SIGTERM 统一优雅退出 + server.close 8s 强退兜底。
+- `orientationFitter.js` LOFO 汇总分子加权分母不加权：含低权重标签的库准确率被系统性压低，采纳闸门误杀好策略。改用 weightSum。
+- `featureDerive.js` 孔去重只比半径不比圆心：标注 1 个 Ø5 孔会把其余同径孔全当重复（4 颗安装孔常态）。补圆心距 <0.5mm 条件。
+- `trainingStore.js` familyOf 读 `f.volume`（字段实际叫 volumeCm3）：体积分量恒 0，家族签名退化。
+- `gcodeLayers.js` 128MB gcode 全文 split：峰值内存数百 MB 打爆小电脑进程。改逐行 indexOf 切片。
+- `modelFeatures.js` analyzeStep 无三角数防线（STL/3mf 都有唯它没有）+ `autoSlice.js` STEP 摆向搜索同补；`paramModel.js` kNN 置信度变异系数在跨 0 参数上爆 10⁴（恒 0）——分母改参数训练侧 std（paramStd 提为模型顶层，kNN/MLP 共用）。
+
+**P2（20+，择要）**
+- 安全/暴露面：`/api/print/policy` 挂 requireUser（原匿名暴露机队/队列/放弃池）；`/api/reservations` 列表 DTO 砍服务端绝对路径（filePath/storedPath）；slicer-extract 补 50MB 闸；chatService 指令查找 hasOwn 防原型链（`/toString`）；bot.js 用户可控字段（fileName/applicant/意见）过 escMd 防卡片 markdown 注入；authStore bindByCode 按 openId 限流（5 次锁 10 分钟，防 6 位码枚举改绑）；global error 中间件 err.statusCode 优先（413 不再伪装 400）。
+- 交互：approve.html 预览弹窗 close 时 remove + WebGL loseContext（原泄漏 dialog+WebGL 上下文，重度使用必现「浏览器不支持 WebGL」）；enter() interval 防叠加；四页 + fleet-dock 统一 startPolling 守卫（visibilitychange 隐藏暂停恢复即拉）；train.html taxonomy 加载失败可见化（红条，原静默瘫痪录入台）；status.html sdcard 删除失败不更新缓存；STEP 专属提示死代码修复；openCorrection 死代码对删除。
+- 正确性小修：paramModel Jaccard 空并集记 0（∅ vs ∅ = 工况一致）；存档 λ 全量重选（原用末折最优随折序漂移）；orientationExtract 9 值 3x3 矩阵按 3x3 索引（原按 4x4 错位）；taxonomy 布尔否定词先判（「没有外观要求」含「有」误判 true）；autoSlice 无快照回退路径补 feat 派生（feat.* 学习规则在老单上静默失效）+ 缓存签名加切片桥 mtime + orient 版本 v2→v3；orientationFitter evaluateRows 排序提出专家循环；reservationStore/authStore/trainingStore 损坏隔离收紧为仅 SyntaxError（防杀软瞬间把好文件改名缩水）；dispatcher start() 防重入改 started 布尔（审批直连模式下原闸失效）；manualDispatch 检查回执闸（人工直发不再静默绕过防撞板闸）。
+- 记档不修（评估结论在案）：capabilities 未知机型默认 bambu（改白名单影响面大——**机型名必须照登记清单写**）；announce 死信另 3 处（换料滞留/改派建议/缺料提醒——群播关闭下的通知路由设计另行统筹）；mlpLofoEvaluate 白跑成本（14s 训练可接受）；getActive mtime 缓存（毫秒级读不算瓶颈）；/api/reservations 列表 spatial/modelFeatures 载荷优化（前端列表页有消费点，需逐页核对另行做）。
+
+**验证**：全量 35 套测试全绿（含新增镜像候选/impute 时序/竞技场三族回归面）；四页内联脚本语法全过；auth/local-reservation/training-store 专项复跑通过。文档同步：README（ONBOARDING 链接/测试总表/参数智能层章节）、TRAINING-ARCHITECTURE（5.5 参数智能层落地实况 + backlog 标注兑现项）、新建 ONBOARDING.md（新队员手册：三十分钟上手/架构导览/SOP/坑清单）。
+
+### v63 · 2026-10-30 · 随本提交落地 · docs
+
+**平台使用手册（曼波纠偏：v62 的新队员手册写成了开发手册，要的是面向队员的用户手册——开发手册保留，两份并存）**
+
+- 新建 `USER-GUIDE.md`：队员视角的完整操作说明——账号与飞书通知绑定、两种提交路径（切片直通 vs 源文件+工况勾选，含逐项表单说明与「不勾=常规件」口径）、任务状态流转与取件回执循环（/print-pickup 私信口径）、群指令速查（含 /print-bind、/print-pickup 两条自助指令）、审批人章节（审批卡逐项解读/预览弹窗/回读校验/指定机槽位/样本入库勾选/放弃池恢复/参数智能层影子建议怎么读）、样本录入（拟合度条语义/3D 标注工房）、观察台导览、FAQ（排队不动排查顺序/硬冲突/静默期口径/失败与人工取消误判反馈/反件与孔径问题反馈路径/STEP 面片上限/无匹配材料）。
+- `ONBOARDING.md` 改标题为「新队员上手手册（开发手册）」并在头部与 USER-GUIDE 互链；README 头部导航改为「用平台看 USER-GUIDE / 改代码看 ONBOARDING」。
+- 纯文档批，无代码改动，测试口径不变。
+
+### v64 · 2026-10-31 · 随本提交落地 · feat
+
+**「工程图纸」可视化艺术批 + 工程 3mf 闸门（曼波令「细化交互与艺术设计，含创新模块与可视化」+ H2多色.3mf 拒打实案修复）**
+
+- **viz.js（新，~380 行纯 SVG/CSS 零依赖）**：工程图纸风可视化组件库——墨线制图语言（1px 细实线/蓝图网格底纹/衬线数字/主题令牌配色双主题自适应）。组件：sparkline 温度墨线（实测实线+目标虚线）/gauge 弧形仪表/donut 余量环/barDiff 参数指纹对称条/scatter 特征星图（对数体积轴）/heatmap 热力日历/timeline 队列时间带/printerBay 线框模拟舱/maeBars 竞技场条形/countUp 数字滚动/confetti 克制纸屑。styles.css 增补 viz-* 组件区。
+- **观察台**：机队卡新增「生命体征行」（线框模拟舱——喷头随打印进度沿 Z 轴下移/热床温度染色/剖面线打印件 + 层进度弧形仪表 + 温度墨线）+ AMS 料盘余量环；后端配套 `manager.js` 温度环形采样（≥5s 限流/360 点 ≈30 分钟）+ `GET /api/printers/history`。
+- **预约中心**：新增「工作室概览」卡（近 12 周提单热力日历，纯前端聚合 createdAt）；queueBar 升级为**队列 ETA 时间带**（在打段=实时剩余/排队段=预估、无预估按 45m 粗估斜纹标示、加急警示条、总排空分钟+预计清空时刻）。
+- **审批台**：详情弹层新增「🖋 参数指纹」（本单参数 vs 出厂基线的归一化对称差异条——一眼看出这单哪里特殊）；审批通过与取件回执成功时克制纸屑。
+- **训练台**：样本库新增「Feature Sky 样本特征星图」（体积×悬垂率散点，颜色=outcome/点径=录入置信度——空白区域即该补样本的方向）；参数智能层模型卡新增「Arena 三族竞技场」条形（择优 MAE vs 中位数基线）。
+- **工程 3mf 闸门（H2多色.3mf 拒打实案修复）**：Bambu Studio 02.04 保存的**工程 3mf**（无 plate gcode 条目，slice_info.config 只剩 205 字节 header）此前被当切片直通单收下，下发帧 param 硬编码指向不存在的 Metadata/plate_1.gcode → 机端找不到任务数据秒 FAILED（print_error 84033582）。修复：①slicerExtract 透出 `sliced` 标志（plate gcode 存在性）+ 提交链当场打回并引导「切片后导出或改传 STEP/STL」；②parseFilaments 新格式兜底（slice_info 无清单时从 project_settings 的 filament_colour×filament_type 平行数组配对——多色件审批「逐耗材栏位」对新版产物恢复渲染）；③测试 +3 断言（工程件/切片件/兜底配对）。
+- **验收**：35 套测试全绿；隔离实例浏览器冒烟（合成 12 周预约数据 + 37 样本，热力日历/星图渲染确认；温度墨线与模拟舱借真机只读状态数据验证）。
+- **插曲（诚实记录）**：验收用隔离实例曾继承 .env 的 PRINTER_HOSTS 连上 6 台真打印机 MQTT（与生产双连风险）——已当场杀进程止损，教训入档：**本机冒烟必须 `PRINTER_HOSTS=` 置空**。
+
+### v65 · 2026-10-31 · 随本提交落地 · fix
+
+**跨机型切片件放行（曼波实案：MakerWorld「Poop-Bucket-Plain-H-Series」内嵌 P2S 被机队无机型硬拦）**
+
+- **实案链**：MakerWorld「下载」按钮给的是**未切片工程 3mf**（无 plate gcode，v64 闸门会打回引导切片——行为正确）；页面标的「H2S/H2D/H2C」是适用机型范围，文件内嵌机型是 MakerWorld 导出默认（P2S）——队里没有 P2S，程序初审「机队无同型号机」硬拦。但 P2S 切的件 H2D 照打（同 BBL 平台/同喷嘴）——口径过死。
+- **修复**：precheckSlicedSubmission 无同型号分支改为**同品牌族放行+警告**——品牌判定走 printerModelKey 新增 `modelBrand()`（BRAND_OF_KEY 查表：登记串「H2D/A1 mini」不带品牌前缀，正则咬不住；CANON 补 p2s）；跨品牌仍硬拦（闪铸/拓竹格式铁律不变）；前端 public/printer-model-key.js 同步（两份同源铁律）。
+- **测试**：precheck +4 断言（P2S 对拓竹队放行+警告/X1C 件对 bambu 队放行/跨品牌 P2S 对闪铸队硬拦/报错文案改「同品牌」），既有「无机型」用例按新口径迁移。
+- **审批把关口径**：放行单带警告「切片机型不在机队——按同品牌兼容处理，喷嘴口径/腔体尺寸差异请人工把关」；分发匹配本就按品牌+材料不锁机型，无需改动。
+
+### v66 · 2026-10-31 · 随本提交落地 · feat
+
+**工程 3mf 自解析自动切片链（曼波令「加上纯 3mf 自解析的能力」——MakerWorld 下载件直达打印）**
+
+- **实案驱动**：MakerWorld「下载」给的是未切片工程 3mf（v64 闸门打回），内嵌机型与页面标注无关（Poop-Bucket 标 H2 系、文件内嵌 P2S）——曼波拍板：平台自解析工程件，下载即送审。
+- **engine3mf.js（新）**：工程 3mf 网格拼装解析器——3dmodel.model 的 components 跨文件引用（p:path → 3D/Objects/*.model）递归解析、3MF 规范 12 值行主序 4x3 transform 级联相乘（子先父后）、无 build 段时顶层 object 全部合并单网格（MakerWorld「一模型多 part」常态）；空网格容器跳过、引用落空/嵌套超 16 层/60 万三角上限诚实报错。真实文件验收：Poop-Bucket 2 实体/82852 三角/包围盒 78×55×210mm。
+- **提交链改道**：3mf 提交先分「切片产物/工程件」（hasSlicedGcode）——工程件自解析网格 → analyzeMesh 体检快照（modelFeatures.engineering 标记）→ extractFrom3mf 白名单参数作 **applyRules baseline**（新增 opts.baseline：白名单内数值/布尔/枚举作起点，materialExclude/Prefer 安全键不采纳——文件不可信，材料约束只由用户工况反推；工况规则照常叠加）→ processParams 入档 → 分发时 autoSlice prepareModelPath 新增 3mf 分支（解网格→摆向→Orca CLI）。embeddedParams 以 source:'engineering' 透出机型/耗材（程序初审跨机型警告照跑）。
+- **口径**：工程件单 = 需求链路单变体（审批人可调参数、份数/加急/指定机照常）；复杂装配解析失败仍打回并引导切片；isSliced→isSlicedFinal 全链统一（embeddedParams 提取段仅切片产物）。
+- **测试**：engine3mf-test 新增 5 断言（跨文件拼装/无 build/嵌套变换级联/空容器/引用落空）+ process-rules baseline 断言 + precheck 4 断言（v65 跨机型）；全量 36 套全绿。
+
+### v67 · 2026-11-01 · 随本提交落地 · ui
+
+**可视化「使用强度节奏」返工（曼波反馈「热力图太大——UI 设计应遵循使用强度节奏」）**
+
+- **设计原则定案（曼波定，沉淀进 styles.css 组件区头注 + ONBOARDING 第 7 章）**：元素的视觉体积/位置与其使用频率和信息价值匹配——高频操作占首屏黄金位；中频参考紧凑常驻；低频回顾默认折叠成一行数字摘要，点开才渲染。新增图表先问「谁看、多久看一次、值几屏」。
+- **预约中心**：工作室概览卡整体并入预约记录卡（独立卡删除）；热力图从 84 格铺首屏改为**默认折叠一行摘要**（近 12 周总量/本周/单日峰值三数字 + countUp 滚动），「▸ 活跃热力图」点开才懒渲染（cell 13→10 紧凑格）；未展开不渲染零开销。
+- **观察台**：生命体征行紧凑化（sparkline 84→64 高、模拟舱/gauge 单元收窄、行距收拢）——6 卡堆叠的纵向节奏回归。
+- **全局**：队列 ETA 时间带 44→34px（高频参考保持视线内、压缩视觉体积）。
+- 纯前端批；四页语法检查过；测试口径不变。
+
+### v68 · 2026-11-01 · 随本提交落地 · ui
+
+**按钮交互底层系统化 + 预约中心「行动优先」分区（曼波令「从按钮交互底层入手，展示形式与功能分区多样，符合第一性原理」）**
+
+- **按钮底座系统（styles.css 全局层）**：状态完备——hover 呼吸/active 按压下沉（主按钮「盖章」下沉 2px+阴影消隐）/:focus-visible 焦点环（键盘可达）/disabled 灰化/.btn-loading 自旋锁定；层级补全——.ok（成功绿底座，原 status.html 页内散样式收敛共享）/.bad·.danger/.ghost；**异步按钮自动 loading**（viz.js 全局 click 捕获：任何 button 点击即转圈锁 2.5s，双击防重+状态反馈二合一，data-no-loading 可豁免）。
+- **预约中心「行动优先」分区（第一性原理：按「用户此刻要做什么」分组，非统一时间流）**：①🔔 需要你行动（待取件回执/放弃池待恢复）——accent 描边醒目置顶；②进行中（待审批/排队/打印）——常规表格；③历史归档（已完成已回执/已取消/已驳回）——默认收起最近 3 条，一键展开。「只看待审批」过滤下分区自动退化。
+- 纯前端批；四页语法检查过；测试口径不变。设计准则（使用强度节奏）见 ONBOARDING 第 7 章。
+
+### v69 · 2026-11-01 · 随本提交落地 · feat
+
+**geometryDNA 实例级几何解析 + 多标签源/预约数据入训（曼波令「自解析每个面/每个拐角/每个孔，提高已录入模型利用率；参数应由几何+工况+需求决定，而非模仿专家差多少」——参数智能层的范式修正）**
+
+- **范式修正**：旧系统在「模仿专家」（学专家参数差多少），专家参数降级为弱先验之一；参数的因果来源=几何结构×物理工况×需求，真正的验证信号=打印结果（outcome 已进样本权重）。
+- **geometryDNA.js（新）**：实例级几何结构解析——①孔实例增强（旧 circles 只到孔径；现含**深度/贯通性**（Möller–Trumbore ray cast））；②**悬垂连通域**实例（朝下面 BFS 连通域，贴床底面排除，每域面积/最险倾角——「分散小悬垂」与「大板悬垂」不再同貌）；③**凹角/圆角边**（二面角扫描，凹凸由质心投影区分——旧口径 dot<-0.25 会漏掉 90° 凹角如 L 形内角，修正后 lbeam 检出 3 条 270° 凹边）；④**薄壁采样**（双向 ray 最近壁距分布 min/p10/med——thinwall 夹具实测 0.8mm 精准）。输出结构化实例（审计/未来图网络）+ **15 维定长 DNA 向量**（ML 直读）。
+- **特征升级**：analyzeMesh 集成 DNA（失败降级不阻塞）；featureVector 以 dna_0..14 入 numericKeys（旧样本/预约快照无 DNA 按中位数 impute 安全降级）。
+- **利用率（tier 分层）**：tier1=样本库（作者/专家切片标签，权重 outcome×confidence）不变；**tier2=全部需求链预约单**（标签=审批认可参数 processParams，权重 0.5×状态系数，family 按几何量化签名保 LOFO 防泄漏）——训练面从数十条扩到全部需求链单据；fit API 自动拉预约单。stats 透出 tier1/tier2 计数。
+- **诚实边界**：①「每层策略」——逐层自适应参数（变层高）是切片器内核能力，Orca CLI 不支持注入，全局参数+自动朝向为当前表达（记 backlog 待切片器侧演进）；②「每个面」——DNA 覆盖孔/悬垂/凹角/薄壁四类关键实例，全面语义分割属远期（记 backlog）。
+- **测试**：param-model 15 断言过（混合源端到端：tier1 16+tier2 8、12 族 LOFO、孔补偿岭回归 MAE 0.0145<基线 0.041）；geometryDNA 夹具验收（lbeam 凹角/thinwall 0.8mm 壁厚精准）；全量 36 套全绿。
+
+### v70 · 2026-11-01 · 随本提交落地 · ui
+
+**左侧状态坞（两翼布局）+ 交互体验细节批（曼波令「两边侧边栏也可以利用上，继续优化交互体验和功能设计」）**
+
+- **status-dock.js（新）**：左侧「PULSE」状态坞，与右机队坞对称成两翼——①机队摘要（在打/空闲/故障计数，**复用 fleet-dock 轮询的 qli-fleet 事件广播，零额外请求**）；②我的待办（待我取件/待审批计数，30s 拉一轮，点击直达对应页）；③学习回路徽标（reviewer+：参数模型 ON/shadow/candidate + 版本速读，点击进训练台治理）；可折叠、页面隐藏暂停轮询（v62 守卫纪律）、<1200px 窄屏自动隐藏。
+- **表格 sticky 表头**：四页长列表滚动时列名常驻（低成本显著体验提升）。
+- fleet-dock 配套：轮询数据广播（window.__qliLastFleet + qli-fleet 事件），数据单源多消费。
+- **H2D 清洗结论**：远程清屏指令全受理但 gcodeState 仍卡 FAILED（print_error 已清零）——机端挂死需物理处理（屏幕点掉任务弹窗或断电重启），远程手段已穷尽。
+- 纯前端批；五文件语法检查过；测试口径不变。
+
+### v71 · 2026-11-01 · 随本提交落地 · ui
+
+**导航去重 + 观察台单据快捷操作（曼波反馈「顶部 UI 重复」「回执/复刻/取消每次要回主界面往下翻」）**
+
+- **导航去重**：index userbox 里的「🎓 训练录入台/📋 审批台」链接删除（v59 统一 site-nav 后重复遗留）——身份区只留 飞书通知/改密码/退出，页内跳转由 site-nav 统一承载。
+- **观察台「📋 单据快捷操作」面板**：机队网格上方新增——待取件（确认取件，带 confetti）/进行中单的复刻/取消直接在观察台处理（曼波令「每次点回执复刻取消都要主界面往下划好多」）；数据 /api/reservations（并入 5s 轮询），待取件置顶排序；操作按钮仅对「我的单或 reviewer」显示（后端权限为准，前端只是收口）；取消/复刻带确认；回执成功 confetti。
+- 纯前端批；语法检查过；测试口径不变。
+
+### v72 · 2026-11-01 · 随本提交落地 · ui
+
+**浮动提交按钮（曼波令「不论在本界面的哪里都能直接点击提交」）**
+
+- 提交表单整体滚出视口后，右下角浮现「＋ 提交预约」盖章式 FAB（accent 实底/硬边框/hover 微抬/按压下沉——延续 v68 按钮艺术语言）；表单回视口自动隐藏。
+- 点击 = 平滑滚回提交表单 + 表单卡 accent 描边脉冲 1.3s 视觉引导（用户不会「回去了但不知道看哪」）。
+- 纯前端批（index 页内实现）；语法检查过；测试口径不变。
+
+### v73 · 2026-11-01 · 随本提交落地 · ui
+
+**左侧坞重构：从「机队计数」到「事情流」（曼波反馈「左右悬浮窗功能一样都是看打印机数量——来点有意义的设计」）**
+
+- **两翼分工定案（第一性原理）**：右坞管**空间**（哪台机在干嘛，fleet-dock 不动）；左坞管**事情**（要我处理什么 + 刚发生了什么）——机队计数从左坞移除。
+- **status-dock v2**：①「待我处理」**单据级行动流**——待取件（📦 一键取件，坞内直接打 receipt 接口）/待审批（⚡ 去审批）/放弃池（⚠️ 恢复引导），空闲时显示「全部安好」；②「最新动态」**事件流**——全部单据轨迹聚合（完成/开打/提单/取消…icon 语义化 + 相对时间「3m/2h/1d」），最近 6 条常驻左翼。
+- 数据：/api/reservations 30s + 放弃池（reviewer）；单据 history 聚合事件流（零后端改动，plaza 停写不留痕——history 是唯一完整轨迹源）。
+- 左坞样式补全（ld-sec/ld-todo/ld-act/ld-evt 系）；36 套测试全绿。
+
+### v74 · 2026-11-01 · 随本提交落地 · ui
+
+**双 UI 收尾清洗 + FAB 悬浮阈值修正（曼波反馈「还有双 ui」「提交预约没有正常悬浮」）**
+
+- **导航去重收尾**：approve.html userbox「预约中心」链接（截图实锤的双 UI 来源——v59 统一导航后三页残留未清）、status/train brandmark「← 预约中心」全部删除——四页页内跳转只剩 site-nav 一处。
+- **FAB 悬浮修正**：触发阈值从「表单整体滚出视口（bottom<0）」放宽为「表单大半离开视口（bottom<120 或 top<-60% 高度）」——原阈值下表单只露出一点点时 FAB 永不出现，正是曼波「没有正常悬浮」的体感根因；代码级四场景验证（大半滚出/点击平滑+脉冲/回视口隐藏/半露即显示）。
+- 纯前端批；FAB 逻辑 stub DOM 四场景全过；测试口径不变。
+
+### v75 · 2026-11-01 · 随本提交落地 · ui
+
+**FAB 升级为功能提交键（曼波令「我要的是功能键不是引导——不满足条件时自动滚动到缺失部分，满足时直接就交」）**
+
+- **行为重构**：FAB 点击不再只是「带回表单」——①缺文件 → 平滑滚到文件选择框 + accent 勾边脉冲高亮 + toast 提示；②缺「使用场景」→ 滚到工况标签区场景组并高亮；③**全绿 → 直接调用 submitReservation() 正式提交**（与表单内按钮完全同一条校验链：preflight 冲突 gate、切片直通配对提醒、doSubmit 全部照常生效）。
+- **实现**：jumpToSubmit 重写为三段 gate（文件 → 场景 → 正式提交），focusControl(滚+脉冲+聚焦)；.fab-missing 高亮样式入 styles.css。stub DOM 三场景验证（缺文件/缺场景/全绿提交）全过。
+- 纯前端批；测试口径不变。
+
+### v76 · 2026-11-01 · 随本提交落地 · feat
+
+**训练录入多模型批量上传 + 几何指纹自动配对（曼波问「一个切片有多个模型怎么上传，哪个模型是切片里的哪个」）**
+
+- **multiModelMatch.js（新）**：二分图最优配对——切片逐 object 与上传模型逐件提特征签名（包围盒体积/三角数/孔数/悬垂%），距离 = 归一化对数差加权和（体积/面数跨量级取 log）；n≤8 全排列取最优、>8 贪心+交换改进；**歧义检测**：某切片 object 配次优模型代价几乎一样（差<0.05）时标 lowConfidence——「三个全同貌件」如实告诉用户配对不可信而非硬给答案。
+- **录入端点重构**：model 字段 maxCount 12；逐模型特征分析 → 配对 → 逐模型建样本（每条带同一份切片参数——一盘参数是共同决策）；切片 3mf 的 per-object 摆向变换按配对归属（model_settings matrix ↔ objects 序号对齐）；单模型路径行为与旧版完全一致。响应：单模型=原 sample；多模型=配对摘要（每条样本的盘内件序号/置信）。
+- **前端**：modelFile 加 multiple（≤12），提交按钮文案显示配对中，入库 toast 带逐件配对摘要（`#T-xxx ← thinwall.stl（盘内件 #1）`）。
+- **测试**：multi-model-match-test 新增 5 断言（明晰配对/歧义检测/部分切片 unpaired/贪心 10 对/1:1）；隔离实例端到端（两 STL+合成两件盘 3mf → 2 条样本入库带归属）；全量 36 套全绿。
+
+### v77 · 2026-11-01 · 随本提交落地 · fix
+
+**审批台 3mf 预览可观测性 + 页面加载并行化（曼波反馈「审批台 3mf 预览失效」「有些界面打开要加载半天」）**
+
+- **排查结论（现网实测）**：后端三预览端点全部 200 正常（fit 2KB/26ms、slice-layers 有缓存、mesh 1.5s）——「失效」真身是①mesh WebGL 渲染抛错（上下文耗尽/驱动问题）只写一行小字，弹层主体照常显示，看起来像预览坏了；②slice-layers 大切片**首次解析十几秒**且弹层只有一行「加载中…」，用户等不到就关；③各页 init 串行 await 链（loadMe→taxonomy→colors→list）每环网络抖动叠加。
+- **修复**：①openPreview 立即渲染骨架屏（「大切片首次解析约需十几秒，二次秒开」预期管理）；②请求级超时（常规 12s/切片分层 60s）——单端点卡死不再拖死弹层，失败按不可用降级；③**WebGL 失败自动回退刀轨分层视图**（上下文耗尽后的可用降级）；④index init 串行链改 Promise.all 并行。
+- 纯前端批；语法检查过；36 套全绿。
+
+### v78 · 2026-11-01 · 随本提交落地 · fix
+
+**多模型选文件的「自动上传」体感修复（曼波反馈「点了一个模型给我自动上传了」——v76 的 multiple 只加了属性，选文件处理链还是单文件逻辑）**
+
+- **根因**：modelFile change → analyzeModel 只认 files[0]（其余静默丢弃）且立即调 /api/training/mesh + loadAnnotator（两次网络上传）——多选时体感为「点一个就自动传了，选的其他文件没了」。
+- **修复**：analyzeModel 重写——多选（≤12）时面板列文件清单（名称/大小，全部会随提交上传），只对首件做特征预览与 3D 标注挂载（批量件共用首件标注帧与工况勾选）；loadAnnotator 取 files[0] 并注释口径；单选路径行为不变。
+- 纯前端批；语法检查过；learning-loop/multi-model-match 测试复跑全绿。
+
+### v79 · 2026-11-01 · 随本提交落地 · feat
+
+**特征星图重构为 PCA 主成分投影 + 几何 DNA v2 扩维（曼波令「特征是极其复杂的多元关系，简单图表拟合不了——从几何特征多维识别方向深化」）**
+
+- **可视化诚实化**：旧星图拍脑袋选「体积×悬垂」两轴，15+ 维特征关系被投影丢弃。重构为 **PCA 主成分投影**（viz.js 新增 pcaScatter：15 维 DNA + 4 维基础几何标准化 → 协方差矩阵幂迭代取前两主成分，轴标注方差解释率——「数据自己选轴」，投影保真度可读）；**点击样本弹雷达指纹**（radar 组件：22 维归一化结构特征逐样本可读，外圈=全体最大）。
+- **geometryDNA v2 扩维（15→22）**：①**截面剖面**——沿 Z 采样 16 层统计截面三角分布，层间面积对数差 maxJump（阶梯谱=强悬垂边界/平台边缘的结构信号）；②**悬垂环岛**——悬垂连通域 Euler 特征（V−E+F）洞数计数（孔口法兰/悬空平台的支撑剥离难度）；③**最小孔周壁**——孔口四向 ray 探最近壁（小孔周围壁太薄会破，钻孔/自攻判据）；④首末层面积/采样层数/件高。夹具验证 1ms 内完成。
+- **诚实边界**：PCA 是线性投影，非线性流形关系（UMAP/t-SNE）与逐面分割仍在 backlog——本批保证「展示的维度不撒谎 + 学习侧的输入维度翻倍」。
+- 测试：param-model 15 断言过（22 维向量无缝入模——featureVector DNA_KEYS 动态生成）；PCA/雷达 stub 验证（方差解释/少样本守卫/缺维度填补）；全量 36 套全绿。
+
+### v80 · 2026-11-01 · 随本提交落地 · feat
+
+**审批台切片配对弹窗多选适配（曼波反馈「复数模型提交还是不行」——v78 只修了训练台，预约单的配对弹窗漏了）**
+
+- **实案定位**：曼波截图是切片直通单的「📚 有这个件的 STEP/STL 源文件吗」弹窗——srcInput 无 multiple，全链（接收 maxCount=1 / 存储 sourceFile 对象 / 入库单样本）都是 1:1 假设。
+- **多源全链适配**：①弹窗 input multiple + 「一盘多件可多选」文案 + 提示条逐件列出；②doSubmit 数组逐个 append；③后端 maxCount 12 + 全部校验归档（单件保持对象形态向后兼容）；④**入库侧**：数组形态 → 逐源文件分析真网格 → multiModelMatch 与切片 object 配对 → 逐源建样本（共享切片参数/工况，盘内件归属+低置信降权入 confidence），全部失败回退单路径。
+- 测试：local-reservation 28 项/precheck 11 项/multi-model-match 5 项全绿；全量 36 套全绿。
+
+### v81 · 2026-11-01 · 随本提交落地 · fix
+
+**热力图满屏拉伸 + 时间带窄段溢出修复（曼波截图实锤：热力图展开后格子铺满整屏、时间带段内文字互相叠盖）**
+
+- **热力图**：`.viz-svg` 全局 `width:100%` 把 heatmap SVG 拉伸到容器宽（格子被放大 6 倍铺满屏）——heatmap/radar 两类锁定原生尺寸（width:auto + max-width:100% + 居中），其余图表保持响应式。
+- **时间带**：短段（时长占比 <9%）不再渲染长名（名字挤爆布局盖住分钟数）——hover title 仍完整可读；段内布局收紧（名字固定高省略、分钟固定底部）。
+- 纯样式/组件批；36 套口径不变。
+
+### v82 · 2026-11-01 · 随本提交落地 · fix
+
+**热力图小模块化（曼波再反馈「还是太大」）+ 时间带单段溢出根治**
+
+- **热力图**：格子 13→9px（12 周×7 天原生尺寸 130×75px——真正的小模块），调用处不再覆盖；修复 v81 漏改的调用处参数。
+- **时间带单段**：只剩一个段时 flex 独占整行、18 字符长名仍溢出盖住分钟——名字统一截 14 字符（▶ 前缀并入截断，修复双箭头）、CSS max-width 180px + 容器 overflow hidden、高度 34→30px。
+- 纯样式/组件批；stub 验证（heatmap 130×75/单段名截断/无双箭头）。
+
+### v83 · 2026-11-03 · 随本提交落地 · fix
+
+**全量审查修复批（曼波令「全量审查+debug 修复一块提交」）——三域并行子代理审查×双源交叉验证：32 项发现 31 项证实（F5 viz 加载竞态被推翻、M5 两验各对一半实为 featureDeriveSafe 字段错配），修复 P0×1/P1×11/P2×18，37 套测试全绿（新增 geometry-dna-test + 7 条回归断言）**
+
+- **[P0] train.html 雷达指纹越界引用**：showSampleRadar 引用 renderSampleScatter 局部变量 `rows`——v79 起点击 PCA 样本点 100% ReferenceError（stub 里 rows 恰在作用域内掩盖了它）→ `__pcaRows` 模块级缓存，点击索引与全体 min-max 归一同源。
+- **[P1] 带孔件 DNA 必炸（v68 起从未生效）**：geometryDNA 孔实例 map 只回 {axis,r,depth,through} 丢掉圆心 c/法向 n，⑧ 最小孔周壁段访问 h.c[0] 必 TypeError，被 modelFeatures catch 后整个 22 维 DNA 降级为无 → 实例保留 c/n；新建 geometry-dna-test（带孔/无孔双夹具）。
+- **[P1] 多模型配对排列爆栈**：护栏按切片数判（≤8 即 bruteForce），但全排列叶子数按模型数算——8 切片×12 模型=12!/4! 级枚举阻塞事件循环分钟级 → 叶子数预算 BRUTE_BUDGET=2e6 + DFS 逐位选模型带非负距离剪枝；贪心补 bySlice.has 防线（此前已配切片会被更远候选顶替且旧模型永久泄漏）+ 交换改进多轮至收敛；补非精确配对/预算护栏/距离归一三条回归断言。
+- **[P1] 切片侧签名 3/4 死零**：parse3mfObjectXml 产物无 bbox/孔/悬垂，配对距离体积恒 1e-3 失去区分度、孔/悬垂恒 0 反而惩罚有孔模型 → 解析器补 bbox（mm 逐轴 min/max）+ 距离函数按「两侧都已知」的维归一化（切片侧标记 holesKnown/overhangKnown=false）。
+- **[P1] 3mf 合法实例化被丢件**：engine3mf resolve 的 visited 裸 key（pathKey#objectId）把同一 object 的多 build item 引用（一盘 N 个相同件）第 2..N 份静默跳过 → key 加 transform（同 object 同变换=纯重复才跳过，环由 depth>16 兜底）；补实例化回归断言；Objects/*.model 条目补与主 spec 同款 32MB 解压护栏。
+- **[P1] 多源单审批入库回填断链（v80 接缝）**：createSampleFromReservation 多源分支返回数组，调用方 `sample.id`=undefined 落盘、dispatcher 以 rec.sample.sampleId 为闸 → 多源单的 outcome/摆向/切片统计三路回填全哑 → 调用方记 sampleId（首条）+sampleIds 数组，dispatcher 成功/失败双闸按数组放行，trainingStore 三个 set*BySource 从 find 首条改 filter 全量命中（单源返回形状不变）；feature-labels-test 补多命中断言。
+- **[P1] 保留期清理不识别数组形态**：cleanupExpiredUploads 只判 sourceFile.storedPath（对象形态），多源单源文件（STEP/STL 数十 MB×N）永不清 → 数组逐个 unlink。
+- **[P1] PCA 混维 NaN 全灭**：sampleDims 直接 concat dna.vector（15/22/26 维代际混存），短行进协方差 undefined×…=NaN 污染全图 → 统一 26 维等宽补 NaN 交 pcaScatter 按列均值填补；pcaScatter 维度宽度改取全体最大 + Z 矩阵按 d 补齐；合法 0 值不再 `|| NaN` 当缺失（低悬垂件投影系统性偏移修复）；页面口径勘误（8 维→26 维指纹）。
+- **[P1] 热力图 UTC+8 错位一天**：计数键截 createdAt 的 UTC 日期、格子键用本地零点的 toISOString（=本地日期-1）——整条日历右移一天、当天提单落「future」透明格 → 双端统一本地日历日，「本周」口径随之一致。
+- **[P1] 放弃坞打不存在端点**：status-dock fetch `/api/dispatch/given-up`（端点不存在，每 30s 一个 404）→ 改拉 /api/dispatch/queue 的 givenUp 载荷；未登录访客空态改「登录后查看待办」（与「没有待办」区分）；qkReceipt 非 JSON 错误不再静默。
+- **[P1] tier2 特征字段错配**：featureDeriveSafe 按 sample.model.features 取特征对象，预约记录的字段是 modelFeatures → tier2 派生特征（悬垂/接触/曲面/孔）恒空全体按中位数填补 → 两形态兼容。
+- **P2 群**：列表 DTO 对数组 sourceFile 逐元素剥 storedPath（v62 收口对多源单失效的泄露面回补）；预约提交 10 处失败路径 removeUploads 改 `...srcFiles` 全量清临时文件；多模型 buffer/sliceBuf 建样后即释（12×80MB 峰值内存）；工程 3mf 内嵌参数作 baseline 加数值安全域钳制+布尔字符串归一（ironing/brim 此前 typeof 门恒不等、从未可采纳）；paramModelStore 仅 SyntaxError 才隔离（对齐 v62 口径，防瞬时 fs 错误抹掉 active 槽）+mtime 读缓存（每次提交全量 JSON.parse 热点）；tier2 剔除已驳回/已取消单（被否决参数不得当弱正样本）+行数封顶 800；>50MB 3mf 硬拦（超出探测上限不得按切片直通）+工程件探测 catch 旁路收紧（已判非切片后解析异常硬拦而非「按切片产物继续」）；OBJ 源文件提交口打回（三分支解析器皆不收、此前永远静默配不上对）；approve 预览 jgetT 超时真 abort 底层请求+单据拉取失败可见提示；viz 全局按钮锁豁免同步切换钮（主题/折叠/热力图开关 2.5s 内二击不再被吞）；多模型批量文件清单不再被首件预览整面板顶掉（mfPreview 子容器）；训练台 toast 支持多行。
+- **已知取舍（记录在案）**：param-model/fit 同步训练阻塞事件循环 ~14s（reviewer/admin 门内，v61 已声明；现网样本量上来后避开打印高峰训练）；ridge 分支置信度 0.6 为族级先验、无逐单置信度（门控对 ridge 形同虚设，暂以文档披露）；tier2 增长靠 800 行封顶+读缓存缓解，rows 采样与 MLP 早停留 backlog。
+
+### v83 · 2026-11-01 · 随本提交落地 · feat
+
+**AMS 手动同步（曼波反馈「ams 数据同步能力比较差」）+ 两台拓竹机 FAILED 残留清理记录**
+
+- **能力**：拓竹机换料后料盘数据要等自然轮询才更新——给 client 加 `refreshPushAll()`（复用 bambu-link 的 pushall 指令触发机器全量重推，sequence 与其 initialMessage 同空间）；manager 聚合 `refreshAllAms()`（逐在线拓竹机发，闪铸 HTTP 轮询本就准实时跳过）；API `POST /api/printers/ams-sync`（登录即可）。
+- **UI**：观察台提示行与审批台待批计数旁各加「🔄 AMS 同步」按钮——点击触发全机队重推，1~2 秒后自动刷新本页（料盘/温度/任务全量回流），转圈态防重。
+- **运维记录**：H2D/X1C 机端 FAILED 残留远程清不动（clean_print_error/stop 全受理但不回落，本批固件行为），曼波物理处理后两台已恢复空闲/完成态；问题切片「下横梁 (2).3mf」相关两单已按令取消。
+- 纯增量批；printer-control/dispatcher 回归全绿。
+
+### v83 续 · AMS 同步 + 预约列表 DTO 裁剪 + 骨架屏（曼波反馈「审批台打开要等好久」）
+
+- **实测定位**：/api/reservations 列表 218KB——每单拖完整 spatial（3D 标注坐标数组，列表页零消费）与 modelFeatures（体检快照，审批走 /fit）；内网 31ms 但远程访问即「半天」，且每 15s 重拉。
+- **DTO 续刀**：列表裁掉 modelFeatures（undefined）与 spatial 坐标大字段（保留 tool/loadType 等标签摘要键供徽标）；详情 /:id 全量不变。
+- **审批台渐进渲染**：待批先渲、近期单让出两帧再渲；首屏骨架屏（approve 3 卡/index 3 卡）。
+- 纯后端 DTO+前端批；local-reservation 28/auth 17/precheck 11 项全绿。
+
+### v83c · 2026-11-01 · 随本提交落地 · perf
+
+**预约列表 DTO 续刀（实测 224KB→87KB，-61%）**
+
+- 字段占比分析（100 单模拟）：history 27KB / spatial 22KB / embeddedParams 12KB 为前三。
+- 续刀：history 截最近 2 条（前端本来 slice(-2) 折叠显示）+ historyTruncated 计数；spatial 整个剔除（列表页零消费实锤——spatialLabel 只吃本地标注器回调）；embeddedParams.params 截前 6 键（列表只显示前 5 项）+ processParams 截前 12 键（前端显示前 10）。
+- 详情端点 /:id 全量不变；「展开全部 N 条轨迹」时前端按需回详情拉（暂用本地已截数据+提示，全量轨迹看详情弹层）。
+- 纯后端 DTO 批；local-reservation 28 项全绿。
+
+### v83d · 2026-11-01 · 随本提交落地 · ui
+
+**审批台键盘快捷流（曼波令「继续迭代新便利交互功能设计」）**
+
+- **J/K** = 待审批单上下选择（滚动跟随 + accent 高亮卡）；**E** = 直接打开选中单的审批框；Esc 关弹窗为 dialog 原生行为。输入框/下拉聚焦时自动豁免，修饰键组合不触发。
+- 配套 CSS：`.kbd-active` 选中卡 accent 描边 + 左移 4px 浮起（打印品「抽出待办」的隐喻）。
+- 审批人高频动作链从「滚找单 → 鼠标移到按钮 → 点击」缩到「J J E」三键。
+- 纯前端批；语法检查过；测试口径不变。

@@ -239,7 +239,9 @@ app.post('/api/auth/users/:id/delete', requireUser('admin'), (req, res) => {
 
 // ---------- 定制窗口（规则见顶层 AGENTS「机器人后端定制窗口」）：定制项全景只读 ----------
 
-app.get('/api/print/policy', (req, res) => {
+app.get('/api/print/policy', requireUser(), (req, res) => {
+  // 审查修复（v62）：挂登录——原匿名暴露打印机清单/队列/放弃池计数/审批配置，
+  // 与「打印机实时状态不放匿名面」口径不一致（运维台走 X-API-Token 不受影响）
   let queue = null;
   try { queue = dispatcher.getQueueSnapshot(); } catch (err) { queue = null; }
   let printing = null;
@@ -356,6 +358,11 @@ app.post('/api/print/slicer-extract', requireUser('reviewer', 'admin'), upload.s
       try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: '仅接受 .3mf（专家切片产物/工程导出）' });
     }
+    // 审查修复（v62）：补大小闸——adm-zip 整文件进内存 + 同步解析，同类端点全有闸唯它漏
+    if (req.file.size > 50 * 1024 * 1024) {
+      try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+      return res.status(400).json({ error: `文件 ${Math.round(req.file.size / 1048576)}MB 超过提取上限 50MB` });
+    }
     const result = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(req.file.path));
     try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
     res.json(result);
@@ -405,6 +412,21 @@ app.get('/api/training/fleet', requireUser(), (req, res) => {
   res.json({ machines: require('./services/printerFleet').load() });
 });
 
+// 温度历史（v64 生命体征面板数据源）：全机队一次拉走（内存环形缓冲 ≈30 分钟 @5s 采样）
+app.get('/api/printers/history', requireUser(), (req, res) => {
+  res.json(printerManager.getTempHistory());
+});
+
+// AMS 手动同步（v82 曼波令「ams 数据同步能力差」）：向全部在线拓竹机发 pushall 触发
+// 全量重推（料盘/温度/任务），换料后不用等自然轮询；闪铸 HTTP 轮询本就准实时无需此操作
+app.post('/api/printers/ams-sync', requireUser(), (req, res) => {
+  try {
+    res.json({ results: printerManager.refreshAllAms() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // 拟合度（2026-10-12 曼波纠正置信度语义）：引擎按人工工况算的参数 vs 专家切片参数，
 // 衡量规则库对此 case 的覆盖程度；差异项即「可被记忆的参数」（一键转规则候选）
 app.post('/api/training/fit', requireUser(), (req, res) => {
@@ -448,6 +470,90 @@ app.post('/api/training/rule-fit', requireUser('reviewer', 'admin'), (req, res) 
     res.json({ ...result, added, note: added ? `已产出 ${added} 条候选（待审池确认后生效）` : '暂无显著特征-参数关联（样本量或差异不足）' });
   } catch (err) {
     console.error('规则拟合失败:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// ---------- 参数智能层（v60 · 2026-10-30 曼波令「学习和几何特征处理链路」） ----------
+// 学习模型（案例推理 kNN + 加权岭回归）对数值工艺参数做多变量预测，LOFO 择优；
+// 规则库仍是显式工艺因果与安全硬约束。训练→candidate，admin adopt（shadow/active）才生效。
+app.post('/api/training/param-model/fit', requireUser('reviewer', 'admin'), (req, res) => {
+  try {
+    // v68 tier2：需求链预约单（审批认可参数 + 体检快照）低权重入训——利用率从
+    // 样本库数十条扩到全部需求链单据
+    const reservations = require('./services/reservationStore').list()
+      // v83：已驳回/已取消单是「负样本」（参数被人工否决），不得以弱正样本权重进训练；
+      // 行数封顶 800——tier2 的协同域是 O(rows²)，MLP 全量 batch 也随单量线性膨胀
+      .filter((r) => r.processParams && r.modelFeatures
+        && r.status !== '已驳回' && r.status !== '已取消')
+      .slice(-800);
+    const result = require('./services/paramModel').train(require('./services/trainingStore').list(), {
+      ...(req.body || {}),
+      reservations,
+    });
+    const saved = result.model ? require('./services/paramModelStore').saveCandidate(result.model, result.stats) : null;
+    res.json({
+      insufficient: !!result.insufficient,
+      stats: result.stats,
+      candidate: saved,
+      note: result.stats.note,
+    });
+  } catch (err) {
+    console.error('参数模型训练失败:', err);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/training/param-model/audit', requireUser('reviewer', 'admin'), (req, res) => {
+  const snap = require('./services/paramModelStore').getSnapshot();
+  res.json({
+    ...snap,
+    confGate: require('./services/paramModel').CONF_GATE_DEFAULT,
+    learnableParams: require('./services/paramModel').LEARNABLE_PARAMS,
+  });
+});
+
+app.post('/api/training/param-model/adopt', requireUser('admin'), (req, res) => {
+  try {
+    res.json(require('./services/paramModelStore').adopt({
+      mode: (req.body || {}).mode,
+      adoptedBy: req.user.displayName,
+    }));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/training/param-model/mode', requireUser('admin'), (req, res) => {
+  try {
+    res.json(require('./services/paramModelStore').setMode((req.body || {}).mode));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post('/api/training/param-model/deactivate', requireUser('admin'), (req, res) => {
+  try {
+    res.json(require('./services/paramModelStore').deactivate());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// 治理台预览：给定工况勾选 + 几何体检 → 规则基线 vs 模型建议逐参数对比（不动真实单据）
+app.post('/api/training/param-model/preview', requireUser('reviewer', 'admin'), (req, res) => {
+  try {
+    const body = req.body || {};
+    const selection = body.selection || {};
+    const modelFeatures = body.modelFeatures || null;
+    const spatial = Array.isArray(body.spatial) ? body.spatial : [];
+    const feat = require('./services/featureDerive').deriveFeatures(spatial, modelFeatures, selection);
+    const applied = processRules.applyRules(selection, { material: body.materialType || '', feat });
+    if (applied.blocked) return res.status(400).json({ error: `勾选存在硬冲突：${(applied.errors || []).join('；')}` });
+    const active = require('./services/paramModelStore').getActive();
+    const result = require('./services/paramModel').preview(applied.params, { selection, modelFeatures, feat }, active);
+    res.json({ ...result, appliedRules: applied.applied });
+  } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
@@ -536,7 +642,7 @@ app.post('/api/training/analyze-slice', requireUser(), upload.single('file'), (r
 
 // 录入训练样本（登录即可，无审批）：模型文件必填 + 切片产物可选 + 人工工况勾选必填
 app.post('/api/training/samples', requireUser(), upload.fields([
-  { name: 'model', maxCount: 1 },
+  { name: 'model', maxCount: 12 },  // v75 多模型：一份切片一盘多件，逐模型批量入库
   { name: 'slice', maxCount: 1 },
 ]), (req, res) => {
   try {
@@ -564,33 +670,77 @@ app.post('/api/training/samples', requireUser(), upload.fields([
     // spatial 字段净化（v56 抽取为 utils/spatialSanitize 唯一权威实现，预约提交共用）：
     // point/axis/survey/circle/region/load 白名单；faces 封顶 20 万
     spatial = require('./utils/spatialSanitize').sanitizeSpatial(spatial);
-    const modelFile = (req.files && req.files.model && req.files.model[0]) || null;
+    const modelFiles = (req.files && req.files.model) || [];
     const sliceFile = (req.files && req.files.slice && req.files.slice[0]) || null;
-    if (!modelFile) return res.status(400).json({ error: '缺少模型文件（multipart 字段名 model）' });
+    if (!modelFiles.length) return res.status(400).json({ error: '缺少模型文件（multipart 字段名 model，可多选批量上传）' });
 
-    // 几何特征（分析失败不阻塞——负样本也是数据）；>80MB 不读内存（整读会拖垮进程）
-    let features = null;
-    let modelBuf = null;
-    if (modelFile.size <= 80 * 1024 * 1024) {
-      try {
-        const mf = require('./services/modelFeatures');
-        modelBuf = fs.readFileSync(modelFile.path);
-        features = /\.3mf$/i.test(modelFile.originalname || '') ? mf.analyze3mf(modelBuf) : mf.analyzeStl(modelBuf);
-      } catch (err) {
-        console.warn(`[训练集] 模型特征分析失败（照常入库）: ${err.message}`);
+    // v75 多模型批量录入：N 个模型 + 1 份切片（一盘多件）→ 逐模型配对成 N 条样本。
+    // 单模型路径行为与旧版完全一致（兼容前端既有单选流）。
+    const MAX_MODELS = 12;
+    if (modelFiles.length > MAX_MODELS) {
+      return res.status(400).json({ error: `一次最多 ${MAX_MODELS} 个模型（当前 ${modelFiles.length} 个）——大批量请分批录入` });
+    }
+
+    // 逐模型特征分析（分析失败不阻塞——负样本也是数据）；>80MB 不读内存
+    const mf = require('./services/modelFeatures');
+    const analyzed = []; // {file, buf|null, features|null}
+    for (const f of modelFiles) {
+      let buf = null;
+      let feats = null;
+      if (f.size <= 80 * 1024 * 1024) {
+        try {
+          buf = fs.readFileSync(f.path);
+          feats = /\.3mf$/i.test(f.originalname || '') ? mf.analyze3mf(buf) : mf.analyzeStl(buf);
+        } catch (err) {
+          console.warn(`[训练集] 模型特征分析失败（照常入库）: ${err.message}`);
+        }
+      } else {
+        console.warn(`[训练集] 模型 ${Math.round(f.size / 1048576)}MB 超上限，特征与归档跳过（只记元数据）`);
       }
-    } else {
-      console.warn(`[训练集] 模型 ${Math.round(modelFile.size / 1048576)}MB 超上限，特征与归档跳过（只记元数据）`);
+      analyzed.push({ file: f, buf, features: feats });
     }
 
     // 专家切片参数提取（失败不阻塞）——必须在拟合度计算之前：v48 曾把它写在
     // fit 块后面，fit 块引用 extraction 触发 TDZ，所有带工况的入库请求 400
     let extraction = null;
-    if (sliceFile && req.files.slice[0].size <= 50 * 1024 * 1024) {
+    let sliceBuf = null;
+    if (sliceFile && sliceFile.size <= 50 * 1024 * 1024) {
       try {
-        extraction = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(sliceFile.path));
+        sliceBuf = fs.readFileSync(sliceFile.path);
+        extraction = require('./services/slicerExtract').extractFrom3mf(sliceBuf);
       } catch (err) {
         console.warn(`[训练集] 切片参数提取失败（照常入库）: ${err.message}`);
+      }
+    }
+
+    // v75 多模型↔切片匹配（一盘多件）：切片逐 object 签名 × 上传模型逐件签名 →
+    // 二分图最优配对（multiModelMatch）。单模型时跳过（1:1 无歧义）。
+    let matchInfo = null;
+    let sliceObjs = null;
+    if (modelFiles.length > 1 && sliceBuf) {
+      try {
+        const parsedSlice = mf.parse3mfModel(sliceBuf);
+        if (parsedSlice && parsedSlice.objects && parsedSlice.objects.length) {
+          sliceObjs = parsedSlice.objects;
+          const sliceSigs = sliceObjs.map((o) => ({
+            name: o.name,
+            bboxVolCm3: o.bbox ? (o.bbox.x * o.bbox.y * o.bbox.z) / 1000 : 0,
+            triangles: o.triangles,
+            holeCount: o.holes ? o.holes.count : 0,
+            overhangSeverePct: o.overhang ? o.overhang.severePct : 0,
+            holesKnown: false, overhangKnown: false, // 切片 object 无孔/悬垂解析——距离按可用维归一（v83）
+          }));
+          const modelSigs = analyzed.map((a) => ({
+            name: a.file.originalname,
+            bboxVolCm3: a.features && a.features.bbox ? (a.features.bbox.x * a.features.bbox.y * a.features.bbox.z) / 1000 : 0,
+            triangles: a.features ? a.features.triangles : 0,
+            holeCount: a.features && a.features.holes ? a.features.holes.count : 0,
+            overhangSeverePct: a.features && a.features.overhang ? a.features.overhang.severePct : 0,
+          }));
+          matchInfo = require('./services/multiModelMatch').matchModels(sliceSigs, modelSigs);
+        }
+      } catch (err) {
+        console.warn(`[训练集] 多模型匹配失败（全部按独立样本入库，不带配对信息）: ${err.message}`);
       }
     }
 
@@ -605,44 +755,93 @@ app.post('/api/training/samples', requireUser(), upload.fields([
       } catch { /* 不阻塞 */ }
     }
 
-    // 专家摆向标签（2026-10-19 学习回路）：人工放置优先；3mf 对象变换为弱标签
-    let orientation = placement ? { quaternion: placement, source: 'placement' } : null;
-    if (!orientation && modelBuf && /\.3mf$/i.test(modelFile.originalname || '')) {
+    // 专家摆向标签（2026-10-19 学习回路）：人工放置优先；3mf 对象变换为弱标签。
+    // v75：切片 3mf 的对象变换在多模型时按配对归属（sliceIdx → object name）；
+    // 单模型路径保持原「首个非 identity 变换」口径。
+    let sliceOrientationByName = null;
+    if (!placement && sliceFile && /\.3mf$/i.test(sliceFile.originalname || '') && sliceBuf) {
       try {
-        const ex = require('./services/orientationExtract').extractOrientationFrom3mf(modelBuf);
-        if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
-      } catch { /* 提取失败不阻塞入库 */ }
-    }
-    if (!orientation && sliceFile && /\.3mf$/i.test(sliceFile.originalname || '') && sliceFile.size <= 50 * 1024 * 1024) {
-      try {
-        const ex = require('./services/orientationExtract').extractOrientationFrom3mf(fs.readFileSync(sliceFile.path));
-        if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
+        // model_settings.config 的 per-object matrix（2026-10-16 放置批实证的权威源）——
+        // object name ↔ matrix 按 model_settings 条目顺序与 parse3mfModel objects 对齐
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip(sliceBuf);
+        const ms = zip.getEntry('Metadata/model_settings.config');
+        if (ms && sliceObjs && sliceObjs.length) {
+          const text = ms.getData().toString('utf8');
+          const oe = require('./services/orientationExtract');
+          const matrices = [];
+          const re = /<object\b[^>]*>/g;
+          let om;
+          while ((om = re.exec(text)) !== null) {
+            const mm = /key="matrix"\s+value="([^"]+)"/.exec(om[0]);
+            const nm = /\bname="([^"]+)"/.exec(om[0]);
+            const t = mm ? oe.parseMatrixTransform(mm[1]) : null;
+            matrices.push({ name: nm ? nm[1] : null, t });
+          }
+          // 对齐策略：model_settings 条目与切片 objects 按序号对齐（object_N ↔ 第 N+1 条）
+          sliceOrientationByName = {};
+          sliceObjs.forEach((o, i) => {
+            const cand = matrices[i] || (o.name && matrices.find((m2) => m2.name === o.name));
+            if (cand && cand.t && !cand.t.identity) {
+              sliceOrientationByName[o.name] = { quaternion: cand.t.quaternion, source: '3mf-model-settings', note: `角度 ${cand.t.angleDeg}°` };
+            }
+          });
+        }
       } catch { /* 提取失败不阻塞入库 */ }
     }
 
-    const sample = require('./services/trainingStore').create({
-      createdBy: req.user.displayName,
-      notes: body.notes,
-      selection,
-      machine: body.machine,
-      confidence: (() => { const v = Number(body.confidence); return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null; })(),
-      spatial,
-      placement,      // 放置平面四元数（2026-10-16：Place on Face 累计旋转；未放置为 null）
-      orientation,    // 专家摆向标签（学习回路）
-      materialType: body.materialType,
-      fit,
-      model: {
-        originalName: Buffer.from(modelFile.originalname || 'unnamed', 'latin1').toString('utf8'),
-        ...(modelBuf ? { buffer: modelBuf } : { buffer: Buffer.alloc(0), tooLargeToArchive: true }),
-        features,
-      },
-      slice: sliceFile ? {
-        originalName: Buffer.from(sliceFile.originalname || 'slice.3mf', 'latin1').toString('utf8'),
-        buffer: fs.readFileSync(sliceFile.path),
-        extraction,
-      } : null,
-    });
-    res.json(sample);
+    // 逐模型建样本（多模型：带配对的切片标签；单模型：与旧版一致）
+    const utf8 = (s) => Buffer.from(s || '', 'latin1').toString('utf8');
+    const created = [];
+    for (let i = 0; i < analyzed.length; i++) {
+      const a = analyzed[i];
+      let orientation = placement ? { quaternion: placement, source: 'placement' } : null;
+      if (!orientation && a.buf && /\.3mf$/i.test(a.file.originalname || '')) {
+        try {
+          const ex = require('./services/orientationExtract').extractOrientationFrom3mf(a.buf);
+          if (ex && !ex.identity) orientation = { quaternion: ex.quaternion, source: ex.source, note: `角度 ${ex.angleDeg}°` };
+        } catch { /* 提取失败不阻塞入库 */ }
+      }
+      if (!orientation && sliceOrientationByName) {
+        const pair = matchInfo && matchInfo.pairs.find((p) => p.modelIdx === i);
+        if (pair && sliceObjs[pair.sliceIdx]) {
+          const byName = sliceOrientationByName[sliceObjs[pair.sliceIdx].name];
+          if (byName) orientation = { ...byName, note: (byName.note || '') + '（按盘配对）' };
+        }
+      }
+      const sample = require('./services/trainingStore').create({
+        createdBy: req.user.displayName,
+        notes: body.notes,
+        selection,
+        machine: body.machine,
+        confidence: (() => { const v = Number(body.confidence); return Number.isFinite(v) ? Math.max(0, Math.min(100, Math.round(v))) : null; })(),
+        spatial,
+        placement,
+        orientation,
+        materialType: body.materialType,
+        fit,
+        model: {
+          originalName: utf8(a.file.originalname),
+          ...(a.buf ? { buffer: a.buf } : { buffer: Buffer.alloc(0), tooLargeToArchive: true }),
+          features: a.features,
+        },
+        slice: sliceFile ? {
+          originalName: utf8(sliceFile.originalname),
+          buffer: sliceBuf || fs.readFileSync(sliceFile.path),
+          extraction,
+        } : null,
+      });
+      created.push({ id: sample.id, model: utf8(a.file.originalname), matchedSliceObject: matchInfo ? ((matchInfo.pairs.find((p) => p.modelIdx === i) || {}).sliceIdx ?? null) : null, lowConfidence: matchInfo ? !!((matchInfo.pairs.find((p) => p.modelIdx === i) || {}).lowConfidence) : false });
+    }
+    // v83 内存闸：逐模型 buffer 与切片 buffer 在样本建完即释放（12×80MB 不再驻留到响应结束）
+    analyzed.forEach((a) => { a.buf = null; });
+    sliceBuf = null;
+    // 多模型：响应带配对摘要；单模型：与旧版响应一致（直接返回 sample）
+    if (created.length === 1) {
+      const sample = require('./services/trainingStore').get(created[0].id);
+      return res.json(sample);
+    }
+    return res.json({ created: created.length, samples: created, matchInfo });
   } catch (err) {
     res.status(400).json({ error: err.message, details: err.details });
   } finally {
@@ -755,7 +954,59 @@ app.delete('/api/training/samples/:id', requireUser('reviewer', 'admin'), (req, 
 app.get('/api/reservations', requireUser(), async (req, res) => {
   try {
     const reservations = await reservationService.getAllReservations();
-    res.json(reservations);
+    // 审查修复（v62）：列表 DTO 收敛——服务端绝对路径（filePath/sourceFile.storedPath）
+    // 不下发（信息泄露面 + 前端无消费点）；详情端点 /:id 仍带全量供审批/复核
+    // v82 续刀（曼波反馈「有些界面打开要加载半天」）：实测列表 218KB——大头是每单拖着
+    // 完整 spatial（3D 标注坐标数组，列表页零消费）与 modelFeatures（体检快照，
+    // 审批走 /fit 端点）。逐单精简后列表约缩 5-10 倍；详情端点 /:id 全量不变
+    // v83b 实测续刀：裁后仍 210KB——remaining 大头=history（每条含 note 全文）、
+    // embeddedParams.params（全量参数，列表只显示前 5 项）、spatial 摘要。继续精简：
+    //  · history 截最近 4 条（详情页看全量）
+    //  · embeddedParams 只留 {estMinutes, filaments, machineModel} + params 前 6 键
+    //  · processParams 列表页显示前 10 项 → 传全量浪费，只传前 12 键 + 总数
+    res.json(reservations.map((r) => {
+      const slim = {
+        ...r,
+        filePath: undefined,
+        sourceFile: Array.isArray(r.sourceFile)
+          ? r.sourceFile.map((sf) => ({ ...sf, storedPath: undefined }))
+          : (r.sourceFile ? { ...r.sourceFile, storedPath: undefined } : undefined),
+        // 大对象裁剪：列表页不消费，详情页才要
+        modelFeatures: undefined,
+        spatial: Array.isArray(r.spatial)
+          ? r.spatial.map((a) => ({ tool: a.tool, loadType: a.loadType, loadNature: a.loadNature, loadMagnitude: a.loadMagnitude }))
+          : r.spatial,
+      };
+      if (slim.history && slim.history.length > 4) {
+        slim.historyTruncated = slim.history.length;
+        slim.history = slim.history.slice(-4);
+      }
+      // v83b 续：history 列表只显示最近 2 条（前端 slice(-2)）→ 服务端截到 2 条 + 计数；
+      // spatial 列表零消费（spatialLabel 只吃本地标注器回调的 anns）→ 整个剔除
+      if (slim.history && slim.history.length > 2) {
+        slim.historyTruncated = slim.history.length;
+        slim.history = slim.history.slice(-2);
+      }
+      slim.spatial = undefined;
+      if (slim.embeddedParams && slim.embeddedParams.params) {
+        const keys = Object.keys(slim.embeddedParams.params);
+        if (keys.length > 6) {
+          const slimParams = {};
+          for (const k of keys.slice(0, 6)) slimParams[k] = slim.embeddedParams.params[k];
+          slim.embeddedParams = { ...slim.embeddedParams, params: slimParams, paramsTotal: keys.length };
+        }
+      }
+      if (slim.processParams && typeof slim.processParams === 'object') {
+        const keys = Object.keys(slim.processParams);
+        if (keys.length > 12) {
+          const slimParams = {};
+          for (const k of keys.slice(0, 12)) slimParams[k] = slim.processParams[k];
+          slim.processParams = slimParams;
+          slim.processParamsTotal = keys.length;
+        }
+      }
+      return slim;
+    }));
   } catch (err) {
     console.error('获取预约列表失败:', err);
     res.status(500).json({ error: err.message });
@@ -984,27 +1235,37 @@ app.get('/api/reservations/:id/slice-preview/layer', requireUser('reviewer', 'ad
 });
 app.post('/api/reservations', requireUser(), upload.fields([
   { name: 'file', maxCount: 1 },
-  { name: 'sourceFile', maxCount: 1 }, // CAD 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）
+  { name: 'sourceFile', maxCount: 12 }, // CAD 源文件配对（2026-10-27 曼波令；v79 多模型：一份切片多件源文件批量配对）
 ]), async (req, res) => {
   const removeUploads = (...files) => {
     for (const f of files) { if (f) { try { fs.unlinkSync(f.path); } catch { /* 已不存在 */ } } }
   };
+  // 审查修复（v62）：file/srcFile 必须声明在 try 外——catch 清理临时文件要引用它们，
+  // 越块引用 ReferenceError 会让 Express 4 的 async rejection 直接崩进程（提交被打回即触发）
+  const file = req.files && req.files.file && req.files.file[0];
+  const srcFiles = (req.files && req.files.sourceFile) || [];
+  const srcFile = srcFiles[0] || null; // 兼容旧单件消费点（上传/清理路径）
   try {
-    const file = req.files && req.files.file && req.files.file[0];
-    const srcFile = req.files && req.files.sourceFile && req.files.sourceFile[0];
     if (!file) return res.status(400).json({ error: '缺少文件（multipart 字段名 file）' });
     const body = req.body || {};
     const fileName = Buffer.from(file.originalname || 'unnamed', 'latin1').toString('utf8');
     // CAD 源文件（可选）：仅切片直通单有意义的配对——STEP/STL 真网格 ↔ 切片文件的专家
     // 参数，训练入库时自动配对提取真几何特征（gcode-estimate 的升级）。非 CAD 格式打回
     let sourceFileMeta = null;
-    if (srcFile) {
-      const srcName = Buffer.from(srcFile.originalname || '', 'latin1').toString('utf8');
-      if (!/\.(step|stp|stl|obj)$/i.test(srcName)) {
-        removeUploads(file, srcFile);
-        return res.status(400).json({ error: `配对源文件需为 STEP/STL/OBJ 格式（收到「${srcName}」）——切片文件本身请走 file 字段` });
+    // v79 多源文件（一份切片一盘多件）：全部校验+归档；单件保持对象形态向后兼容
+    if (srcFiles.length) {
+      const metas = [];
+      for (const sf of srcFiles) {
+        const srcName = Buffer.from(sf.originalname || '', 'latin1').toString('utf8');
+        // v83：OBJ 从未真正可分析（analyzeStl/analyzeStep/analyze3mf 三分支皆不收，
+        // 此前静默配不上对）——提交口直接打回讲清楚
+        if (!/\.(step|stp|stl)$/i.test(srcName)) {
+          removeUploads(file, ...srcFiles);
+          return res.status(400).json({ error: `配对源文件需为 STEP/STL 格式（收到「${srcName}」）——切片文件本身请走 file 字段` });
+        }
+        metas.push({ originalName: srcName, storedPath: sf.path, size: sf.size });
       }
-      sourceFileMeta = { originalName: srcName, storedPath: srcFile.path, size: srcFile.size };
+      sourceFileMeta = metas.length === 1 ? metas[0] : metas;
     }
     // 已切片产物=审批直通（2026-10-14 扩：闪铸 gcode 系与 3mf 同语义——参数已定，
     // 引擎不定档不越俎代庖；分发引擎按品牌分流：3mf→拓竹 / gcode→闪铸）
@@ -1022,12 +1283,12 @@ app.post('/api/reservations', requireUser(), upload.fields([
         body.spatial ? JSON.parse(body.spatial) : []
       );
     } catch {
-      try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
+      try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: 'selection/spatial 不是合法 JSON' });
     }
     // 使用场景必填（2026-10-18 曼波令；标注/预约台双入口同口径，服务端兜底）
     if (!require('./services/taxonomy').isSceneSelected(selection)) {
-      try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
+      try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
       return res.status(400).json({ error: '请勾选「使用场景」（必填）', details: ['使用场景是必填项——在需求标签区顶部勾选至少一项'] });
     }
     // 放置平面四元数（2026-10-16）：3D 工坊 Place on Face 的累计旋转随单存档——
@@ -1044,8 +1305,85 @@ app.post('/api/reservations', requireUser(), upload.fields([
     // 定档需 modelFeatures（特征派生输入）——故快照解析先行（无副作用，原位置在下方）
     // 需求链路单的几何体检快照解析（2026-10-11 引入；2026-10-15 挪前供依据）：
     // 只收白名单数值键，防伪造膨胀；无/解析失败为 null
+    // 需求链路才定档；3mf 直通（参数内嵌，快照置空并在页面标注）。
+    // v64：3mf 先分「切片产物 / 工程件」——工程件（无 plate gcode，MakerWorld 下载/
+    // Studio 工程另存）自解析网格改走需求链自动切片：内嵌作者参数为基线，工况修正叠加
+    let embeddedParams = null;
+    let estMinutes = null;
+    let isSlicedFinal = isSliced;
+    let engineeringBaseline = null;
+    let engineeringMeta = null; // {parts, triangles} 工程件自解析元信息（审批展示用）
+    let engineeringMesh = null; // 合并网格（体检用，解析一次复用）
+    if (isSliced && is3mf && file.size > 50 * 1024 * 1024) {
+      // v83 审查修复：>50MB 超出安全探测上限（解压内存闸），无法验证是否真切片——
+      // 按「已切片」直通会把工程件放进真机打出 84033582 类失败（v64 设闸的初因），硬拦
+      try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
+      return res.status(400).json({
+        error: `「${fileName}」超过 50MB，无法验证是否为已切片产物`,
+        details: ['请在 Bambu Studio 完成切片后「导出切片文件」再提交（通常 <50MB），或改传 STEP/STL 源文件走自动切片'],
+      });
+    }
+    if (isSliced && is3mf) {
+      // v83 收紧：hasSlicedGcode 已判定「非切片产物」后，工程件解析的任何异常都硬拦，
+      // 不得落回「按切片产物继续」旁路（否则闸门形同虚设）；读取失败（无法判定）才放行直通
+      let looksSliced = null;
+      try {
+        looksSliced = require('./services/slicerExtract').hasSlicedGcode(fs.readFileSync(file.path));
+      } catch (err) {
+        console.warn('[提交] 切片产物探测读取失败:', err.message);
+      }
+      if (looksSliced === false) {
+        let eng = null;
+        let engErr = null;
+        try { eng = require('./utils/engine3mf').parseEngineering3mf(fs.readFileSync(file.path)); } catch (err) { engErr = err; }
+        if (!eng || !eng.ok) {
+          try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
+          return res.status(400).json({
+            error: `「${fileName}」是未切片的工程 3mf，但自动解析失败：${(eng && (eng.error || eng.reason)) || (engErr && engErr.message) || '未知原因'}`,
+            details: ['请在 Bambu Studio 打开并完成切片后「导出切片文件」再提交'],
+          });
+        }
+        isSlicedFinal = false;
+        engineeringMesh = eng.mesh;
+        engineeringMeta = { parts: eng.parts, triangles: eng.mesh.triangles };
+        // 内嵌作者参数 → 提取器（project_settings 优先）白名单映射；机型/耗材同时透出
+        // 供程序初审（跨机型品牌族警告）与审批台展示（source=engineering 区别直通单）。
+        // 参数提取失败不推翻闸门结论（isSlicedFinal 已定），仅降级为无内嵌基线
+        try {
+          const ext = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(file.path));
+          engineeringBaseline = ext.params || null;
+          embeddedParams = {
+            source: 'engineering', params: ext.params || {}, estMinutes: null,
+            bedType: ext.bedType || null, filaments: ext.filaments || [],
+            machineModel: ext.machineModel || null,
+          };
+        } catch (err) {
+          console.warn('[提交] 工程 3mf 内嵌参数提取失败（闸门照过，参数走规则基线）:', err.message);
+        }
+      }
+    }
+
     let modelFeatures = null;
-    if (!isSliced && body.modelFeatures) {
+    if (!isSlicedFinal && engineeringMeta) {
+      // 工程件自解析体检（前端不解析 3mf，服务端补快照供特征派生/学习回路）
+      const stats = require('./services/modelFeatures').analyzeMesh(engineeringMesh);
+      if (!stats.error) {
+        modelFeatures = {
+          triangles: Number(stats.triangles) || 0,
+          vertices: Number(stats.vertices) || 0,
+          bbox: stats.bbox || null,
+          volumeCm3: Number(stats.volumeCm3) || 0,
+          overhang: stats.overhang || null,
+          contact: stats.contact || null,
+          curvedPct: Number(stats.curvedPct) || 0,
+          holes: stats.holes || null,
+          mesh: stats.mesh || null,
+          suggested: (stats.suggestions && stats.suggestions.selection) || {},
+          engineering: true, // 工程自解析标记（学习回路/审批展示区分来源）
+        };
+      }
+    }
+    if (!isSlicedFinal && body.modelFeatures) {
       try {
         const raw = JSON.parse(body.modelFeatures);
         if (raw && raw.ok === true) {
@@ -1066,28 +1404,55 @@ app.post('/api/reservations', requireUser(), upload.fields([
     }
 
     let applied = null;
-    if (!isSliced) {
+    let modelProvenance = null;
+    if (!isSlicedFinal) {
       // 特征派生（2026-10-15）：spatial 标注 + 几何体检 → feat 字典进规则条件
       // （拟合规则引用 feat.*；载荷→勾选折算仍在前端完成）
       const feat = require('./services/featureDerive').deriveFeatures(spatial, modelFeatures, selection);
-      applied = processRules.applyRules(selection, { material: body.materialType, feat });
+      // v64：工程 3mf 自解析单以内嵌作者参数为基线（白名单过滤在 applyRules 内），
+      // 规则引擎工况修正照常叠加；STEP/STL 单仍从出厂基线起算
+      applied = processRules.applyRules(selection, {
+        material: body.materialType,
+        feat,
+        ...(engineeringBaseline ? { baseline: engineeringBaseline } : {}),
+      });
       if (applied.blocked) {
-        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
+        try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
         return res.status(400).json({ error: '需求勾选存在硬冲突', details: applied.errors, warnings: applied.warnings });
+      }
+      // 参数智能层（v60）：规则库基线 → 学习模型修正。shadow=建议只随单存档（审批台
+      // 展示不生效）；active=数值参数按置信度门限逐项替换。枚举/材料/朝向参数模型不碰。
+      try {
+        const pm = require('./services/paramModel').applyToParams(
+          applied.params,
+          { selection, modelFeatures, feat },
+          require('./services/paramModelStore').getActive(),
+        );
+        applied.params = pm.params;
+        modelProvenance = pm.provenance;
+      } catch (err) {
+        console.warn('[参数智能层] 模型修正失败（保持规则基线）:', err.message);
       }
     }
 
     // 3mf 审批透明化（2026-10-06）：提取文件内嵌切片参数摘要随单存档——审批人
     // 不用下载文件开 Bambu Studio 就能看参数。提取失败不阻塞提交（摘要置空）；
-    // 大于 50MB 跳过提取（adm-zip 需整文件进内存，大文件会拖垮提交请求）
-    let embeddedParams = null;
-    let estMinutes = null;
-    if (isSliced && is3mf) {
+    // 大于 50MB 跳过提取（adm-zip 需整文件进内存，大文件会拖垮提交请求）。
+    // v64：仅**切片产物**走本段（工程件已改道需求链，isSlicedFinal=false）
+    if (isSlicedFinal && is3mf) {
       if (file.size > 50 * 1024 * 1024) {
         console.log(`[提交] 3mf 过大（${Math.round(file.size / 1048576)}MB），跳过参数提取`);
       } else {
         try {
           const extracted = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(file.path));
+          // 双保险闸（正常已被前置工程探测改道；此处兜底防御竞态/边界）
+          if (extracted.sliced === false) {
+            try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
+            return res.status(400).json({
+              error: '「' + fileName + '」是 Bambu Studio 工程文件（未切片）——机端收到后找不到可打印的切片数据。请在 Bambu Studio 完成切片后「导出切片文件」（gcode.3mf）再提交，或改传 STEP/STL 走系统自动切片',
+              details: ['工程 3mf 与切片 3mf 的区别：工程件含 3D 模型与设置，切片件含刀轨数据'],
+            });
+          }
           // 板型/用料清单随单入档（2026-10-16 真单批）：分发帧 bed_type 与 ams 映射的底料
           embeddedParams = {
             source: extracted.source, params: extracted.params, estMinutes: extracted.estMinutes,
@@ -1119,7 +1484,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
         },
       });
       if (verdict.blocked) {
-        removeUploads(file, srcFile);
+        removeUploads(file, ...srcFiles);
         return res.status(400).json({ error: verdict.errors[0], details: verdict.errors, precheck: true });
       }
       precheckWarnings = verdict.warnings;
@@ -1131,7 +1496,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
       const wanted = String(body.assignedPrinter).trim();
       const pr = config.printers.find((p) => p.name === wanted);
       if (!pr) {
-        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
+        try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
         return res.status(400).json({
           error: `指定打印机「${wanted}」未登记，请从下拉选择（已登记：${config.printers.map((p) => p.name).join('、') || '无——先在 .env PRINTER_HOSTS 登记'}）`,
         });
@@ -1140,7 +1505,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
       const prBrand = (printerManager.brandOf && printerManager.brandOf(pr.model)) || 'bambu';
       const fileBrand = require('./services/dispatcher').brandForFileWithMeta(fileName, embeddedParams && embeddedParams.machineModel); // 内嵌机型优先（2026-10-16）
       if (prBrand !== fileBrand) {
-        try { removeUploads(file, srcFile); } catch { /* 已不存在 */ }
+        try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
         return res.status(400).json({
           error: `「${wanted}」是${prBrand === 'flashforge' ? '闪铸' : '拓竹'}机型，打不了${fileBrand === 'flashforge' ? '闪铸 gcode 系' : '拓竹 3mf'}格式——两品牌切片格式互不兼容，请改选对应品牌机型或留空自动匹配`,
         });
@@ -1165,6 +1530,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
       placement,      // 放置平面四元数（2026-10-16：Place on Face 累计旋转；未放置为 null）
       processParams: applied ? applied.params : null,
       appliedRules: applied ? applied.applied : [],
+      modelProvenance, // 参数智能层 provenance（v60；无已采纳模型为 null）
       embeddedParams, // 3mf 内嵌参数摘要（审批透明化；需求链路单为 null）
       estMinutes,     // 3mf 内嵌预估时长（队列 ETA；需求链路单为 null）
       sourceFile: sourceFileMeta, // CAD 源文件配对（训练素材，2026-10-27 提单配对批）
@@ -1176,7 +1542,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
     res.json({ ...reservation, precheckWarnings }); // 初审警告（占用排队告知）随单返回前端展示
   } catch (err) {
     console.error('提交预约失败:', err);
-    removeUploads(file, srcFile);
+    removeUploads(file, ...srcFiles);
     res.status(400).json({ error: err.message, details: err.details, warnings: err.details?.warnings || [] });
   }
 });
@@ -1746,6 +2112,9 @@ function findApiPrinter(id) {
 // 最后一个观看者断开后关流（streamCtrl_cmd close，省摄像头常开）
 const mjpegViewers = new Map(); // printerId → 观看计数
 app.get('/api/printers/:id/camera/mjpeg', requireUser(), async (req, res) => {
+  // 审查修复（v62）：整段兜底——本 handler 是全仓唯一没有顶层 catch 的 async 路由，
+  // tls.connect 配置异常等同步抛错会成 unhandledRejection 直接崩进程（同 WS upgrade 的教训）
+  try {
   const pid = parseInt(req.params.id);
   const p = findApiPrinter(pid);
   if (!p) return res.status(404).json({ error: '打印机不存在' });
@@ -1783,9 +2152,13 @@ app.get('/api/printers/:id/camera/mjpeg', requireUser(), async (req, res) => {
       return res.status(400).json({ error: `该机型（${p.model}）未实现 6000 帧流通道` });
     }
     let started = false;
+    // 背压（审查修复 v62）：write 返回 false = 内核缓冲满（慢客户端）——实时流丢帧
+    // 等待 drain，不在服务端内存堆积帧（对齐 WS 中继的 bufferedAmount 闸口径）
+    let throttled = false;
+    res.on('drain', () => { throttled = false; });
     const camStream = camClient.openCameraJpegStream(
       (jpeg) => {
-        if (res.writableEnded) return;
+        if (res.writableEnded || throttled) return;
         if (!started) {
           started = true;
           res.setHeader('Content-Type', 'multipart/x-mixed-replace; boundary=bambuframe');
@@ -1794,6 +2167,7 @@ app.get('/api/printers/:id/camera/mjpeg', requireUser(), async (req, res) => {
         res.write(`--bambuframe\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`);
         res.write(jpeg);
         res.write('\r\n');
+        throttled = res.writableNeedDrain === true;
       },
       (err) => {
         if (!started) res.status(502).json({ error: `画面拉流失败（${p.name}）: ${err.message}` });
@@ -1816,6 +2190,11 @@ app.get('/api/printers/:id/camera/mjpeg', requireUser(), async (req, res) => {
   });
   req.on('close', () => upstream.destroy());
   upstream.end();
+  } catch (err) {
+    console.error(`[画面] mjpeg 通道异常:`, err.message);
+    if (!res.headersSent) res.status(502).json({ error: `画面通道异常: ${err.message}` });
+    else res.end();
+  }
 });
 
 // 拓竹画面 H.264 中继：P1/A1=TCP 6000 裸流 / X1-H2D=RTSPS 322（rtsps.js 归一 Annex-B）
@@ -1983,11 +2362,14 @@ app.post('/api/dispatch/given-up/:id/dismiss', requireUser('reviewer', 'admin'),
   }
 });
 
-// multer 校验失败（扩展名白名单/超限）等中间件错误 → 统一 JSON 400（而非默认 500 HTML）
+// multer 校验失败（扩展名白名单/超限）等中间件错误 → 统一 JSON（而非默认 500 HTML）。
+// 审查修复（v62）：err.statusCode 优先（413 超限等客户端错误不再一律 400），未知错误 500——
+// 前端才能区分「请求有问题」与「服务端出故障」
 app.use((err, req, res, next) => {
   if (!err) return next();
   console.error('[HTTP] 请求处理失败:', err.message);
-  res.status(400).json({ error: err.message || '请求处理失败' });
+  const status = Number(err.statusCode) || (err.type === 'entity.too.large' ? 413 : 500);
+  res.status(status).json({ error: err.message || '请求处理失败' });
 });
 
 function startServer() {
@@ -2049,14 +2431,21 @@ function startServer() {
   // 数据面每日快照（预约/账号/规则/建议四 JSON，保留 14 天；uploads 不备份）
   require('./services/backup').scheduleBackup();
 
-  process.on('SIGINT', async () => {
-    console.log('\n正在关闭服务器...');
-    await printerManager.cleanupFileSessions();
+  // 优雅退出（审查修复 v62）：SIGINT 与 SIGTERM 同一套——dispatcher 的 exit hook 只冲刷
+  // 不退出，裸注册会抑制默认终止语义（kill <pid> 后进程永远活着）；server.close 遇
+  // keep-alive 连接挂着不回调，补 8s 兜底强退
+  const gracefulShutdown = async (signal) => {
+    console.log(`\n收到 ${signal}，正在关闭服务器...`);
+    try { await printerManager.cleanupFileSessions(); } catch (err) { console.warn('会话清理失败:', err.message); }
+    const forceExit = setTimeout(() => { console.log('关闭超时，强制退出'); process.exit(0); }, 8000);
+    forceExit.unref();
     server.close(() => {
       console.log('服务器已关闭');
       process.exit(0);
     });
-  });
+  };
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 
   return server;
 }

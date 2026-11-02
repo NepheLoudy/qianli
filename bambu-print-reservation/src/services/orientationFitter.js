@@ -213,10 +213,11 @@ function evaluateRows(rows, policy) {
     const picked = pickCandidate(norm, policy);
     const idx = picked ? norm.indexOf(picked) : -1;
     if (idx >= 0 && row.expertSet.has(idx)) correct += w;
-    // 专家候选的平均排名（越小越好，按标签权重计）
+    // 专家候选的平均排名（越小越好，按标签权重计）——排序提在专家循环外（审查修复 v62：
+    // 原来在循环内对同一数组反复排序，24 候选 × 专家集大小的无谓开销）
+    const sorted = norm.slice().sort((a, b) => scoreCandidate(b, policy) - scoreCandidate(a, policy));
     let bestRank = Infinity;
     for (const ei of row.expertSet) {
-      const sorted = norm.slice().sort((a, b) => scoreCandidate(b, policy) - scoreCandidate(a, policy));
       const rank = sorted.indexOf(norm[ei]);
       if (rank >= 0 && rank < bestRank) bestRank = rank;
     }
@@ -292,7 +293,10 @@ async function fitOrientationPolicy(samples, opts = {}) {
     const f = fitOnRows(train);
     const ev = evaluateRows(test, f.policy);
     heldCorrect += ev.correct;
-    heldTotal += ev.total;
+    // 审查修复（v62）：分子（correct）按标签权重累计，分母也要用 weightSum——
+    // 混用「权重和/条数」会把含低权重标签（3mf 0.8/auto-confirmed 0.35）的库的
+    // LOFO 准确率系统性压低，采纳闸门（lofoGain≥0.1）因此误杀好策略
+    heldTotal += ev.weightSum || ev.total;
     folds.push({ family: fam, accuracy: ev.accuracy, n: ev.total });
   }
   const lofoAccuracy = heldTotal ? heldCorrect / heldTotal : 0;

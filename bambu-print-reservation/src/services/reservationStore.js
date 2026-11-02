@@ -59,6 +59,11 @@ function load() {
     cache = { mtimeMs, records };
     return records;
   } catch (err) {
+    // 审查修复（v62）：损坏隔离只针对「文件内容真坏了」（JSON 解析失败）——EPERM/EBUSY
+    // 等瞬时 fs 错误（Windows 杀软/索引器常见）原样上抛让请求 500 保留现场；原口径对
+    // 任何错误都改名隔离并按空启动，一次杀软扫描就可能触发「旧数据进 .corrupt、新文件
+    // 只含单条新记录」的静默缩水
+    if (!(err instanceof SyntaxError)) throw err;
     quarantineCorruptFile(err);
     cache = null;
     return [];
@@ -141,6 +146,7 @@ const reservationStore = {
       selection,
       processParams: input.processParams || null,   // applyRules 快照（需求链路单；3mf 直通为 null）
       appliedRules: input.appliedRules || [],
+      modelProvenance: input.modelProvenance || null, // 参数智能层 provenance（v60：模型修正/建议依据随单存档，审批台展示）
       embeddedParams: input.embeddedParams || null, // 3mf 内嵌参数摘要（审批透明化）
       spatial: Array.isArray(input.spatial) ? input.spatial : null, // 3D 标注随单存档（v56：载荷工况由标注驱动）
       placement: Array.isArray(input.placement) && input.placement.length === 4 ? input.placement.map(Number) : null, // 放置平面四元数（2026-10-16：Place on Face 累计旋转）
@@ -261,8 +267,11 @@ const reservationStore = {
       try {
         fs.unlinkSync(record.filePath);
         // 配对的 CAD 源文件同生命周期清理（2026-10-27 提单配对批）：不留孤儿文件
-        if (record.sourceFile && record.sourceFile.storedPath) {
-          try { fs.unlinkSync(record.sourceFile.storedPath); } catch (e2) { if (e2.code !== 'ENOENT') console.warn(`[预约存储] 清理配对源文件失败 ${record.id}:`, e2.message); }
+        // v83 数组形态适配（一盘多件多源）：sourceFile 为数组时逐个清理，否则孤儿无限累积
+        const sfs = Array.isArray(record.sourceFile) ? record.sourceFile : [record.sourceFile].filter(Boolean);
+        for (const sf of sfs) {
+          if (!sf || !sf.storedPath) continue;
+          try { fs.unlinkSync(sf.storedPath); } catch (e2) { if (e2.code !== 'ENOENT') console.warn(`[预约存储] 清理配对源文件失败 ${record.id}:`, e2.message); }
         }
         record.fileCleaned = true;
         record.fileCleanedAt = new Date(now).toISOString();

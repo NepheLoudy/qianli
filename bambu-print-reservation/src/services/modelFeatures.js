@@ -196,12 +196,22 @@ function parse3mfObjectXml(xmlText) {
     if (idx.v1 === undefined || idx.v2 === undefined || idx.v3 === undefined) { faces[fi++] = 0; faces[fi++] = 0; faces[fi++] = 0; continue; }
     faces[fi++] = idx.v1; faces[fi++] = idx.v2; faces[fi++] = idx.v3;
   }
+  // 包围盒（mm）：多模型配对签名/预览都要用——逐轴 min/max（v83 审查修复：
+  // 此前产物无 bbox，切片侧签名体积恒为 0 失去区分度）
+  let minx = Infinity, miny = Infinity, minz = Infinity, maxx = -Infinity, maxy = -Infinity, maxz = -Infinity;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+    if (x < minx) minx = x; if (x > maxx) maxx = x;
+    if (y < miny) miny = y; if (y > maxy) maxy = y;
+    if (z < minz) minz = z; if (z > maxz) maxz = z;
+  }
   return {
     positions: Float64Array.from(positions),
     faces,
     triangles: triCount,
     vertices: positions.length / 3,
     bodies: 1,
+    bbox: { x: maxx - minx, y: maxy - miny, z: maxz - minz },
   };
 }
 
@@ -351,6 +361,9 @@ async function analyzeStep(buffer, fileName = '') {
   if (buffer.length > MAX_BYTES) return { ok: false, skipped: true, reason: `文件 ${Math.round(buffer.length / 1048576)}MB 超过体检上限 80MB` };
   const parsed = await require('../utils/stepMesh').parseCadToParsed(buffer, fileName);
   if (parsed.error) return { ok: false, skipped: true, reason: parsed.error };
+  // 审查修复（v62）：补三角数防线——STEP 是唯一没有算力护栏的体检入口，复杂 CAD
+  // 网格化可产出数百万面片，直接进 analyzeMesh/摆向搜索会长时间占死事件循环
+  if (Number(parsed.triangles) > MAX_TRIANGLES) return { ok: false, skipped: true, reason: `三角形数 ${parsed.triangles} 超过体检上限 ${MAX_TRIANGLES}（CAD 网格过密，请降低细分精度后重试）` };
   return analyzeMesh(parsed);
 }
 
@@ -601,6 +614,13 @@ function analyzeMesh(parsed) {
       openMesh: !closed,
     },
   };
+  // v68 几何 DNA（实例级结构解析：孔深度/贯通、悬垂连通域、凹角、薄壁）——
+  // 失败不阻塞体检（DNA 缺失时学习侧按 impute 降级），耗时随网格规模
+  try {
+    features.dna = require('./geometryDNA').computeDNA(parsed, features.holes);
+  } catch (err) {
+    console.warn('[几何DNA] 解析失败（降级为无 DNA）:', err.message);
+  }
   return { ...features, suggestions: suggestFromFeatures(features) };
 }
 

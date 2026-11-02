@@ -193,6 +193,24 @@ check('materialExclude/Prefer 跨规则并集（不再后者覆盖前者）', ()
   assert.ok(r.params && r.params.materialExclude.some((x) => /CF|碳/i.test(x)), '绝缘 → 排 CF 保留');
 });
 
+check('v64 基线覆盖：工程 3mf 内嵌参数作起点，工况规则照常叠加，安全键不采纳', () => {
+  const r = applyRules({ load_magnitude: 'heavy' }, {
+    baseline: {
+      layerHeight: 0.16,       // 白名单数值：应采纳（规则未覆盖的键保持基线值）
+      infillDensity: 99,       // 与重载规则（infillDensity 60, priority 30）冲突 → 规则后到覆盖基线
+      materialExclude: ['^ABS'], // 安全键：文件不可信，必须被忽略（工况反推兜底）
+      wallLoops: 'not-a-number', // 类型不符：忽略
+      hackerKey: 'x',           // 白名单外：忽略
+    },
+  });
+  assert.strictEqual(r.blocked, false);
+  assert.strictEqual(r.params.layerHeight, 0.16, '基线层高应采纳（无规则覆盖）');
+  assert.strictEqual(r.params.infillDensity, 60, '重载规则应覆盖基线填充（priority 30 后应用）');
+  assert.strictEqual(r.params.wallLoops, 4, '重载墙数规则照常生效');
+  assert.deepStrictEqual(r.params.materialExclude, [], '文件携带的 materialExclude 必须忽略');
+  assert.ok(!('hackerKey' in r.params), '白名单外键不入参');
+});
+
 // ---------- 清理 tmp 规则文件 ----------
 try { require('fs').unlinkSync(process.env.PROCESS_RULES_FILE); } catch { /* 不存在即可 */ }
 

@@ -32,7 +32,13 @@ function allOrientations() {
   const out = [];
   const perms = [[0, 1, 2], [0, 2, 1], [1, 0, 2], [1, 2, 0], [2, 0, 1], [2, 1, 0]];
   for (const p of perms) {
-    for (const s of SIGN_COMBOS) out.push({ p, s, flip: determinant(p, s) < 0 });
+    for (const s of SIGN_COMBOS) {
+      // 只保留正当变换（det=+1，纯旋转可达的姿态）：det=-1 的组合是镜像——
+      // 手性件（螺纹/桨叶/卡扣左右件）会产出「打印出来是反的」物理事故。
+      // 6 置换 × 4 符号 = 24 个旋转候选，与文件头口径一致；flip 恒 false 保留字段兼容旧序列化。
+      if (determinant(p, s) < 0) continue;
+      out.push({ p, s, flip: false });
+    }
   }
   return out;
 }

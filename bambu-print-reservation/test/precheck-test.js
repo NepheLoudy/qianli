@@ -21,10 +21,11 @@ async function main() {
   ];
   const a1Online = { id: '1', stateStale: false, ams: [{ slot: '外部料架', type: 'PLA', amsId: 254, trayId: 0 }] };
 
-  checks.push(['机队无同型号机：禁止提交', async () => {
-    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab P1S', filaments: [{ type: 'PLA' }], printers: [printers[0]], apiStates: [] });
+  checks.push(['机队无同品牌机：禁止提交（跨品牌铁律，v64 前为「无同型号」口径）', async () => {
+    const ff = { id: '5', name: 'A5P', model: 'Flashforge Adventurer 5M Pro', autoDispatch: true };
+    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab P1S', filaments: [{ type: 'PLA' }], printers: [ff], apiStates: [] });
     assert.strictEqual(v.blocked, true);
-    assert.ok(/同型号登记机/.test(v.errors[0]));
+    assert.ok(/同品牌登记机/.test(v.errors[0]));
     assert.ok(/现有机型/.test(v.errors[0]), '报错带机队现有机型清单');
   }]);
 
@@ -36,7 +37,21 @@ async function main() {
     const v2 = precheckSlicedSubmission({ machineModel: 'Bambu Lab X1 Carbon 0.4 nozzle', filaments: [{ type: 'PLA' }], printers: [x1c], apiStates: x1cStates });
     assert.strictEqual(v2.blocked, false, '带喷嘴尾缀的长串同样放行');
     const v3 = precheckSlicedSubmission({ machineModel: 'X1 Carbon', filaments: [{ type: 'PLA' }], printers: [printers[0]], apiStates: [a1Online] });
-    assert.strictEqual(v3.blocked, true, '真·机队无机型的仍拦（A1mini 队无 X1C）');
+    assert.strictEqual(v3.blocked, false, 'v64 品牌族放行：Bambu 件在 Bambu 队不再硬拦');
+    assert.ok(v3.warnings.some((w) => /不在机队/.test(w)), '应带机型不在队的兼容警告');
+  }]);
+
+  checks.push(['v64 P2S 实案：队内无 P2S 但有拓竹机 → 放行+警告（Poop-Bucket 实案回归）', async () => {
+    const h2d = { id: '9', name: 'H2D', model: 'H2D', autoDispatch: true };
+    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab P2S', filaments: [{ type: 'PLA' }], printers: [h2d, printers[0]], apiStates: [] });
+    assert.strictEqual(v.blocked, false, 'P2S 切的件应放行到拓竹机');
+    assert.ok(v.warnings.some((w) => /P2S/.test(w) && /兼容/.test(w)), '应提示按同品牌兼容处理');
+  }]);
+
+  checks.push(['v64 跨品牌仍拦：P2S 切片对纯闪铸队 → 硬拦', async () => {
+    const ff = { id: '3', name: 'A5P', model: 'Flashforge Adventurer 5M Pro', autoDispatch: true };
+    const v = precheckSlicedSubmission({ machineModel: 'Bambu Lab P2S', filaments: [{ type: 'PLA' }], printers: [ff], apiStates: [] });
+    assert.strictEqual(v.blocked, true, '品牌不符铁律不变');
   }]);
 
   checks.push(['同型号有机但无对应耗材：禁止提交', async () => {

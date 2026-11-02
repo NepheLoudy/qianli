@@ -27,7 +27,7 @@ function familyOf(features, fallbackName) {
       Math.round(Number(f.bbox.x) * 10),
       Math.round(Number(f.bbox.y) * 10),
       Math.round(Number(f.bbox.z) * 10),
-      Math.round((Number(f.volume) || 0) / 1000),
+      Math.round(Number(f.volumeCm3) || 0), // 审查修复（v62）：体检产出字段叫 volumeCm3（cm³），原读 f.volume 恒 0
       Number(f.holes && f.holes.count) || 0,
       Math.round(Number(f.curvedPct) || 0),
     ].join('|');
@@ -42,7 +42,10 @@ function load() {
     const data = JSON.parse(fs.readFileSync(FILE, 'utf-8'));
     return Array.isArray(data.samples) ? data.samples : [];
   } catch (err) {
-    // 样本是资产：损坏隔离另存，防下一次 save 静默覆盖（对齐 reservationStore 的 .corrupt-<ts> 口径）
+    // 样本是资产：损坏隔离另存，防下一次 save 静默覆盖（对齐 reservationStore 的 .corrupt-<ts> 口径）。
+    // 审查修复（v62）：只对 JSON 解析失败隔离——瞬时 fs 错误（EPERM/EBUSY）上抛保留现场，
+    // 防杀软/索引器把仅存的样本索引改名缩水
+    if (!(err instanceof SyntaxError)) throw err;
     const quarantine = `${FILE}.corrupt-${new Date().toISOString().replace(/[:.]/g, '-')}`;
     try { fs.renameSync(FILE, quarantine); console.error(`[训练集] 样本库损坏已隔离 → ${quarantine}`); }
     catch (mv) { console.error('[训练集] 样本库损坏且隔离失败（下次 save 将覆盖！）:', err.message, '|', mv.message); }
@@ -188,11 +191,17 @@ const trainingStore = {
     return { ...s };
   },
 
-  /** 按源单回填打印结果（2026-10-16 审批入库链）：dispatcher 完成/失败钩子调用；无对应样本返回 null */
+  /** 按源单回填打印结果（2026-10-16 审批入库链）：dispatcher 完成/失败钩子调用；无对应样本返回 null。
+   *  v83 多源单适配：一盘多件入库建多条同源样本，逐条全部回填（返回首条更新结果，单源语义不变） */
   setOutcomeBySource(sourceRecordId, outcome) {
-    const s = load().find((x) => x.sourceRecordId === String(sourceRecordId || ''));
-    if (!s) return null;
-    return this.setOutcome(s.id, outcome);
+    const hits = load().filter((x) => x.sourceRecordId === String(sourceRecordId || ''));
+    if (!hits.length) return null;
+    let first = null;
+    for (const s of hits) {
+      const r = this.setOutcome(s.id, outcome);
+      if (r && !first) first = r;
+    }
+    return first;
   },
 
   /**
@@ -202,22 +211,30 @@ const trainingStore = {
    * orientation 或 placement 时不覆盖。无对应样本返回 null（未入库单不强行入库）。
    */
   setOrientationBySource(sourceRecordId, orientation) {
-    const s = load().find((x) => x.sourceRecordId === String(sourceRecordId || ''));
-    if (!s) return null;
-    if (s.orientation || (Array.isArray(s.placement) && s.placement.length === 4)) {
-      return { skipped: true, reason: '已有更强标签（专家/人工），自举不覆盖', id: s.id };
+    const hits = load().filter((x) => x.sourceRecordId === String(sourceRecordId || ''));
+    if (!hits.length) return null;
+    // v83 多源单适配：全部同源样本逐条判定/回填（返回首条结果，单源语义不变）
+    const upd = new Map();
+    let first = null;
+    for (const s of hits) {
+      if (s.orientation || (Array.isArray(s.placement) && s.placement.length === 4)) {
+        if (!first) first = { skipped: true, reason: '已有更强标签（专家/人工），自举不覆盖', id: s.id };
+        continue;
+      }
+      const q = orientation && Array.isArray(orientation.quaternion) ? orientation.quaternion : null;
+      if (!q || q.length !== 4 || q.some((v) => !Number.isFinite(Number(v)))) {
+        throw new Error('orientation.quaternion 必须是 [x,y,z,w]');
+      }
+      s.orientation = {
+        quaternion: q.map(Number),
+        source: String(orientation.source || 'auto-confirmed').slice(0, 32),
+        note: orientation.note ? String(orientation.note).slice(0, 200) : '',
+      };
+      upd.set(s.id, s);
+      if (!first) first = { ok: true, id: s.id, orientation: s.orientation };
     }
-    const q = orientation && Array.isArray(orientation.quaternion) ? orientation.quaternion : null;
-    if (!q || q.length !== 4 || q.some((v) => !Number.isFinite(Number(v)))) {
-      throw new Error('orientation.quaternion 必须是 [x,y,z,w]');
-    }
-    s.orientation = {
-      quaternion: q.map(Number),
-      source: String(orientation.source || 'auto-confirmed').slice(0, 32),
-      note: orientation.note ? String(orientation.note).slice(0, 200) : '',
-    };
-    save(load().map((x) => (x.id === s.id ? s : x)));
-    return { ok: true, id: s.id, orientation: s.orientation };
+    if (upd.size) save(load().map((x) => upd.get(x.id) || x));
+    return first;
   },
 
   /**
@@ -226,18 +243,25 @@ const trainingStore = {
    * 时间/耗材模型的原始素材。仅记结构化数字，缺失维度传 null 即不覆盖。
    */
   setSliceStatsBySource(sourceRecordId, stats) {
-    const s = load().find((x) => x.sourceRecordId === String(sourceRecordId || ''));
-    if (!s) return null;
-    const next = {
-      estMinutes: Number.isFinite(Number(stats && stats.estMinutes)) && Number(stats.estMinutes) > 0 ? Number(stats.estMinutes) : (s.sliceStats && s.sliceStats.estMinutes) || null,
-      actualMinutes: Number.isFinite(Number(stats && stats.actualMinutes)) && Number(stats.actualMinutes) > 0 ? Number(stats.actualMinutes) : (s.sliceStats && s.sliceStats.actualMinutes) || null,
-      filamentGrams: Number.isFinite(Number(stats && stats.filamentGrams)) && Number(stats.filamentGrams) > 0 ? Number(stats.filamentGrams) : (s.sliceStats && s.sliceStats.filamentGrams) || null,
-      machine: String((stats && stats.machine) || (s.sliceStats && s.sliceStats.machine) || '').slice(0, 40),
-      recordedAt: new Date().toISOString(),
-    };
-    s.sliceStats = next;
-    save(load().map((x) => (x.id === s.id ? s : x)));
-    return { ok: true, id: s.id, sliceStats: s.sliceStats };
+    const hits = load().filter((x) => x.sourceRecordId === String(sourceRecordId || ''));
+    if (!hits.length) return null;
+    // v83 多源单适配：全部同源样本逐条回填（返回首条结果，单源语义不变）
+    const upd = new Map();
+    let first = null;
+    for (const s of hits) {
+      const next = {
+        estMinutes: Number.isFinite(Number(stats && stats.estMinutes)) && Number(stats.estMinutes) > 0 ? Number(stats.estMinutes) : (s.sliceStats && s.sliceStats.estMinutes) || null,
+        actualMinutes: Number.isFinite(Number(stats && stats.actualMinutes)) && Number(stats.actualMinutes) > 0 ? Number(stats.actualMinutes) : (s.sliceStats && s.sliceStats.actualMinutes) || null,
+        filamentGrams: Number.isFinite(Number(stats && stats.filamentGrams)) && Number(stats.filamentGrams) > 0 ? Number(stats.filamentGrams) : (s.sliceStats && s.sliceStats.filamentGrams) || null,
+        machine: String((stats && stats.machine) || (s.sliceStats && s.sliceStats.machine) || '').slice(0, 40),
+        recordedAt: new Date().toISOString(),
+      };
+      s.sliceStats = next;
+      upd.set(s.id, s);
+      if (!first) first = { ok: true, id: s.id, sliceStats: next };
+    }
+    if (upd.size) save(load().map((x) => upd.get(x.id) || x));
+    return first;
   },
 
   list() {

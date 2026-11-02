@@ -46,7 +46,7 @@ function toggleTheme() {
     <div style="display:flex;align-items:center;gap:10px;margin-left:auto">
       <div class="userbox" id="userbox" style="display:none"></div>
       <nav class="site-nav"><a href="/">预约中心</a><a href="/approve.html" class="on">审批台</a><a href="/train.html">训练台</a><a href="/status.html">观察台</a></nav>
-    <button class="theme-toggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
+    <button class="theme-toggle" data-no-loading="1" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
       <a href="/" style="font-size:13px;color:var(--accent)">← 预约中心</a>
     </div>
   </div>
@@ -72,7 +72,7 @@ function toggleTheme() {
   <div id="appBody" style="display:none">
     <div class="card">
       <h2>⏳ 待审批 <span class="sub" id="pendingCount">（每 15s 自动刷新）</span></h2>
-      <div id="pendingList"><div class="empty">加载中…</div></div>
+      <div id="pendingList"><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div></div>
     </div>
     <div class="card">
       <h2>📜 最近处理 <span class="sub">（只读，最近 20 条）</span></h2>
@@ -115,16 +115,38 @@ function renderIdentity() {
   if (!ME) { box.style.display = 'none'; $('appBody').style.display = 'none'; $('noPerm').style.display = 'none'; $('loginBox').style.display = 'block'; return; }
   box.style.display = 'block';
   box.innerHTML = `你好，<b>${esc(ME.displayName)}</b><span class="role r-${esc(ME.role)}">${esc(ME.role)}</span>
-    <a href="/">预约中心</a><button onclick="logout()">退出</button>`;
+    <button onclick="logout()">退出</button>`;
   $('loginBox').style.display = 'none';
   if (!isReviewer()) { $('noPerm').style.display = 'block'; $('appBody').style.display = 'none'; return; }
   $('noPerm').style.display = 'none'; $('appBody').style.display = 'block';
 }
+// 轮询守卫（审查修复 v62）：interval 防叠加（页内重登会重复 enter）+ 页面隐藏暂停、
+// 恢复时立即拉一轮——后台标签页不再持续打服务端
+let __pollTimer = null;
+function startPolling(fn, ms) {
+  if (__pollTimer) clearInterval(__pollTimer);
+  __pollTimer = setInterval(fn, ms);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
+    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
+  });
+}
+async function amsSync(btn) {
+  btn.disabled = true; const old = btn.textContent; btn.textContent = '⏳ 同步中…';
+  try {
+    const res = await fetch('/api/printers/ams-sync', { method: 'POST' });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '同步失败');
+    const ok = (data.results || []).filter((r) => r.ok).length;
+    setTimeout(loadAll, 1500);
+    toast('🔄 已触发 ' + ok + ' 台拓竹机全量重推——料盘数据 1~2 秒内刷新');
+  } catch (e) { toast('❌ ' + e.message); }
+  btn.disabled = false; btn.textContent = old;
+}
 function enter() {
   renderIdentity();
   if (!isReviewer()) return;
-  loadAll();
-  setInterval(loadAll, 15000);
+  startPolling(loadAll, 15000);
 }
 
 // ---------- 数据 ----------
@@ -137,15 +159,53 @@ async function loadAll() {
     if (resPrinters.ok) window.__printers = await resPrinters.json();
     const pending = records.filter((r) => r.status === '待审批');
     const recent = records.filter((r) => r.status !== '待审批').slice().reverse().slice(0, 20);
+    // v82 渐进渲染：先渲待批（高频关键），近期单让出主线程一帧后再渲——首屏不等全量 DOM
     renderPending(pending);
+    await new Promise((r2) => requestAnimationFrame(() => requestAnimationFrame(r2)));
     renderRecent(recent);
   } catch (err) {
     $('pendingList').innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
   }
 }
 
+// ---------- 参数智能层 provenance（v60）：模型修正/建议在审批台透明展示 ----------
+function modelProvenanceEntries(pv) {
+  if (!pv || !pv.params) return [];
+  return Object.entries(pv.params).map(([k, v]) => ({ key: k, ...v }));
+}
+
+/** 列表卡摘要：生效模式标「已修正」，影子模式标「建议」 */
+function modelProvenanceSummary(pv) {
+  const entries = modelProvenanceEntries(pv);
+  if (!entries.length) return '';
+  const fmt = (e) => `${esc(PARAM_LABELS[e.key] || e.key)} ${esc(e.ruleValue)}→<b>${esc(e.modelValue)}</b>（${esc(Math.round((e.confidence || 0) * 100))}%）`;
+  const head = pv.mode === 'active'
+    ? (pv.used ? '✅ 已按模型修正' : '模型已评估（置信不足未改动）')
+    : '影子建议（未生效）';
+  const applied = entries.filter((e) => e.applied);
+  const show = applied.length ? applied : entries.filter((e) => Number.isFinite(e.modelValue)).slice(0, 4);
+  return `${esc(head)} <b>v${esc(pv.modelVersion || '')}</b>：${show.map(fmt).join(' · ')}${show.length < entries.length ? ' …' : ''}`;
+}
+
+/** 详情弹层：逐参数模型依据表（规则值 / 模型值 / 来源 / 置信度 / 参考案例） */
+function modelProvenanceTable(pv) {
+  const entries = modelProvenanceEntries(pv);
+  if (!entries.length) return '';
+  const rows = entries.map((e) => `<tr>
+    <td><b>${esc(PARAM_LABELS[e.key] || e.key)}</b></td>
+    <td>${esc(e.ruleValue)}</td>
+    <td>${esc(e.modelValue)}</td>
+    <td>${e.source === 'knn' ? '案例推理' : (e.source === 'mlp' ? '神经网络' : '岭回归')}</td>
+    <td>${esc(Math.round((e.confidence || 0) * 100))}%${e.applied ? ' ✅已生效' : (pv.mode === 'active' ? '（低于门限，回退规则值）' : '（影子建议）')}</td>
+    <td class="detail">${esc((e.neighbors || []).map((n) => '#' + n.id + '(' + n.value + ')').join(' '))}</td>
+    <td class="detail">${Number.isFinite(e.lofoMae) ? e.lofoMae.toFixed(3) + ' vs ' + e.baselineMae.toFixed(3) : '—'}</td>
+  </tr>`).join('');
+  return `<div style="margin-top:8px"><b class="detail">🧠 参数智能层（v${esc(pv.modelVersion || '')}，${pv.mode === 'active' ? '生效模式' : '影子模式——建议未改动切片参数'}）</b>
+    <table><thead><tr><th>参数</th><th>规则值</th><th>模型值</th><th>来源</th><th>置信度</th><th>参考案例</th><th>LOFO MAE vs 基线</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
 function renderPending(list) {
-  $('pendingCount').textContent = `（${list.length} 单待审批 · 每 15s 自动刷新）`;
+  $('pendingCount').innerHTML = `（${list.length} 单待审批 · 每 15s 自动刷新） <button class="mini ghost" onclick="amsSync(this)" title="换料后让拓竹机重推料盘数据">🔄 AMS 同步</button>`;
   const box = $('pendingList');
   if (!list.length) { box.innerHTML = '<div class="empty">🎉 暂无待审批单</div>'; return; }
   box.innerHTML = list.map((r) => {
@@ -156,9 +216,10 @@ function renderPending(list) {
       ? `<span class="detail">📦 3mf 直通（内嵌: ${Object.entries(r.embeddedParams.params || {}).slice(0, 5).map(([k, v]) => esc((PARAM_LABELS[k] || k) + '=' + v)).join(' · ')}${Object.keys(r.embeddedParams.params || {}).length > 5 ? ' …' : ''}${r.estMinutes ? '｜预计 ' + fmtMins(r.estMinutes) : ''}）</span>`
       : '<span class="detail">📦 3mf 直通（切片参数内嵌）</span>');
     const rules = (r.appliedRules || []).map((x) => esc(x.reason)).join('；');
+    const pmLine = modelProvenanceSummary(r.modelProvenance);
     const hist = (r.history || []).slice(-2).map((h) => `${esc((h.at || '').replace('T', ' ').slice(5, 16))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).join(' ｜ ');
     const unsliced = !/\.(3mf|gcode|gx|g)$/i.test(r.fileName || '');
-    return `<div class="qitem">
+    return `<div class="qitem" data-rid="${esc(r.id)}">
       <div class="qhead">
         <span class="badge s-待审批">待审批</span>
         <b>${esc(r.id)}</b>
@@ -170,6 +231,7 @@ function renderPending(list) {
       ${srcTag ? `<div class="qline">${srcTag}</div>` : ''}
       ${params ? `<div class="qline"><span class="lbl">参数</span>${params}${paramEntries.length > 10 ? ` <span class="detail">…共 ${paramEntries.length} 项</span>` : ''}</div>` : ''}
       ${rules ? `<div class="qline"><span class="lbl">依据</span><span class="detail">${rules}</span></div>` : ''}
+      ${pmLine ? `<div class="qline"><span class="lbl">🧠 模型</span><span class="detail">${pmLine}</span></div>` : ''}
       ${hist ? `<div class="qline"><span class="lbl">轨迹</span><span class="detail">${hist}</span></div>` : ''}
       ${unsliced ? '<div class="qline" style="color:var(--warn)">⚠️ 未切片模型——审批通过后服务端按份数自动切片并排盘（仅拓竹机型；闪铸需预先切好 gcode）</div>' : ''}
       <div class="actions">
@@ -199,9 +261,9 @@ function renderRecent(list) {
 /** 3D 预览 + Z 轴截面 + 切片回读校验：
  *  · /mesh 端点取源文件网格（STL/3MF/STEP 同源解析）→ 只读渲染 + Z 裁剪滑块；
  *  · /fit 端点取「切片产物内嵌参数 ↔ 规则引擎参数」拟合度 v2（容差/加权/差异表）。 */
-async function jget(url) {
+async function jget(url, signal) {
   try {
-    const r = await fetch(url);
+    const r = await fetch(url, { signal });
     const d = await r.json().catch(() => ({}));
     return { ok: r.ok, data: d };
   } catch (e) {
@@ -233,14 +295,26 @@ async function jpost(url, body) {
 async function openPreview(id) {
   const dlg = document.createElement('dialog');
   dlg.style.cssText = 'width:min(920px,94vw);max-width:94vw;max-height:92vh;overflow:auto';
-  dlg.innerHTML = '<div class="detail">加载中…</div>';
+  // v76：骨架屏立即渲染（弹层秒开），数据分批注入——不再是空白「加载中…」卡半天
+  dlg.innerHTML = `<div class="detail" id="pvSkeleton">⏳ 拉取预览数据中……大切片首次解析约需十几秒（服务端有缓存，第二次秒开）</div>`;
   document.body.appendChild(dlg);
   dlg.showModal();
+  // v76：请求级超时（12s）——任何一个端点卡死不再拖死整个弹层（失败按不可用降级）
+  // v83：超时真 abort 底层请求（此前 Promise.race 到点只是不再等，slice-layers 的
+  // 服务端解析照旧占着连接与 CPU）
+  const jgetT = (url, ms = 12000) => new Promise((resolve) => {
+    const ac = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    const timer = setTimeout(() => {
+      if (ac) ac.abort();
+      resolve({ ok: false, data: { error: '请求超时（' + Math.round(ms / 1000) + 's）' } });
+    }, ms);
+    jget(url, ac ? ac.signal : undefined).then((r) => { clearTimeout(timer); resolve(r); });
+  });
   const [recR, meshR, fitR, sliceR] = await Promise.all([
-    jget(`/api/reservations/${id}`),
-    jget(`/api/reservations/${id}/mesh`),
-    jget(`/api/reservations/${id}/fit`),
-    jget(`/api/reservations/${id}/slice-layers`),
+    jgetT(`/api/reservations/${id}`),
+    jgetT(`/api/reservations/${id}/mesh`),
+    jgetT(`/api/reservations/${id}/fit`),
+    jgetT(`/api/reservations/${id}/slice-layers`, 60000), // 大 gcode 首次解析放宽到 60s
   ]);
   const rec = recR.ok ? recR.data : null;
   const mesh = meshR.ok ? meshR.data : null;
@@ -251,12 +325,14 @@ async function openPreview(id) {
   const verdictMap = { pass: ['✅ 通过', 'var(--ok)'], warn: ['⚠️ 接近', 'var(--warn)'], fail: ['❌ 差异大', 'var(--bad)'] };
   const vd = fit ? (verdictMap[fit.verdict] || ['—', 'var(--muted)']) : null;
   const fitRows = fit ? fitRowsHtml(fit) : '';
+  const baseline = await ensureBaseline(); // v64 参数指纹数据源（拉一次缓存）
+  const fingerprint = paramFingerprint(fitInfo && fitInfo.engineParams, baseline);
   const engineList = fitInfo && fitInfo.engineParams
     ? Object.entries(fitInfo.engineParams).filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null)
         .map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ')
     : '';
   dlg.innerHTML = `<h3 style="font-size:15px;margin-bottom:6px">🔍 预览 · ${esc(id)}</h3>
-    <div class="detail" style="margin-bottom:8px">${esc((rec && rec.fileName) || '')}${fitInfo && fitInfo.machineModel ? ' ｜ 内嵌机型：<b>' + esc(fitInfo.machineModel) + '</b>' : ''}</div>
+    <div class="detail" style="margin-bottom:8px">${esc((rec && rec.fileName) || '')}${!recR.ok ? ' ｜ <b style="color:var(--bad)">' + esc((recR.data && recR.data.error) || '单据拉取失败') + '</b>' : ''}${fitInfo && fitInfo.machineModel ? ' ｜ 内嵌机型：<b>' + esc(fitInfo.machineModel) + '</b>' : ''}</div>
     ${mesh ? `
     <div style="position:relative">
       <canvas id="pvCanvas" style="width:100%;height:380px;display:block;background:#0c1016;border:1px solid var(--line2);border-radius:4px"></canvas>
@@ -290,9 +366,23 @@ async function openPreview(id) {
         : `<div class="detail">${fitInfo && fitInfo.blocked ? '⚠️ 勾选存在硬冲突：' + esc((fitInfo.errors || []).join('；')) : '📦 需求链路单（无内嵌切片参数，如 STL/STEP 或闪铸 gcode）——无回读对象'}</div>`}
       ${engineList ? `<div class="detail" style="margin-top:6px"><b>引擎参数</b>：${engineList}</div>` : ''}
       ${fitInfo && fitInfo.appliedRules && fitInfo.appliedRules.length ? `<div class="detail" style="margin-top:4px"><b>依据</b>：${fitInfo.appliedRules.map((x) => esc(x.reason)).join('；')}</div>` : ''}
+      ${modelProvenanceTable(rec && rec.modelProvenance)}
+      ${fingerprint}
     </div>
     <div class="actions" style="justify-content:flex-end"><button class="mini" id="pvClose">关闭</button></div>`;
-  dlg.querySelector('#pvClose').onclick = () => dlg.close();
+  // 审查修复（v62）：弹窗从 DOM 移除 + WebGL 上下文显式释放——原来只 close 不 remove，
+  // 每次「预览」泄漏一个 dialog 和一个 WebGL 上下文（浏览器上限约 8-16 个），
+  // 审批人连续预览十几次后网格预览永久失效（getContext 返回 null）直至刷新整页
+  dlg.querySelector('#pvClose').onclick = () => {
+    try {
+      const canvas = dlg.querySelector('#pvCanvas');
+      const gl = canvas && (canvas.getContext('webgl') || canvas.getContext('experimental-webgl'));
+      const lose = gl && gl.getExtension('WEBGL_lose_context');
+      if (lose) lose.loseContext();
+    } catch { /* 释放尽力而为 */ }
+    dlg.close();
+    dlg.remove();
+  };
   if (mesh) {
     try {
       const canvas = dlg.querySelector('#pvCanvas');
@@ -323,8 +413,12 @@ async function openPreview(id) {
       slider.oninput = apply;
       apply();
     } catch (e) {
+      // v76：WebGL 失败自动回退切片分层视图（上下文耗尽后的可用降级，不再只写一行小字）
       const cv = dlg.querySelector('#pvCanvas');
-      if (cv) cv.insertAdjacentHTML('afterend', `<div class="detail" style="color:var(--bad)">3D 渲染失败：${esc(e.message)}</div>`);
+      if (cv) cv.insertAdjacentHTML('afterend', `<div class="detail" style="color:var(--warn)">⚠️ 3D 渲染失败（${esc(e.message)}）——下方已自动切换为刀轨分层视图</div>`);
+      if (sliceMeta) {
+        try { initSliceViewer(dlg, (i) => `/api/reservations/${id}/slice-layer?i=${i}`, sliceMeta); } catch { /* 分层也失败则维持提示 */ }
+      }
     }
   } else if (sliceMeta) {
     initSliceViewer(dlg, (i) => `/api/reservations/${id}/slice-layer?i=${i}`, sliceMeta);
@@ -441,7 +535,32 @@ async function doReview(id, action, comment, dispatch, sampleEntry) {
   if (res.status === 401) { ME = null; renderIdentity(); return toast('登录已过期'); }
   if (!res.ok) return toast('❌ ' + (data.error || '操作失败'));
   toast(`✅ ${id} ${action === 'approve' ? '已通过并入队' : '已驳回'}`);
+  if (action === 'approve') Viz.confetti(document.body); // v64：过单的小仪式感（克制版）
   loadAll();
+}
+
+// ---------- v64 参数指纹：本单参数 vs 出厂基线的归一化偏离（对称条形） ----------
+let __baselineCache = null;
+const FP_DOMAINS = { layerHeight: [0.08, 0.32], wallLoops: [1, 6], topShellLayers: [1, 10], bottomShellLayers: [1, 10], infillDensity: [0, 100], supportThresholdAngle: [10, 60], supportDensity: [0, 100], brimWidth: [0, 10], xyHoleComp: [-0.5, 0.5], xyContourComp: [-0.5, 0.5], temperatureDelta: [-20, 20], nozzleTempDelta: [-20, 20] };
+const FP_FMT = { layerHeight: (v) => v + 'mm', brimWidth: (v) => v + 'mm', xyHoleComp: (v) => v + 'mm', xyContourComp: (v) => v + 'mm', temperatureDelta: (v) => v + '°', nozzleTempDelta: (v) => v + '°', wallLoops: (v) => v + '圈', topShellLayers: (v) => v + '层', bottomShellLayers: (v) => v + '层', infillDensity: (v) => v + '%', supportThresholdAngle: (v) => v + '°', supportDensity: (v) => v + '%' };
+async function ensureBaseline() {
+  if (__baselineCache) return __baselineCache;
+  try {
+    const r = await fetch('/api/print/process-rules');
+    if (r.ok) { const d = await r.json(); __baselineCache = d.baseline || null; }
+  } catch { /* 拉不到按无指纹展示 */ }
+  return __baselineCache;
+}
+function paramFingerprint(engineParams, baseline) {
+  if (!engineParams || !baseline) return '';
+  const items = [];
+  for (const [k, [min, max]] of Object.entries(FP_DOMAINS)) {
+    const v = Number(engineParams[k]);
+    const b = Number(baseline[k]);
+    if (Number.isFinite(v)) items.push({ label: PARAM_LABELS[k] || k, value: v, base: Number.isFinite(b) ? b : v, min, max, fmt: FP_FMT[k] });
+  }
+  return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px">
+    <b class="detail" style="display:block;margin-bottom:6px">🖋 参数指纹（本单 vs 出厂基线——一眼看出这单哪里特殊）</b>${Viz.barDiff(items)}</div>`;
 }
 
 /** 通过并分发对话框（2026-10-18 自预约中心迁入）：指定目标机/AMS 槽位/喷嘴，留空自动匹配；
@@ -575,7 +694,31 @@ function renderApTrays() {
   nSel.innerHTML = '<option value="">自动</option>' + nozzles.map((n) => `<option value="${n.id}">${nzLabel(n)}${n.active ? '（当前）' : ''}</option>`).join('');
 }
 
-// ---------- 启动 ----------
+
+// ---------- 键盘快捷操作（v83d 曼波令「继续迭代便利交互」）----------
+// J/K = 上下选待审批单；E = 打开选中单的审批框；Esc = 关闭顶层 dialog。
+// 输入框/下拉聚焦时自动豁免（不打字打到一半跳单）。
+let __kbdIdx = -1;
+function kbdCards() { return [...document.querySelectorAll('#pendingList .qitem[data-rid]')]; }
+function kbdHighlight() {
+  kbdCards().forEach((el, i) => el.classList.toggle('kbd-active', i === __kbdIdx));
+  const el = kbdCards()[__kbdIdx];
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+document.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+  if (e.ctrlKey || e.altKey || e.metaKey) return;
+  const cards = kbdCards();
+  if (!cards.length) return;
+  if (e.key === 'j' || e.key === 'J') { __kbdIdx = Math.min(cards.length - 1, __kbdIdx + 1); kbdHighlight(); }
+  else if (e.key === 'k' || e.key === 'K') { __kbdIdx = Math.max(0, __kbdIdx - 1); kbdHighlight(); }
+  else if ((e.key === 'e' || e.key === 'E') && __kbdIdx >= 0 && cards[__kbdIdx]) {
+    const rid = cards[__kbdIdx].getAttribute('data-rid');
+    if (rid) openApproveDialog(rid);
+  }
+});
+// ---------- 启动（v76：loadMe 与首屏数据并行——原串行 await 链每环抖动叠加） ----------
 (async () => {
   await loadMe();
   renderIdentity();
@@ -583,6 +726,8 @@ function renderApTrays() {
   else if (ME) renderIdentity();
 })();
 </script>
+<script src="/viz.js?v=1"></script>
+<script src="/status-dock.js?v=1"></script>
 <script src="/fleet-dock.js?v=1"></script>
 </body>
 </html>

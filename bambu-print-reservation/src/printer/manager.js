@@ -83,6 +83,7 @@ class PrinterManager {
     this.clients = {};
     this.printerStates = {};
     this.listeners = [];
+    this.tempHistory = {}; // printerId → 温度采样环形数组（v64 生命体征面板，内存驻留）
     // 状态签名缓存（printerId → 上次写表签名）：60s 轮询此前无条件 upsert，
     // 状态没变化也整行重写（lastUpdate 带时间戳每行必变），白烧写配额并制造
     // 表格变更噪音——签名不变则本轮跳过写表
@@ -265,8 +266,49 @@ class PrinterManager {
       const after = patch.ams.map(sig).join(' | ');
       if (before !== after) console.log(`[料位] ${prev.name}: ${before || '(空)'} → ${after || '(空)'}`);
     }
+    // 温度历史采样（v64 生命体征面板数据源）：状态报文高频到达，限流 ≥5s 一个点；
+    // 环形上限 360 点（≈30 分钟 @5s），内存驻留不落盘（重启清空，面板自然重新积累）
+    if ((patch.nozzleTemp != null || patch.bedTemp != null)) {
+      const hist = this.tempHistory[printerId] || (this.tempHistory[printerId] = []);
+      const now = Date.now();
+      if (!hist.length || now - hist[hist.length - 1].ts >= 5000) {
+        hist.push({
+          ts: now,
+          nozzle: Number(patch.nozzleTemp ?? prev.nozzleTemp) || null,
+          bed: Number(patch.bedTemp ?? prev.bedTemp) || null,
+          nozzleTarget: Number(patch.nozzleTargetTemp ?? prev.nozzleTargetTemp) || null,
+          bedTarget: Number(patch.bedTargetTemp ?? prev.bedTargetTemp) || null,
+        });
+        if (hist.length > 360) hist.splice(0, hist.length - 360);
+      }
+    }
     const next = { ...prev, ...patch, lastUpdate: new Date() };
     this.printerStates[printerId] = next;
+  }
+
+  /** 全机队温度历史（v64 生命体征面板）：{printerId: {points, cap}}——一次请求全部拉走 */
+  getTempHistory() {
+    const out = {};
+    for (const printer of this.printerStates ? Object.values(this.printerStates) : []) {
+      out[printer.id] = { points: (this.tempHistory[printer.id] || []).slice(-360), cap: 360 };
+    }
+    return out;
+  }
+
+  /** 全机队 AMS 同步（v82）：逐在线拓竹机发 pushall 触发全量重推（闪铸 HTTP 轮询无此需要） */
+  refreshAllAms() {
+    const results = [];
+    for (const [printerId, client] of Object.entries(this.clients || {})) {
+      const p = this.printerStates[printerId] || {};
+      if (p.brand !== 'bambu' || !client) continue;
+      try {
+        client.refreshPushAll();
+        results.push({ id: Number(printerId), name: p.name, ok: true });
+      } catch (err) {
+        results.push({ id: Number(printerId), name: p.name, ok: false, error: err.message });
+      }
+    }
+    return results;
   }
 
   on(event, callback) {

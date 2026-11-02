@@ -13,6 +13,7 @@ const CANON = {
   p1s: 'p1s',
   p1p: 'p1p',
   p1: 'p1',
+  p2s: 'p2s', // v64：P2S（曼波新切片机——队里没有但件可在拓竹机打，品牌族放行用）
   h2d: 'h2d',
   h2: 'h2',
   a1mini: 'a1mini',
@@ -21,6 +22,13 @@ const CANON = {
   ad5m: 'ad5m',
   creator5pro: 'creator5pro',
   creator5: 'creator5',
+};
+
+// 机型 → 品牌族（v64 跨机型兼容：precheck「同品牌放行」的权威判定源——登记串
+// 「H2D/A1 mini」不带品牌前缀，字符串正则咬不住，必须查表）
+const BRAND_OF_KEY = {
+  x1c: 'bambu', p1s: 'bambu', p1p: 'bambu', p1: 'bambu', p2s: 'bambu', h2d: 'bambu', h2: 'bambu', a1mini: 'bambu', a1: 'bambu',
+  ad5mpro: 'flashforge', ad5m: 'flashforge', creator5pro: 'flashforge', creator5: 'flashforge',
 };
 
 function modelKey(x) {
@@ -41,4 +49,14 @@ function modelMatch(machineModel, registeredModel) {
   return a === b || a.startsWith(b) || b.startsWith(a);
 }
 
-module.exports = { modelKey, modelMatch, CANON };
+/** 机型串 → 品牌族（bambu/flashforge/unknown）：查表优先，未知 key 再按原始串前缀猜 */
+function modelBrand(model) {
+  const key = modelKey(model);
+  if (BRAND_OF_KEY[key]) return BRAND_OF_KEY[key];
+  const s = String(model || '').toLowerCase();
+  if (/bambu/.test(s)) return 'bambu';
+  if (/flashforge|adventurer|ad\d|creator/.test(s)) return 'flashforge';
+  return 'unknown';
+}
+
+module.exports = { modelKey, modelMatch, CANON, BRAND_OF_KEY, modelBrand };

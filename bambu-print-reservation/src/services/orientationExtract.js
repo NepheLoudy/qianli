@@ -55,8 +55,11 @@ function quatFromMatrix(m) {
 function parseMatrixTransform(text) {
   const nums = String(text || '').trim().split(/\s+/).map(Number);
   if (![9, 12, 16].includes(nums.length) || nums.some((n) => !Number.isFinite(n))) return null;
-  // 12/16 是 3x4/4x4 行主序，取前 12 个（3 行 × 4 列）的旋转 3x3
-  const m = nums.slice(0, 12);
+  // 审查修复（v62）：9 值是 3x3 行主序，直接 slice(0,12) 会按 4x4 索引错位取数
+  // （3x3 的 m10 在下标 3，4x4 里下标 3 是 m03）——补齐成 4x4 零平移布局再统一解读
+  const m = nums.length === 9
+    ? [nums[0], nums[1], nums[2], 0, nums[3], nums[4], nums[5], 0, nums[6], nums[7], nums[8], 0]
+    : nums.slice(0, 12);
   const q = quatFromMatrix(m);
   const angleDeg = 2 * Math.acos(Math.min(1, Math.abs(q[3]))) * 180 / Math.PI;
   return { quaternion: q, identity: angleDeg < IDENTITY_EPS_DEG, angleDeg };

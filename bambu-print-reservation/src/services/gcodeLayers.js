@@ -26,9 +26,17 @@ function parseGcodeLayers(gcodeText) {
     if (cur && cur.segs.length) layers.push(cur);
     cur = null;
   };
-  const lines = String(gcodeText || '').split(/\r?\n/);
-  for (const raw of lines) {
-    const line = raw.trim();
+  // 审查修复（v62）：逐行 indexOf 切片遍历，不 split——128MB gcode 的 split 会把
+  // 数百万行字符串数组一次性展开（峰值数百 MB），足以打爆小电脑的 pm2 进程
+  const text = String(gcodeText || '');
+  let pos = 0;
+  while (pos <= text.length) {
+    let nl = text.indexOf('\n', pos);
+    if (nl < 0) nl = text.length;
+    let line = text.slice(pos, nl);
+    pos = nl + 1;
+    if (line.endsWith('\r')) line = line.slice(0, -1);
+    line = line.trim();
     if (!line) continue;
     if (/^;\s*(CHANGE_LAYER|LAYER_CHANGE)\b/i.test(line)) {
       flush();

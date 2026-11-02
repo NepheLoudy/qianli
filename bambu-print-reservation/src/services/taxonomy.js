@@ -703,8 +703,10 @@ function selectionFromFormFields(fields) {
     if (!field) continue;
     const raw = item.value;
     if (field.type === 'bool') {
-      if (/是|需要|有|true|1|y/i.test(String(raw))) selection[field.id] = true;
-      else if (/否|不|无|false|0|n/i.test(String(raw))) { /* 显式为否：不写入 */ }
+      // 审查修复（v62）：否定词先判——「没有外观要求」含「有」，先测肯定词会误判 true
+      const boolRaw = String(raw || '');
+      if (/否|不|无|没|false|0|^n$/i.test(boolRaw)) { /* 显式为否：不写入 */ }
+      else if (/是|需要|有|true|1|^y$/i.test(boolRaw)) selection[field.id] = true;
       else unmatched.push(`${title}: 无法识别的布尔值「${raw}」`);
     } else if (field.type === 'single') {
       const label = String(raw || '').trim();

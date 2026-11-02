@@ -119,28 +119,57 @@ function extractRawParams(files) {
  * 打印用料清单（2026-10-16 曼波真单批）：slice_info.config 的 <filament> 元素——
  * 切片器记录的「本板实际用料」（类型/颜色/用量），开打帧 ams_mapping2 的匹配底料。
  * 未用料槽（used_m/used_g 均 0 且 used_for_object!=true）剔除；解析失败按空清单处理。
+ * v64 修订（H2多色.3mf 实案）：Bambu Studio 02.04 起 slice_info.config 只剩 header
+ * （205 字节实锤），清单兜底从 project_settings.config 的 filament_colour ×
+ * filament_type 平行数组按序配对提取（老格式 slice_info 优先不变）。
  */
 function parseFilaments(zip) {
   const out = [];
   try {
     const e = zip.getEntry('Metadata/slice_info.config');
-    if (!e || entrySize(e) > MAX_CONFIG_BYTES) return out;
-    const xml = e.getData().toString('utf8');
-    for (const m of xml.matchAll(/<filament\s([^>]*?)\/?>/g)) {
-      const attrs = {};
-      for (const a of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
-      const usedM = Number(attrs.used_m) || 0;
-      const usedG = Number(attrs.used_g) || 0;
-      if (attrs.used_for_object !== 'true' && usedM <= 0 && usedG <= 0) continue;
-      out.push({
-        type: attrs.type || '',
-        colorHex: String(attrs.color || '').replace('#', '').slice(0, 6),
-        trayIdx: attrs.tray_info_idx || '',
-        usedG: usedG > 0 ? usedG : null, // 耗材量标签（2026-10-27 特征标签批）：克数随清单进样本库
-      });
+    if (e && entrySize(e) <= MAX_CONFIG_BYTES) {
+      const xml = e.getData().toString('utf8');
+      for (const m of xml.matchAll(/<filament\s([^>]*?)\/?>/g)) {
+        const attrs = {};
+        for (const a of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) attrs[a[1]] = a[2];
+        const usedM = Number(attrs.used_m) || 0;
+        const usedG = Number(attrs.used_g) || 0;
+        if (attrs.used_for_object !== 'true' && usedM <= 0 && usedG <= 0) continue;
+        out.push({
+          type: attrs.type || '',
+          colorHex: String(attrs.color || '').replace('#', '').slice(0, 6),
+          trayIdx: attrs.tray_info_idx || '',
+          usedG: usedG > 0 ? usedG : null, // 耗材量标签（2026-10-27 特征标签批）：克数随清单进样本库
+        });
+      }
+    }
+    if (!out.length) {
+      const ps = zip.getEntry('Metadata/project_settings.config');
+      if (ps && entrySize(ps) <= MAX_CONFIG_BYTES) {
+        const obj = JSON.parse(ps.getData().toString('utf8'));
+        const arr = (k) => (Array.isArray(obj[k]) ? obj[k].map(String) : []);
+        const colours = arr('filament_colour');
+        const types = arr('filament_type');
+        if (colours.length && colours.length === types.length) {
+          for (let i = 0; i < colours.length; i++) {
+            out.push({ type: types[i], colorHex: colours[i].replace('#', '').slice(0, 6), trayIdx: '', usedG: null });
+          }
+        }
+      }
     }
   } catch { /* 解析失败按无清单处理 */ }
   return out;
+}
+
+/**
+ * 是否真切片产物（v64）：工程 3mf（Bambu Studio 保存的工程）没有任何 plate gcode
+ * 条目——此前被当直通单收下后，下发帧指向不存在的 Metadata/plate_1.gcode，机端
+ * 找不到任务数据秒 FAILED（R20261031-002 实案）。提交链闸门用它打回并引导。
+ * 接受 AdmZip 实例或原始 Buffer（v66 兼容——提交链前置探测传 Buffer）。
+ */
+function hasSlicedGcode(zipOrBuffer) {
+  const zip = Buffer.isBuffer(zipOrBuffer) ? new AdmZip(zipOrBuffer) : zipOrBuffer;
+  return zip.getEntries().some((f) => /metadata\/plate_\d+.*\.gcode$/i.test(f.entryName));
 }
 
 /**
@@ -189,7 +218,7 @@ function extractFrom3mf(buffer) {
     } catch { /* 解析失败按无内嵌处理 */ }
   }
 
-  return { source, params, raw, diff, estMinutes, filaments, bedType, machineModel };
+  return { source, params, raw, diff, estMinutes, filaments, bedType, machineModel, sliced: hasSlicedGcode(zip) };
 }
 
-module.exports = { extractFrom3mf, BAMBU_PARAM_MAP, parseEstimatedMinutes, parseFilaments };
+module.exports = { extractFrom3mf, BAMBU_PARAM_MAP, parseEstimatedMinutes, parseFilaments, hasSlicedGcode };

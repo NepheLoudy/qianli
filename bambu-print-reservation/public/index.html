@@ -95,6 +95,26 @@
     td::before { content: attr(data-label); display: inline-block; min-width: 62px; color: var(--subtle); font-size: 11.5px; letter-spacing: .1em; }
     td:last-child::before { content: none; }
   }
+
+  /* ---------- 浮动提交按钮（v71 曼波令：不论滚到哪里一键回提交） ---------- */
+  #fabSubmit {
+    position: fixed; right: 22px; bottom: 22px; z-index: 50;
+    display: none; align-items: center; gap: 8px;
+    background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink);
+    font: 600 14px var(--font-serif, Georgia, serif); letter-spacing: .06em;
+    padding: 13px 20px; cursor: pointer;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, .3);
+    transition: transform .12s, box-shadow .16s, filter .16s;
+  }
+  #fabSubmit:hover { filter: brightness(1.07); transform: translateY(-2px); box-shadow: 0 14px 34px rgba(0, 0, 0, .34); }
+  #fabSubmit:active { transform: translateY(2px); box-shadow: 0 4px 12px rgba(0, 0, 0, .3); }
+  #fabSubmit .fab-plus { font-size: 18px; font-weight: 700; line-height: 1; }
+  .submit-card.pulse { animation: submitPulse 1.3s ease-out 1; }
+  @keyframes submitPulse {
+    0% { border-color: var(--accent); box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent); }
+    70% { box-shadow: 0 0 0 16px transparent; }
+    100% { border-color: var(--line); }
+  }
 </style>
 </head>
 <body>
@@ -107,7 +127,7 @@
     </div>
     <div class="userbox" id="userbox"></div>
     <nav class="site-nav"><a href="/" class="on">预约中心</a><a href="/approve.html">审批台</a><a href="/train.html">训练台</a><a href="/status.html">观察台</a></nav>
-    <button class="theme-toggle" id="themeToggle" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
+    <button class="theme-toggle" id="themeToggle" data-no-loading="1" onclick="toggleTheme()" title="切换亮/暗主题"><span id="themeIcon">◐</span></button>
   </div>
 </header>
 
@@ -137,7 +157,7 @@
       <div id="printerList"><div class="empty">加载中…</div></div>
     </div>
 
-    <div class="card">
+    <div class="card submit-card" id="submitCard">
       <p class="section-label">Submit</p>
       <h2>📝 提交预约</h2>
       <div class="row">
@@ -220,13 +240,74 @@
         <label style="display:inline-flex;align-items:center;gap:4px;margin-left:10px;font-size:12px;color:var(--muted)">
           <input type="checkbox" id="onlyPending" onchange="loadList()" style="width:auto">只看待审批</label>
       </h2>
+      <div class="overview-strip" id="ovStrip" style="margin-bottom:10px">
+        <span class="overview-num" id="ovTotal">—</span><span class="overview-cap">近 12 周提单</span>
+        <span class="overview-num" id="ovWeek">—</span><span class="overview-cap">本周</span>
+        <span class="overview-num" id="ovPeak">—</span><span class="overview-cap">单日峰值</span>
+        <button class="mini" id="heatmapToggle" data-no-loading="1" onclick="toggleHeatmap()" style="margin-left:auto">▸ 活跃热力图</button>
+      </div>
+      <div id="heatmapWrap" style="display:none;margin-bottom:10px">
+        <div class="viz-card viz-grid" id="heatmapCard"></div>
+      </div>
       <div id="givenUpBar"></div>
       <div id="queueBar"></div>
-      <div id="list"></div>
+      <div id="list"><div class="card viz-skeleton" style="height:72px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:72px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:72px;margin-bottom:10px">　</div></div>
     </div>
   </div>
 </div>
 <div id="toast"></div>
+<button id="fabSubmit" onclick="jumpToSubmit()" title="回到提交表单" aria-label="回到提交表单"><span class="fab-plus">＋</span>提交预约</button>
+<script>
+  // 浮动提交按钮（v71 曼波令）：提交表单滚出视口后出现，点击平滑回表单 + 描边脉冲引导
+  (function () {
+    const fab = document.getElementById('fabSubmit');
+    const card = document.getElementById('submitCard');
+    function check() {
+      if (!card || !fab) return;
+      const r = card.getBoundingClientRect();
+      const below = r.bottom < 120 || r.top < -r.height * 0.6; // 表单大半离开视口（顶部 120px 留给 sticky 头）
+      fab.style.display = below ? 'flex' : 'none';
+    }
+    window.addEventListener('scroll', check, { passive: true });
+    window.addEventListener('resize', check);
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', check); else check();
+
+    /** 定位缺失控件：滚动到它 + 高亮脉冲 + 聚焦 */
+    function focusControl(el) {
+      if (!el) return;
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.remove('fab-missing');
+      void el.offsetWidth;
+      el.classList.add('fab-missing');
+      setTimeout(() => { try { el.focus({ preventScroll: true }); } catch { /* 非可聚焦忽略 */ } }, 450);
+      setTimeout(() => el.classList.remove('fab-missing'), 2600);
+    }
+
+    // 功能键（v74 曼波令「不满足条件时自动滚动到缺失部分，满足时直接就交」）：
+    // 复用 submitReservation 的完整校验链——文件缺失先滚到选文件框，工况/场景缺失
+    // 滚到标签区并高亮缺项，全绿时直接走正式提交（与表单内按钮完全同一条路）
+    window.jumpToSubmit = function () {
+      const file = document.getElementById('file');
+      const fileNeeded = !file || !file.files || !file.files.length;
+      if (fileNeeded) {
+        focusControl(file);
+        if (window.toast) window.toast('📎 先选择模型/切片文件');
+        return;
+      }
+      // 场景必填定位（submissionGate 的第一道；冲突类错误由后端/前置 toast 承接）
+      const sceneOn = document.querySelectorAll('.opt.on[data-field="scene_usage"]').length;
+      if (!sceneOn) {
+        const first = document.querySelector('.opt[data-field="scene_usage"]');
+        focusControl(first ? first.closest('.group') || first : null);
+        if (window.toast) window.toast('🧭 先勾选「使用场景」——FAB 会带你到那里');
+        return;
+      }
+      // 全绿 → 直接提交（正式链路；其内部 gate/pairing 逻辑照常生效）
+      card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.submitReservation();
+    };
+  })();
+</script>
 <script src="/annotator.js?v=25"></script>
 <script>
 // 主题切换（UI 层）：亮/暗持久化到 localStorage
@@ -327,8 +408,8 @@ function renderIdentity() {
   }
   $('authCard').style.display = 'none';
   $('appBody').style.display = 'block';
+  // v70：页内跳转由 site-nav 统一承载（训练录入台/审批台链接曾与导航重复）
   box.innerHTML = `你好，<b>${esc(ME.displayName)}</b><span class="role r-${ME.role}">${ME.role}</span>
-    ${isReviewer() ? '<a href="/train.html" style="font-size:12px;margin-right:4px">🎓 训练录入台</a><a href="/approve.html" style="font-size:12px;margin-right:4px">📋 审批台</a>' : ''}
     <button onclick="genBindCode()" title="生成飞书私信通知绑定码：在飞书给机器人发 /print-bind 码">🔔 飞书通知</button>
     <button onclick="changePassword()">改密码</button>
     <button onclick="logout()">退出</button>`;
@@ -1024,7 +1105,7 @@ function clearSourceFile() {
   if (bar) bar.remove();
 }
 
-/** 已配对源文件的提示条（提交区展示，可移除） */
+/** 已配对源文件的提示条（提交区展示，可移除）——v79 多源：数组时逐件列出 */
 function renderSourceFileBar() {
   clearSourceFile();
   if (!SOURCE_FILE) return;
@@ -1032,7 +1113,9 @@ function renderSourceFileBar() {
   bar.id = 'sourceFileBar';
   bar.className = 'detail';
   bar.style.marginTop = '4px';
-  bar.innerHTML = `📚 已配对源文件：<b>${esc(SOURCE_FILE.name)}</b>（随切片文件一起上传，训练素材 +1） <button class="mini" onclick="clearSourceFile()">移除</button>`;
+  const list = Array.isArray(SOURCE_FILE) ? SOURCE_FILE : [SOURCE_FILE];
+  const names = list.map((f) => `<b>${esc(f.name)}</b>`).join('、');
+  bar.innerHTML = `📚 已配对源文件（${list.length} 个）：${names}（随切片文件一起上传${list.length > 1 ? '，系统按几何指纹自动配对盘内件' : '，训练素材 +1'}） <button class="mini" onclick="clearSourceFile()">移除</button>`;
   $('file').parentElement.appendChild(bar);
 }
 
@@ -1048,19 +1131,23 @@ function askSourceFileThenSubmit(file) {
     ✅ <b>源文件</b> → 真几何特征（悬空/接触/曲率全自动分析）<br>
     ✅ <b>切片文件</b> → 专家切片参数、预估时长、用料清单<br>
     系统自动配对，打印完成后回填真实结果——<b>一次交齐就是一条高质量训练素材</b>（摆向学习、参数拟合都吃它）。<br>
+    <b>一盘多件</b>：这份切片切了多个模型？源文件<b>可以多选</b>——系统按几何指纹自动配对「哪个源文件是盘里哪件」，逐件入库。<br>
     <span style="color:var(--warn)">⚠️ 源文件不会被打印，只进训练库——不影响本单分发。</span></div>
     <div class="actions" style="margin-top:10px">
       <button class="ok" id="srcPick">有，选择源文件并提交</button>
       <button class="mini" id="srcSkip">没有，直接提交</button>
     </div>
-    <input type="file" id="srcInput" accept=".step,.stp,.stl,.obj" style="display:none">`;
+    <input type="file" id="srcInput" accept=".step,.stp,.stl,.obj" multiple style="display:none">`;
   document.body.appendChild(dlg);
   dlg.querySelector('#srcSkip').onclick = () => { dlg.close(); doSubmit(); };
   dlg.querySelector('#srcPick').onclick = () => dlg.querySelector('#srcInput').click();
   dlg.querySelector('#srcInput').addEventListener('change', () => {
-    const sf = dlg.querySelector('#srcInput').files[0];
+    const files = Array.from(dlg.querySelector('#srcInput').files || []);
     dlg.close();
-    if (sf) { SOURCE_FILE = sf; renderSourceFileBar(); }
+    if (files.length) {
+      SOURCE_FILE = files.length === 1 ? files[0] : files; // v79 多源：数组形态（提交时逐个 append）
+      renderSourceFileBar();
+    }
     doSubmit();
   });
   dlg.showModal();
@@ -1082,7 +1169,7 @@ function doSubmit() {
 
   const fd = new FormData();
   fd.append('file', file);
-  if (SOURCE_FILE) fd.append('sourceFile', SOURCE_FILE); // CAD 源文件配对（训练素材，2026-10-27）
+  if (SOURCE_FILE) for (const sf of (Array.isArray(SOURCE_FILE) ? SOURCE_FILE : [SOURCE_FILE])) fd.append('sourceFile', sf); // CAD 源文件配对（2026-10-27；v79 多源逐个 append）
   fd.append('materialType', $('materialType').value.trim());
   fd.append('color', $('color').value.trim());
   fd.append('assignedPrinter', $('assignedPrinter').value.trim());
@@ -1134,11 +1221,16 @@ async function loadList() {
   const records = await res.json();
   window.__records = records; // 行内操作从缓存取单（避免 onclick 内联 JSON 截断）
   loadGivenUp();
+  renderHeatmap(records); // v64 热力日历（近 12 周提单密度）
   const shown = $('onlyPending')?.checked ? records.filter(r => r.status === '待审批') : records;
   const box = $('list');
   if (!Array.isArray(shown) || shown.length === 0) { box.innerHTML = `<div class="empty">${$('onlyPending')?.checked ? '暂无待审批单' : '暂无预约记录'}</div>`; return; }
   const printers = window.__printers || [];
-  const rows = shown.slice().reverse().map(r => {
+  // v67 行动分区（第一性原理：按「用户此刻要做什么」分组，不再统一时间流）：
+  //   ① 需要行动（待取件回执 / 放弃池待恢复）——醒目置顶
+  //   ② 进行中（待审批/排队/打印）——常规表格
+  //   ③ 历史归档（已完成已回执/已取消/已驳回）——默认收起最近 3 条
+  const rowHtml = r => {
     const mine = ME && r.submittedBy === ME.id;
     // 参数快照折叠（2026-10-08 展示优化）：默认展示前 8 项，其余「+N 项」展开
     const paramEntries = r.processParams ? Object.entries(r.processParams)
@@ -1194,11 +1286,32 @@ async function loadList() {
       <td data-label="参数与轨迹" class="detail">${srcTag}${params ? '<b>参数</b> ' + params + '<br>' : ''}${rules ? '<b>依据</b> ' + rules + '<br>' : ''}${hist}</td>
       <td data-label="操作">${cancelBtn}${reprintBtn}${reassignBtn}${receiptBtn}</td>
     </tr>`;
-  }).join('');
-  box.innerHTML = `<table>
+  };
+  const tableHtml = list => `<table>
     <thead><tr><th>单号</th><th>状态</th><th>发起人/文件</th><th>需求</th><th>参数与轨迹</th><th>操作</th></tr></thead>
-    <tbody>${rows}</tbody></table>`;
+    <tbody>${list.map(rowHtml).join('')}</tbody></table>`;
+  // 分组（时间新→旧遍历，组内保持时序）
+  const action = [], active = [], history = [];
+  for (const r of shown.slice().reverse()) {
+    const needsMe = (r.status === '已完成' && !r.receipt) || GIVEN_UP_IDS.has(r.id);
+    (needsMe ? action : (['待审批', '排队中', '打印中'].includes(r.status) ? active : history)).push(r);
+  }
+  const parts = [];
+  if (action.length) {
+    parts.push(`<div class="actZone"><div class="zoneHead">🔔 需要你行动<span class="detail">——取件确认 / 恢复待处理单</span></div>${tableHtml(action)}</div>`);
+  }
+  parts.push(active.length ? tableHtml(active) : `<div class="empty">没有进行中的单据</div>`);
+  if (history.length) {
+    const open = __histZoneOpen;
+    const shownHist = open ? history : history.slice(0, 3);
+    parts.push(`<div class="histZone"><div class="zoneHead">历史归档（${history.length}）<button class="mini ghost" onclick="toggleHistZone()" data-no-loading>${open ? '▲ 收起' : `▼ 展开全部`}</button></div>${tableHtml(shownHist)}</div>`);
+  }
+  box.innerHTML = parts.join('');
 }
+
+// 分区折叠状态（跨 15s 自动刷新保留；会话内有效）
+let __histZoneOpen = false;
+function toggleHistZone() { __histZoneOpen = !__histZoneOpen; loadList(); }
 
 // 折叠状态（跨 15s 自动刷新保留；会话内有效）
 const expandedHist = new Set();
@@ -1240,20 +1353,23 @@ function renderQueueBar(queue, printing) {
   const bar = $('queueBar');
   queue = queue || [];
   printing = printing || [];
-  const known = queue.filter(t => Number(t.estMinutes) > 0);
-  const sum = known.reduce((s, t) => s + Number(t.estMinutes), 0);
-  const unknown = queue.length - known.length;
-  const printSum = printing.reduce((s, p) => s + (Number(p.remainingMinutes) || 0), 0);
-  const parts = [];
-  if (queue.length) parts.push(`队列预估总时长 <b>${sum > 0 ? '~' + fmtMins(sum) : '未知'}</b>${unknown > 0 ? `（${unknown} 单无预估）` : ''}`);
-  if (printing.length) parts.push(`在打 ${printing.length} 台实时剩余合计 <b>${printSum > 0 ? '~' + fmtMins(printSum) : '未知'}</b>`);
-  const etaHtml = parts.length ? `<div class="detail">⏱️ ${parts.join('｜')}</div>` : '';
+  // v64 队列 ETA 时间带：在打段（实时剩余）+ 排队列（预估/无预估按 45m 粗估，斜纹标示）
+  // ——「还要等多久」从读数字变成看带子
+  const segs = [];
+  for (const p of printing) {
+    const mins = Number(p.remainingMinutes) > 0 ? Number(p.remainingMinutes) : (Number(p.estMinutes) > 0 ? Number(p.estMinutes) : 30);
+    segs.push({ name: `在打 ${p.printer || ''} ${p.applicationNo || ''}`, minutes: mins, estimate: !(Number(p.remainingMinutes) > 0), urgent: false });
+  }
+  for (const t of queue) {
+    segs.push({ name: `#${t.applicationNo || t.recordId} ${t.fileName || ''}`, minutes: Number(t.estMinutes) > 0 ? Number(t.estMinutes) : 45, estimate: !(Number(t.estMinutes) > 0), urgent: !!t.isUrgent });
+  }
+  const tlHtml = segs.length ? `<div class="viz-card viz-grid" style="margin:8px 0"><h4>Queue Timeline · 队列时间带</h4>${Viz.timeline(segs)}</div>` : '';
   const lines = queue.slice(0, 4).map(t =>
     `<b>#${esc(t.applicationNo || t.recordId || '')}</b> ${esc(t.fileName || '')}${t.isUrgent ? ' ⚡' : ''}${Number(t.remaining) > 0 ? `（还剩 ${t.remaining} 件）` : ''}`);
   const lineHtml = lines.length
     ? `<div class="queueLine">📋 ${lines.join('　·　')}${queue.length > 4 ? `　…共 ${queue.length} 单` : ''}</div>`
     : '';
-  bar.innerHTML = etaHtml + lineHtml;
+  bar.innerHTML = tlHtml + lineHtml;
 }
 
 /** 队列条（全员可见）+ 重试耗尽黄条（reviewer+）：
@@ -1276,9 +1392,60 @@ async function loadGivenUp() {
 async function ackReceipt(recordId) {
   const res = await fetch(`/api/reservations/${encodeURIComponent(recordId)}/receipt`, { method: 'POST' }).catch(() => null);
   const data = res ? await res.json().catch(() => ({})) : {};
-  if (res && res.ok) toast(`📦 已回执 #${recordId}${data.queueResumed ? '，队列继续' : ''}`);
-  else toast('❌ ' + (data.error || '回执失败'));
+  if (res && res.ok) {
+    toast(`📦 已回执 #${recordId}${data.queueResumed ? '，队列继续' : ''}`);
+    Viz.confetti(document.body); // v64：取件确认的小仪式感（克制版纸屑）
+  } else toast('❌ ' + (data.error || '回执失败'));
   loadList();
+}
+
+/** 近 12 周提单热力日历（v64）：数据来自预约记录 createdAt，纯前端聚合 */
+/** 工作室概览（v64，v66 按曼波「使用强度节奏」返工）：低频回顾信息默认折叠成一行
+ *  数字摘要，热力图点开才渲染——高价值回顾数据不占首屏黄金位 */
+function renderHeatmap(records) {
+  const byDay = {};
+  for (const r of records || []) {
+    if (!r.createdAt) continue;
+    const dt = new Date(r.createdAt);
+    if (Number.isNaN(dt.getTime())) continue;
+    // v83：本地日期键（此前截 UTC 日期——UTC+8 下 00:00-08:00 的单算进前一天，
+    // 且与 viz.js 格子键错位一天）——两处口径统一为本地日历日
+    const d = dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
+    byDay[d] = (byDay[d] || 0) + 1;
+  }
+  window.__byDay = byDay;
+  // 摘要行（常显）：12 周总量 / 本周 / 单日峰值
+  const total = Object.values(byDay).reduce((s, v) => s + v, 0);
+  const weekStart = new Date(); weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(weekStart.getDate() - ((weekStart.getDay() + 6) % 7));
+  let week = 0, peak = 0;
+  for (const [d, c] of Object.entries(byDay)) {
+    if (new Date(d + 'T00:00:00') >= weekStart) week += c;
+    peak = Math.max(peak, c);
+  }
+  const set = (id, v) => { const el = document.getElementById(id); if (el) { el.textContent = v; Viz.countUp(el, v); } };
+  set('ovTotal', total);
+  set('ovWeek', week);
+  set('ovPeak', peak);
+  // 热力图懒渲染：展开过一次后随轮询静默刷新，未展开不渲染
+  if (window.__heatmapOpen) {
+    const box = document.getElementById('heatmapCard');
+    if (box) box.innerHTML = `<h4>Activity · 近 12 周提单热力</h4>${Viz.heatmap(byDay)}`;
+  }
+}
+
+function toggleHeatmap() {
+  const wrap = document.getElementById('heatmapWrap');
+  const btn = document.getElementById('heatmapToggle');
+  window.__heatmapOpen = !window.__heatmapOpen;
+  if (window.__heatmapOpen) {
+    wrap.style.display = 'block';
+    btn.textContent = '▾ 收起热力图';
+    renderHeatmap(window.__records || []);
+  } else {
+    wrap.style.display = 'none';
+    btn.textContent = '▸ 活跃热力图';
+  }
 }
 
 /** 放弃池人工丢弃（2026-10-24 热修50）：明确不要的单直接清理，预约单落「已取消」 */
@@ -1389,23 +1556,36 @@ async function printerCtl(id, action, confirmText) {
 
 (async function init() {
   $('list').innerHTML = '<div class="empty">加载中…</div>';
-  await loadMe();
-  await loadTaxonomy();
-  loadColors();
+  // v76 并行化（曼波反馈「有些界面打开要加载半天」）：loadMe/taxonomy/colors 原串行
+  // await 链改并行 Promise.all——每环网络抖动不再叠加；taxonomy 失败已有红条兜底
+  await Promise.all([loadMe(), loadTaxonomy(), loadColors()]);
   restoreSelMemory();
   $('file').addEventListener('change', () => { updateSlicedMode(); analyzeModel(); loadAnnotator(); }); // 双通道模式感知 + STL 几何体检 + 3D 标注装载
   preflight();
   loadAnnotator(); // 录入台常显：首屏即给出 3D 标注引导（v56 复查批）
   renderSelSummary();
-  if (ME) { await loadList(); loadPrinters(); }
+  if (ME) { loadList(); loadPrinters(); }
   // 5s 轮询（2026-10-22 曼波令「机端↔监测台双向变更都要及时」）：与观察台同节奏，
-  // 机端改料/换料、进度变化最快 5s 内可见
-  setInterval(() => { if (ME) { loadList(); loadPrinters(); } }, 5000);
+  // 机端改料/换料、进度变化最快 5s 内可见。
+  // 审查修复（v62）：页面隐藏暂停、恢复立即拉一轮——后台标签页不再持续打服务端
+  startPolling(() => { if (ME) { loadList(); loadPrinters(); } }, 5000);
 })();
+// 轮询守卫（审查修复 v62，四页同款口径）
+let __pollTimer = null;
+function startPolling(fn, ms) {
+  if (__pollTimer) clearInterval(__pollTimer);
+  __pollTimer = setInterval(fn, ms);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
+    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
+  });
+}
 </script>
 <footer class="site-footer" style="margin-top:60px;padding:26px 0;border-top:1px solid var(--line);text-align:center">
   <p style="font-size:13px;color:var(--subtle)">千里战队 3D 打印预约中心 · CQU QIANLI ROBOTICS · <a href="/status.html" style="color:var(--accent)">设备观察台</a> · <a href="https://team.cquqianli.cn" target="_blank" rel="noopener" style="color:var(--accent)">战队官网</a></p>
 </footer>
+<script src="/viz.js?v=1"></script>
+<script src="/status-dock.js?v=1"></script>
 <script src="/fleet-dock.js?v=1"></script>
 </body>
 </html>

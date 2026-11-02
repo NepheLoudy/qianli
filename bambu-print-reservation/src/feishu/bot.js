@@ -169,9 +169,16 @@ function buildReviewResultCard(reservation, result, comment) {
   };
 }
 
+/** 用户可控字段进卡片 markdown 前的转义（审查修复 v62）：fileName/applicant/审批意见
+ *  是用户输入——直接拼 markdown 可伪造卡片内容、@任何人、插链接（存储型注入进群播）。
+ *  剥掉 markdown 结构字符与换行（飞书卡片 markdown 无标准反斜杠转义，删除比转义稳）。 */
+function escMd(v) {
+  return String(v ?? '').replace(/[*_~`[\]()<>"'|#\\\n\r]/g, '').slice(0, 120);
+}
+
 function taskBrief(task) {
-  const material = [task.materialType, task.color].filter(Boolean).join('×') || '未指定材料';
-  return `${task.applicationNo || task.recordId}｜${task.fileName || '未命名'}｜${material}`;
+  const material = [task.materialType, task.color].filter(Boolean).map(escMd).join('×') || '未指定材料';
+  return `${escMd(task.applicationNo || task.recordId)}｜${escMd(task.fileName) || '未命名'}｜${material}`;
 }
 
 /** 入队播报：审批通过进入队列 */
@@ -193,7 +200,7 @@ function buildQueueCard(task, position) {
  *  打印开始不再单独播报——此卡「匹配成功即开始打印」已交代后文；完成/失败卡保留） */
 function buildApprovedQueuedCard(reservation, comment, queueInfo = {}) {
   const ahead = Number.isFinite(Number(queueInfo.ahead)) ? Number(queueInfo.ahead) : null;
-  const material = [reservation.materialType, reservation.color].filter(Boolean).join(' × ') || '未指定（任意可用打印机）';
+  const material = [reservation.materialType, reservation.color].filter(Boolean).map(escMd).join(' × ') || '未指定（任意可用打印机）';
   const dispatch = reservation.review && reservation.review.dispatch;
   const prefLine = dispatch
     ? [
@@ -209,10 +216,10 @@ function buildApprovedQueuedCard(reservation, comment, queueInfo = {}) {
     elements: [
       { tag: 'markdown', content: `**✅ 审批通过 · 已进入打印队列**${ahead != null ? `（前方还有 ${ahead} 单）` : ''}` },
       { tag: 'hr' },
-      { tag: 'markdown', content: `**任务**: ${reservation.id}｜${reservation.fileName || '未命名'}｜${material}` },
-      { tag: 'markdown', content: `**发起人**: ${reservation.applicant || '未知用户'}${reservation.isUrgent ? '｜⚡加急' : ''}` },
-      ...(prefLine ? [{ tag: 'markdown', content: `**分发指定**: ${prefLine}` }] : []),
-      ...(comment ? [{ tag: 'markdown', content: `**审批意见**: ${comment}` }] : []),
+      { tag: 'markdown', content: `**任务**: ${escMd(reservation.id)}｜${escMd(reservation.fileName) || '未命名'}｜${material}` },
+      { tag: 'markdown', content: `**发起人**: ${escMd(reservation.applicant) || '未知用户'}${reservation.isUrgent ? '｜⚡加急' : ''}` },
+      ...(prefLine ? [{ tag: 'markdown', content: `**分发指定**: ${escMd(prefLine)}` }] : []),
+      ...(comment ? [{ tag: 'markdown', content: `**审批意见**: ${escMd(comment)}` }] : []),
       { tag: 'hr' },
       { tag: 'markdown', content: '📝 将按各打印机 AMS 装料自动匹配，匹配成功即开始打印；完成后在此群播报' },
     ],

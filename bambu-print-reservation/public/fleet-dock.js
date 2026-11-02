@@ -96,7 +96,7 @@
       '<div class="fd-head" id="fdHead">'
       + '<span class="fd-title">FLEET</span>'
       + '<span class="fd-summary" id="fdSummary"></span>'
-      + '<button class="fd-fold" id="fdFold" title="折叠/展开">»</button>'
+      + '<button class="fd-fold" id="fdFold" data-no-loading="1" title="折叠/展开">»</button>'
       + '</div>'
       + '<div class="fd-body" id="fdList"><div class="fd-empty">加载中…</div></div>';
     document.body.appendChild(root);
@@ -116,6 +116,14 @@
     });
     // 观察台从首页跳转时 URL 带 hash 的场景不特殊处理——dock 不在观察台注入
     refresh();
+    // v67：轮询数据广播给左侧状态坞（status-dock）复用——不双倍请求
+    var _origRender = render;
+    render = function (printers) { window.__qliLastFleet = printers; window.dispatchEvent(new CustomEvent('qli-fleet', { detail: printers })); _origRender(printers); };
+    // 审查修复（v62）：页面隐藏暂停轮询、恢复立即拉一轮——后台标签页不再持续打服务端
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
+      else if (!timer) { refresh(); timer = setInterval(refresh, 10000); }
+    });
     timer = setInterval(refresh, 10000);
   }
 
