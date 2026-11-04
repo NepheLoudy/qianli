@@ -215,12 +215,7 @@ function toggleTheme() { const c = document.documentElement.getAttribute('data-t
         <tbody id="sampleRows"><tr><td colspan="8" class="hint">加载中…</td></tr></tbody>
       </table>
   <div class="card" id="reviewCard" style="display:none">
-    <h2>🎓 规则学习治理 <span class="sub" style="display:inline">(审批人)——样本拟合 / 建议待审池</span></h2>
-    <div class="row" style="margin:8px 0">
-      <button class="primary" onclick="runRuleFit()">🧪 从样本库拟合规则</button>
-      <span class="hint" id="fitHint">按「工况 × 几何特征 × 样本实际参数」统计拟合（每特征 ≥3 条样本才有统计意义）；预约勾选入库的真单也在样本池内；候选进下方待审池</span>
-    </div>
-    <div id="sugList"></div>
+    <h2>🎓 规则学习治理 <span class="sub" style="display:inline">(审批人)——参数智能层训练与采纳</span></h2>
     <div style="margin-top:14px;border-top:1px dashed var(--line);padding-top:10px">
       <h3 style="font-size:14px;margin:0 0 6px">🧠 参数智能层 <span class="sub" style="display:inline">(审批人)——案例推理 + 岭回归 · LOFO 择优 · 置信度门控</span></h3>
       <div class="row" style="margin:8px 0">
@@ -492,8 +487,7 @@ async function analyzeSlice() {
 }
 
 // ---------- 拟合度条（2026-10-12 曼波纠正语义：引擎(工况) vs 本单切片(实际) 的贴合程度；
-// 差异项 = 可被记忆的参数，一键转规则候选进待审池） ----------
-let FIT = null;
+// 差异项仅供人工比对参考——待审池随 v84 退役，差异记忆改由训练样本积累承接） ----------
 let fitTimer = null;
 function scheduleFit() { clearTimeout(fitTimer); fitTimer = setTimeout(computeFit, 300); }
 async function computeFit() {
@@ -501,7 +495,6 @@ async function computeFit() {
   const sel = collectSelection();
   const bar = $('fitBar');
   if (!expertParams || Object.keys(sel).length === 0) {
-    FIT = null;
     bar.style.display = 'block';
     bar.innerHTML = '<b>🎯 拟合度</b>——需两样东西：①勾选工况（人工标注）②上传切片产物（实际参数）。两者齐了，这里显示<b>规则库对这个 case 的覆盖程度</b>：拟合高=规则库已解释你的切法；拟合低=差异项就是可被记忆的新知识。';
     return;
@@ -512,15 +505,13 @@ async function computeFit() {
     const res = await fetch('/api/training/fit', { method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ selection: sel, materialType: $('materialType').value.trim(), expertParams }) });
     const data = await res.json();
-    if (!res.ok || data.blocked) { bar.innerHTML = '🎯 拟合度不可算：' + esc((data.errors || [data.error]).filter(Boolean).join('；') || '未知'); FIT = null; return; }
-    FIT = data;
+    if (!res.ok || data.blocked) { bar.innerHTML = '🎯 拟合度不可算：' + esc((data.errors || [data.error]).filter(Boolean).join('；') || '未知'); return; }
     const color = data.score >= 80 ? 'var(--ok)' : data.score >= 50 ? 'var(--warn)' : 'var(--bad)';
     const mism = data.rows.filter((r) => !r.match);
     const diffTable = mism.length
       ? `<div class="mfNotes" style="margin-top:6px">${mism.map((r) =>
-          `• <b>${esc(r.key)}</b>：引擎=${esc(r.engine === null ? '（无规则覆盖）' : r.engine)} ↔ 切片=${esc(r.expert)}`).join('<br>')}</div>
-        <div style="margin-top:8px"><button class="ok" onclick="memorizeFit()">🧠 把 ${mism.length} 项差异记忆为规则候选（进待审池，采纳后规则库学会此 case）</button></div>`
-      : '<div class="mfNotes">✅ 全参数拟合——规则库已完整解释此切法，无新知识可记</div>';
+          `• <b>${esc(r.key)}</b>：引擎=${esc(r.engine === null ? '（无规则覆盖）' : r.engine)} ↔ 切片=${esc(r.expert)}`).join('<br>')}</div>`
+      : '<div class="mfNotes">✅ 全参数拟合——规则库已完整解释此切法</div>';
     bar.innerHTML = `<b>🎯 拟合度</b>
       <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
         <div style="flex:1;height:14px;background:#e3e8ee;border-radius:7px;overflow:hidden">
@@ -530,21 +521,6 @@ async function computeFit() {
         <span style="font-size:12px;color:var(--muted)">${data.matches}/${data.total} 参数吻合</span>
       </div>${diffTable}`;
   } catch { bar.innerHTML = '🎯 拟合度计算失败'; }
-}
-async function memorizeFit() {
-  if (!FIT) return;
-  const set = {};
-  for (const r of FIT.rows) if (!r.match && r.expert !== null) set[r.key] = r.expert;
-  if (!Object.keys(set).length) return toast('没有可记忆的差异');
-  const res = await fetch('/api/print/rule-suggestions', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      when: collectSelection(), set,
-      reason: `录入工坊拟合差异（拟合度 ${FIT.score}%）：专家切片与规则库输出的差异项`,
-      source: 'correction', sourceRef: 'train-workbench',
-    }) });
-  const d = await res.json();
-  if (res.ok) toast(d.merged ? `✅ 与既有候选聚合（count=${d.suggestion.count}）` : '✅ 已入待审池——reviewer 采纳后规则库学会此 case');
-  else toast('❌ ' + (d.error || '失败'));
 }
 
 // ---------- 3D 工况标注工房 ----------
@@ -933,7 +909,7 @@ if (typeof isReviewer !== 'function') { window.isReviewer = () => ME && ['review
 function renderReviewCard() {
   const card = document.getElementById('reviewCard');
   if (card) card.style.display = isReviewer() ? 'block' : 'none';
-  if (isReviewer()) { loadSuggestions(); loadParamModelAudit(); }
+  if (isReviewer()) loadParamModelAudit();
 }
 
 // ---------- v64 特征星图：样本在「体积 × 悬垂率」平面的分布 ----------
@@ -1020,48 +996,24 @@ function showSampleRadar(row) {
 // 修正建议的实际入口 = 预约记录上的「建议修正」（POST /api/print/rule-suggestions，
 // index.html），待审池/采纳链路不变。
 
-async function runRuleFit() {
-  const hint = document.getElementById('fitHint');
-  hint.textContent = '拟合中（读取样本库统计）…';
-  try {
-    const res = await fetch('/api/training/rule-fit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-    const data = await res.json();
-    if (!res.ok) { hint.textContent = '❌ ' + (data.error || '拟合失败'); return; }
-    hint.textContent = '✅ 样本 ' + data.stats.samples + ' 条 / 特征 ' + data.stats.features + ' 个 → 新候选 ' + data.added + ' 条' + (data.note ? '｜' + data.note : '');
-    loadSuggestions();
-  } catch (e) { hint.textContent = '❌ ' + e.message; }
-}
-
-async function loadSuggestions() {
-  if (!isReviewer()) return;
-  const res = await fetch('/api/print/rule-suggestions?status=pending');
-  if (!res.ok) return;
-  const list = await res.json();
-  const box = document.getElementById('sugList');
-  if (!box) return;
-  if (!list.length) { box.innerHTML = '<div class="empty">待审池为空——修正建议与专家导入会出现在这里</div>'; return; }
-  box.innerHTML = list.sort((a, b) => b.count - a.count).map(s => '<div class="sugbox">' +
-    '<b>' + (s.source === 'extraction' ? '🎓 专家导入' : '🔧 修正') + '</b>' + (s.count > 1 ? '<span class="cnt">×' + s.count + '</span>' : '') +
-    '<span class="detail">｜' + esc((s.sourceRefs || []).map(x => '#' + x).join(' ')) + '｜' + esc(s.suggestedBy || '') + '｜' + esc((s.createdAt || '').slice(5, 16)) + '</span>' +
-    '<br><span class="detail">当：</span>' + esc(JSON.stringify(s.when)) +
-    '<br><span class="detail">设：</span><b>' + esc(JSON.stringify(s.set)) + '</b>' +
-    '<br><span class="detail">' + esc(s.reason) + '</span>' +
-    '<div class="revbox"><button class="ok" onclick="decide(\'' + s.id + '\',\'adopt\')">采纳生效</button>' +
-    '<button class="bad" onclick="decide(\'' + s.id + '\',\'reject\')">拒绝</button></div></div>').join('');
-}
-
-async function decide(id, action) {
-  const res = await fetch('/api/print/rule-suggestions/' + id + '/' + action, { method: 'POST' });
-  const data = await res.json();
-  if (!res.ok) return toast('❌ ' + data.error);
-  toast(action === 'adopt' ? '✅ 已转正为生效规则 ' + (data.ruleId || '') : '✅ 已拒绝');
-  loadSuggestions();
-}
+// v84 移除：runRuleFit（阈值规则拟合）/loadSuggestions/decide（建议待审池）——
+// 数值参数学习由参数智能层承担（下方区块）；单变量中位数差阈值规则与「连续映射」方向相悖。
+// 待审池后端（ruleSuggestions.js + 相关端点）一并移除，见 src/index.js v84 注。
 
 // ---------- 参数智能层（v60）：训练 / LOFO 模型卡 / 采纳与模式管理 ----------
 const PM_PARAM_LABELS = { layerHeight: '层高', wallLoops: '墙数', topShellLayers: '顶面层', bottomShellLayers: '底面层', infillDensity: '填充%', supportThresholdAngle: '支撑阈值°', supportDensity: '支撑密度%', brimWidth: '裙边mm', xyHoleComp: '孔补偿', xyContourComp: '轮廓补偿', temperatureDelta: '热床Δ°', nozzleTempDelta: '喷嘴Δ°' };
 const PM_CHOICE_LABEL = { knn: '案例推理', ridge: '岭回归', mlp: '神经网络', none: '回退规则' };
 
+// ---------- 失败归因报告（v88）：失败码 × 参数分布 × DNA 均值，指方向不改权重 ----------
+function attributionHtml(snap) {
+  const attr = snap.active && snap.active.stats && snap.active.stats.failureAttribution;
+  if (!attr || !attr.groups || !attr.groups.length) return '';
+  const rows = attr.groups.map((g) => '<tr><td><b>' + esc(g.failCode) + '</b></td><td>' + g.count + ' 单</td><td class="detail">' +
+    esc(g.sampleIds.join(' ')) + '</td><td class="detail">' +
+    Object.entries(g.paramDevs || {}).slice(0, 3).map(([p, d]) => esc(p) + ' 失败中位 '+ d.failMedian + ' vs 成功 '+ d.okMedian).join('；') + '</td></tr>').join('');
+  return '<div style="margin-top:8px;border-top:1px dashed var(--line);padding-top:8px"><b class="detail">☠ 失败归因（' + esc(attr.note || '') + ')——只统计不判罪，给下次切片指方向</b>' +
+    '<table><thead><tr><th>失败码</th><th>单数</th><th>样本</th><th>参数偏移（top3）</th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+}
 async function loadParamModelAudit() {
   if (!isReviewer()) return;
   const statusBox = document.getElementById('pmStatus');
@@ -1117,6 +1069,7 @@ async function loadParamModelAudit() {
       (maeViz ? '<div class="viz-card viz-grid" style="margin:8px 0"><h4>Arena · 三族竞技场（择优 vs 基线）</h4>' + maeViz + '</div>' : '') +
       (mlpImportance ? '<div class="detail" style="margin-top:6px"><b>🧠 神经网络依据特征</b>（置换重要性 top——打乱该特征后预测漂移越大越要紧）：<br>' +
         mlpImportance + '</div>' : '') +
+      attributionHtml(snap) +
       (isAdmin() ? '<div class="revbox" style="margin-top:8px">' +
         (snap.candidate ? '<button class="ok" onclick="adoptParamModel(\'shadow\')">🧪 采纳候选（影子模式）</button><button class="ok" onclick="adoptParamModel(\'active\')">🚀 采纳候选（生效模式）</button>' : '') +
         (snap.active ? '<button class="mini" onclick="setParamModelMode(\'' + (snap.active.mode === 'active' ? 'shadow' : 'active') + '\')">切换为' + (snap.active.mode === 'active' ? '影子' : '生效') + '模式</button><button class="bad" onclick="deactivateParamModel()">下线模型</button>' : '') +

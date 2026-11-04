@@ -1,8 +1,4 @@
-# DEVLOG · qianli 顶层工作区（monorepo）
-
-版本隔离单位：一次 push 归档提交。本仓库远程为 `github.com/NepheLoudy/bambu-print-reservation`——它由 bambu 独立仓库演化而来（v9 起转型 monorepo），故早期版本即 bambu 的早期历史（细节见 [bambu-print-reservation/DEVLOG.md](bambu-print-reservation/DEVLOG.md)）。v1~v25 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](AGENTS.md)）。
-
-当前最新：**v162**（2026-11-03，DEVLOG 锚点哈希回填批+magpie 调用策略 v2.4 归档——纯 docs）。上一版 v161（2026-11-03，c74cb5a，bambu v59→v83d 批量会话遗留归档+全量审查修复批（bambu v84）联动——27 版积压入库、P0×1/P1×11/P2×17 修复、37 套测试全绿，bambu DEVLOG v84 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
+当前最新：**v163**（2026-11-05，bambu v85→v92 归档批——八版积压入库+全量审查 bambu 域 3×P1 收口）。上一版 v161（2026-11-03，c74cb5a，bambu v59→v83d 批量会话遗留归档+全量审查修复批（bambu v84）联动——27 版积压入库、P0×1/P1×11/P2×17 修复、37 套测试全绿，bambu DEVLOG v84 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
 
 ## 阶段一 · bambu 独立仓库时期（2026-07-15 ~ 07-21）
 
@@ -1392,3 +1388,13 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 
 - bambu DEVLOG v60→v83d 的「随本提交落地」占位按本批归档提交 c74cb5a 回填（27 条目——含会话中途并发落盘的 v83/v83 续/v83c/v83d）；顶层 v159/v160/v161 回填 d94b10c/2277e3f/c74cb5a；v158 锚点存疑不回填（其批内容与 1075f36/fdc9cc8 均仅部分吻合，宁缺勿错）；v161 条目同步勘误：归档版本数 24→27、审查批编号 v83→v84（「vN 只增不复用」——v83 已被 11-01 AMS 同步批占用）。
 - `docs/magpie-调用策略.md` 收编入库：magpie 模型调用策略 v2.4（均衡负载·并行开发·健康感知）——枪柜盘点/常设工位群（dev-worker 系/cross-check/expert-review + hy3 免费基础工位）/接单 SOP/临期积分优先消耗/pool-listener v0.2；即「子代理撞并发换平台」规则的底层策略文档。
+
+## v163 · 2026-11-05 · 随本提交落地 · chore
+
+**bambu v85→v92 归档批：八个已部署未归档版本全部入库 + 全量审查 bambu 域 P1 收口（曼波令 qianli 全项目群全量审查联动）**
+
+- **归档背景**：2026-11-04 深夜曼波令全项目群全量审查（七工位混合编队），bambu 域审查确认工作区积压 = v85→v91续 共七个已 SFTP 上线未归档版本（同 c74cb5a 先例模式），machineLearning.js / dispatchLearning.js 被生产引用却未跟踪——开发机磁盘坏即不可恢复，本批消除该单点风险。
+- **入库内容**：v85 参数模型拟合上岗 / v86 自动分发+机型耗材选择器 / v87 审批台三段视图 / v88 失败归因 / v89-v89续 审查修复+分发学习器 v2 / v90 时长校准 / v91-v91续 单据管理台+复刻血缘+复刻接自动分发；三枚 backfill 脚本（dispatch-stats/dna/est，审查确认全幂等带 --dry）。
+- **v92（随本批部署上线）**：全量审查 bambu 域 3×P1 收口——①train.html memorizeFit 死链退役（调用 v84 已删路由，「待审池无前端生产者」论断被推翻）；②npm test 自动发现归一（scripts/run-tests.js 与 push.js 闸门同源，38/39/40 三口径永久归一）；③README/ONBOARDING 套数口径。40 套全绿，SFTP 上线 /api/health 200（printers:6，收尾 ECONNRESET 已知误报）。
+- **docs**：magpie 策略全量审查实录 v4.0→v4.5（hook 空转事故修复/免费勤务兵团 group/aux 定位纠偏/并发嗅探收编）+ agentsmd 策略节备份更新。
+- **遗留登记**：approval-bot 工作区有 11-03 并行会话遗留批（宣运物资警戒线等 22 文件），随 approval-bot 下批（全量审查 P1×2 修复）一并入库；duty-bot/netlog 修复批进行中各自入库。

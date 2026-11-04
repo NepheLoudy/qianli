@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 `npm run push`（= 一次部署）。本项目 push.js 为纯 SFTP 直传、无 git 步骤，**版本锚点取顶层 monorepo 中触碰本路径的归档提交**——两次归档之间的个别部署可能无版本记录。v1~v14 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](../AGENTS.md)）。
 
-当前最新：**v84**（2026-11-03，全量审查修复批——三域并行子代理审查×双源交叉验证：32 项发现 31 证实，修复 P0×1/P1×11/P2×17——带孔件 DNA 必炸/多模型配对排列爆栈+贪心泄漏/多源入库回填断链/切片签名死零/3mf 实例化丢件/PCA 混维 NaN/热力图 UTC+8 错位/放弃坞 404 等，37 套测试全绿；归档提交信息中作 v83，编号让位于 11-01 AMS 批）。上一版 v83/v83c/v83d（2026-11-01：AMS 手动同步按钮+两台 FAILED 残留清理记录（v83）、预约列表 DTO 三轮裁剪 218KB→87KB+审批台骨架屏（v83 续/v83c）、审批台 J/K/E 键盘快捷流（v83d））。上一版 v82→v76（2026-11-01 一日七连发：多模型批量上传+几何指纹自动配对（v76）、审批台 3mf 预览可观测性（v77）、多选体感修复（v78）、PCA 特征星图+几何 DNA v2 22 维（v79）、预约单多源全链适配（v80）、热力图/时间带两轮修复（v81/v82））。上一版 v75→v59（2026-10-29~11-01：机队悬浮坞（v59）、印刷品 UI 重构（v58）、viz「工程图纸」组件库（v64）、参数智能层 kNN/岭回归（v60）→MLP 化（v61）、全量审查修复批（v62）、平台使用手册（v63）、工程 3mf 闸门等，逐版详录见文末）。更早版本见下文历史条目。
+当前最新：**v92**（2026-11-05，全量审查收口批——train.html memorizeFit 死链退役 + npm test 自动发现三口径归一，40 套全绿）。上一版 v91 续（2026-11-04，复刻链路接入自动分发——复刻新单提交即自动入队不再卡待审批，镜像 v85 提交链语义 {auto:true}+竞态处理，40 套全绿）。上一版 v91（2026-11-04，审批台升级全量单据管理台——「最近处理」只读 20 条 → 单据总览（服务端分页/状态筛选/搜索/详情弹层/复刻对话框/取消/血缘徽标）+ GET /api/reservations 分页查询 + 复刻血缘 sourceRecordId 落档，39 套全绿）。上一版 v90（2026-11-01，时长校准闭环——estMinutes 提取双修复（headText 无条件采集+Bambu 风味正则）+35 条存量回填，durationBias 真系数落地（H2D 1.01/X1C 0.96），37 套全绿）。上一版 v89 续（2026-11-01，分发学习器 v2——dispatchStats 实时回填+存量 54 条回填+时长校准 bias/机×料矩阵/速度推荐/排队等待，policy 透出，纯增量批）。上一版 v89（2026-11-01，审查修复批——P0 自动分发漏传 auto:true（旗舰断链）+P1×3（幽灵空闲/失败统计口径/colorHex）+P2×4（resPolicy/键型归一/品牌兜底/审计持久化），补端到端断言，37 套全绿）。上一版 v88（2026-11-01，学习链路深化——失败归因报告（failCode×参数分布×DNA 均值，只统计不判罪）+模型卡「☠ 失败归因」表，修 Number 括号错位 bug，15 断言全绿）。上一版 v87（2026-11-01，审批台复核面板改造——三段视图（待审批/进行中/最近处理）+自动分发提示条+改派对话框补齐，纯前端批）。上一版 v86（2026-11-01，自动分发模式（DISPATCH_AUTO 开关：提交即走正式审批语义入队）+ 机型学习选择器（同型号优先/历史成功率/品牌族降级）+ 耗材槽位选择器（匹配分级+槽位历史+余量加权），37 套全绿）。上一版 v85（2026-11-01，生产首版参数模型拟合（wallLoops→案例推理上岗，MAE -24%）+ DNA 回填（5 条 STEP 单）+ 训练数据质量四大缺口诊断，37 套全绿）。上一版 v84（2026-11-03，全量审查修复批——三域并行子代理审查×双源交叉验证：32 项发现 31 证实，修复 P0×1/P1×11/P2×17——带孔件 DNA 必炸/多模型配对排列爆栈+贪心泄漏/多源入库回填断链/切片签名死零/3mf 实例化丢件/PCA 混维 NaN/热力图 UTC+8 错位/放弃坞 404 等，37 套测试全绿；归档提交信息中作 v83，编号让位于 11-01 AMS 批）。上一版 v83/v83c/v83d（2026-11-01：AMS 手动同步按钮+两台 FAILED 残留清理记录（v83）、预约列表 DTO 三轮裁剪 218KB→87KB+审批台骨架屏（v83 续/v83c）、审批台 J/K/E 键盘快捷流（v83d））。上一版 v82→v76（2026-11-01 一日七连发：多模型批量上传+几何指纹自动配对（v76）、审批台 3mf 预览可观测性（v77）、多选体感修复（v78）、PCA 特征星图+几何 DNA v2 22 维（v79）、预约单多源全链适配（v80）、热力图/时间带两轮修复（v81/v82））。上一版 v75→v59（2026-10-29~11-01：机队悬浮坞（v59）、印刷品 UI 重构（v58）、viz「工程图纸」组件库（v64）、参数智能层 kNN/岭回归（v60）→MLP 化（v61）、全量审查修复批（v62）、平台使用手册（v63）、工程 3mf 闸门等，逐版详录见文末）。更早版本见下文历史条目。
 
 ## 阶段五 · 审批事件字段对齐与分发健壮化（2026-09-05）
 
@@ -1157,3 +1157,113 @@
 - 配套 CSS：`.kbd-active` 选中卡 accent 描边 + 左移 4px 浮起（打印品「抽出待办」的隐喻）。
 - 审批人高频动作链从「滚找单 → 鼠标移到按钮 → 点击」缩到「J J E」三键。
 - 纯前端批；语法检查过；测试口径不变。
+
+### v84 · 2026-11-01 · 随本提交落地 · refactor
+
+**移除阈值规则拟合与建议待审池（曼波令「应该是拟合选取规则而非定态规则，无必要就把这部分去掉」）**
+
+- **定性**：train.html「🧪 从样本库拟合规则」产出的正是曼波 60 令前批评的「检测到某个值就触发规则」——单变量中位数差阈值规则（bbox_z≥3 → xyHoleComp=0 这类伪相关），与参数智能层（v60+，kNN/岭回归/MLP 三族 LOFO 竞技、连续映射）职责重叠且表达力差。
+- **移除面**：①src/index.js 的 /api/training/rule-fit 与 /api/print/rule-suggestions* 五条路由；②ruleFitter.js 的 fitRules/lofoEvaluate（保留 median/expertOf——paramModel 消费依赖）；③train.html 治理卡的拟合按钮/待审池 UI/runRuleFit/loadSuggestions/decide；④feature-derive-test 相关断言。
+- **保留面**：ruleSuggestions.js 服务本体（learning-loop-test 校验逻辑覆盖 + ops-test 备份播种依赖，纯 service 层无路由不构成行为面）；processRules 规则库与待审采纳语义不变（安全因果仍人工维护）。
+- ONBOARDING 目录注更新。36 套口径不变全绿。
+
+### v85 · 2026-11-01 · 随本提交落地 · feat
+
+**生产首版参数模型拟合 + 训练数据质量诊断（曼波令「看样本库拟合一版，找训练框架不细致处继续迭代」）**
+
+- **DNA 回填脚本**（scripts/backfill-dna.js）：预约单 STEP 需求链 5 条全部重算 DNA 回填（凹角最多 300 条/悬垂域 33 域——复杂件解析正常）；48 条 3mf 样本为切片导出件（无网格）如实跳过。reservationStore 导出受控 _saveForBackfill 通道。脚本体悟：裸跑 node 必须显式 dotenv（pm2 有、裸跑无）。
+- **生产首版拟合**（fit 242s：52 样本 tier1 + 1 tier2、46 族、22 维特征 + MLP 满配）：**wallLoops → 案例推理上岗**（LOFO MAE 0.308 < 基线 0.404，-24%），其余 11 参数诚实回退。candidate 已入槽待曼波采纳。
+- **诊断出四大框架缺口**（下批迭代方向）：
+  ① **参数多样性塌缩**：51 条切片参数里 layerHeight 38/52=0.2、infillDensity 45/52=15、wallLoops 全 2-3——历史直通单多为低难度件+同一切片习惯，**y 值方差撑不起回归**（只有 3 条带 diff 的「专家显式覆盖」）。缺的不是模型是**有挑战性的标注样本**；
+  ② **48/52 样本无真网格**（3mf 切片导出件）——源文件配对（v77 弹窗）上线后新单才有真几何，存量死数据如实跳过；
+  ③ **outcome 与参数脱钩**：34 条「成功」但当时无 DNA/参数快照联动，成功原因不可归因；
+  ④ **切片质量诊断缺位**：X1C FAILED（print_error 83902467）那单正是切片有问题——失败样本的「切片参数→失败码」归因链路未建（HMS/失败码已有采集，缺与参数快照的联合分析）。
+- 36+1 套全绿（新增 dna-test）。
+
+### v86 · 2026-11-01 · 随本提交落地 · feat
+
+**自动分发模式 + 机型/耗材选择学习架构（曼波令「审批停了收到文件自动分发；机型和耗材选择的学习架构也完成；迭代耗材选择」）**
+
+- **自动分发开关**（`DISPATCH_AUTO=true`，默认关）：提交后 setImmediate 走正式 `approveReservation`（完整语义：状态机/样本入库勾选/入队全生效），审批人记「自动分发」；失败自动回落人工审批通知。硬冲突/程序初审在提交链上游照拦——审批台降级为复核干预面板。
+- **机型学习选择器**（machineLearning.js 新）：切片直通单无指定机时自动选机——①同型号优先（printerModelKey 归一）；②同型号多台按**历史成功率+最近使用**择优（从预约单 outcome 聚合）；③无同型号按品牌族降级（v65 口径）选历史最优机并标 lowConfidence。选择依据（basis）写入审批 comment 可审计。dispatch 加 `_receiptHoldHas` 访问器（持闸机过滤）。
+- **耗材槽位选择器**：`chooseTrayForTask`——类型 exact/family 分级 + 颜色 redmean 距离惩罚 + **槽位历史成功率**（从审批 dispatch.tray 轨迹聚合）+ 余量加权（≤5% 防断料不选）；综合分排序输出依据。slotStatsFromRecords 从预约记录聚合学习信号。
+- **诚实边界**：①机型学习是「统计择优」非深度模型（历史少时退化为唯一机直选）；②耗材选择沿用既有 materialMatch 口径加历史权重，颜色阈值与分发匹配层一致；③切片直通单跨型号降级仍标低置信（机端 preset 风险提示保留）。
+- 测试：local-reservation 28/precheck 11/dispatcher/learning-loop/multi-model-match 全绿。
+
+### v87 · 2026-11-01 · 随本提交落地 · ui
+
+**审批台复核面板改造（曼波令「审批台改造为人工校对和审查已分配的窗口」——自动分发模式的配套 UI）**
+
+- **三段复核视图**：①⏳ 待审批（自动分发下只出现「自动选机失败转人工」的单；开启时显示 🤖 提示条说明新流程）；②🖨 **进行中**（新增段：排队/打印中单据，改派【排队模型直投】/取消就地操作，打印中取消带停机确认）；③📜 最近处理。自动分发开关状态经 /api/print/policy 透出（autoDispatch 字段）驱动提示条。
+- **补功能缺口**：approve 页此前引用 recoverGivenUp 但无定义（引用的是 index 页函数）——改派对话框（选机下拉/doRecover）移植补齐。
+- 纯前端批；语法检查过；local-reservation 28 项全绿。
+
+### v88 · 2026-11-01 · 随本提交落地 · feat
+
+**学习链路深化：失败归因报告（曼波令「深化学习链路」——v85 诊断的缺口④落地）**
+
+- **failureAttribution（paramModel.js 新）**：训练时同步统计失败样本「参数档 × 失败码」联合分布——按 failCode 分组，每组输出 sampleIds / 参数偏移（失败中位 vs 成功中位，top 可读）/ 几何 DNA 均值 / 涉及文件。**只统计不判罪**（样本量足够后才考虑把失败码当分类目标进模型权重）。
+- **UI**：训练台参数智能层模型卡新增「☠ 失败归因」表（生效模型的 stats 透出）——「print_error 83902467 的失败样本，墙数失败中位 2 vs 成功中位 3.5」这类结论直接指下次切片方向。
+- **修 bug**：paramDevs 取值表达式 Number(obj)[P] 括号错位（Number 包住整个对象再索引恒 undefined）——修正为 Number(obj[P])。
+- 诚实边界：归因是描述性统计，样本 <2 条/失败码不输出；参数与失败码的因果性需对照实验验证。
+- param-model-test 15 断言全绿（归因经 train stats 间接 + 直接导出双验证）。
+
+### v89 · 2026-11-01 · 随本提交落地 · fix
+
+**审查修复批（子代理第五轮回归抓出 1 P0/3 P1/4 P2——全部实锤修复）**
+
+- **P0（旗舰断链）**：index.js 自动分发调用漏传 `{auto:true}` 第三参——切片 3mf 提交在自动审批时撞「仅对模型直投有效」闸静默回退人工，v86 机型学习选择器整体不可达。修复 + autoDispatch→选机→入队链补端到端断言（P0 修复确认/选机/闸豁免三查）。
+- **P1×3**：①学习选机候选补 stateStale 过滤（幽灵空闲——断电残留「空闲」态的机器被写死指定后分发静默滞留）；②machineStats 失败统计口径改扫 history 全量备注（「打印失败重排」「分发失败」落排队中非已取消，旧口径 fail 恒 0→成功率恒 100% 虚假信号）；③chooseTrayForTask 的 task.colorHex 不存在（buildLocalTask 只有色名）→ colorDist 入参修正。
+- **P2×4**：approve.html resPolicy.data 恒 undefined（裸 fetch 无 {ok,data} 形态——自动分发提示条永不显示）；receiptHold 键型归一（holdQueue/releaseHold 统一 Number——运维置闸字符串键对匹配层数值查询不可见）；品牌兜底 'Bambu Lab' 硬编码改按扩展名推导（gcode 系兜闪铸机型）；autoBasis/lowConfidence 并入 pref 持久化（prefNote+setReview.dispatch——「为什么选这台」可审计落地）。
+- 附带：slotStatsFromRecords 遍历 dispatch.trays 多耗材主路径 + tray 旧形态双兼容。
+- 全量 37 套全绿。
+
+### v89 续 · 2026-11-01 · 随本提交落地 · feat（追加：durationBias 空对象修正——老单 est 全空时透出 actualMedian+actualOnly 标记而非空对象，新单积累 est 后自动出校准系数）
+
+**分发学习器 v2：从计数器到真统计模型（曼波问「分发学习逻辑有没有深化空间」——诊断+深化一并落地）**
+
+- **信号审计结论**：机型/耗材选择器此前只是计数器；真正的金矿是 **54 条完成单的实际时长**（history 时间差可算）而 estMinutes 全空（老单未采集）——「哪台机打哪类件快」从未被量化。
+- **dispatchStats 实时回填**（dispatcher completeTask）：每单完成落 {printer, printerModel, material, estMinutes, actualMinutes, volumeCm3, triangles}——机×料×几何→时长的原始数据从现在起逐单积累。
+- **存量回填**（scripts/backfill-dispatch-stats.js）：54 条完成单从 history 时间差补算实际时长全部回填（H2D 最长 336min、A1mini 12min 等）。
+- **dispatchLearning.js（新）**：①时长校准 bias（按机 est/actual 中位比——同一切片预估在不同机偏差 30%+，校准后 ETA 才真）；②机×料时长矩阵；③速度推荐（给定体积/材料，候选机预期时长排名，同体积量级优先采样）；④排队等待中位数（负载视角）。全部纯读预约记录零新存储，policy 端点透出 durationBias。
+- **诚实边界**：速度推荐需同机 ≥2 样本才分体积量级（n=1 时全机中位）；材料维度样本少（多数单 material 空待新单积累）；「排队等待」目前全 0（历史单秒排），自动分发后等待时间会拉开——那个信号才有分析价值。
+- dispatcher 回归全绿。
+
+### v90 · 2026-11-01 · 随本提交落地 · feat
+
+**时长校准系数落地：est 提取双修复 + 35 条存量回填（分发学习器 v2 数据闭环补完）**
+
+- **estMinutes 提取两处修复**：①extractRawParams 的 headText 无条件采集——project_settings 优先分支曾把 headText 留空（estMinutes 在 gcode 头部不在 config 里，20h43m 实案）；②parseEstimatedMinutes 补 Bambu Studio 风味「; total estimated time: 20h 42m 57s」（原 PrusaSlicer 正则咬不住新导出格式）。
+- **35 条存量完成单 est 回填**（3mf 在档可解析的；18 条 gcode/闪铸件跳过）——durationBias 立即出真校准系数：H2D bias 1.01（预估极准）、X1C bias 0.96、P1S 待更多样本。闪铸 A5P est 均空（FlashPrint 不写预估）actualOnly。
+- 学习闭环意义：自动切片后的预估 × 按机校准系数 = 精确 ETA——队列时间带与「哪台机打这单快」的速度推荐从此有真基准。
+- 37 套全绿（learning-loop/param-fit 回归过）。
+
+### v91 · 2026-11-04 · 随本提交落地 · feat
+
+**审批台升级全量单据管理台：单据总览 + 分页查询 API + 复刻血缘（曼波令「所有记录的统一管理界面，最全最大量的打印单据管理窗口」）**
+
+- **前端（public/approve.html，+289/-21）**：「最近处理（只读，最近 20 条）」卡升级为「🗂 单据总览」——服务端分页（20/50/100 每页切换+页码控件）、7 状态筛选 chips（全部/待审批/已通过/已驳回/已取消/排队中/打印中）、关键词搜索（回车触发，匹配单号/发起人/文件名）；表格列扩展（机位 assignedPrinter||printer、需求列修正 materialType×color×quantity——旧列「?」是字段没取对）；行内操作按权限显隐：详情弹层（拉 /:id 全量+完整 history 时间线）、复刻对话框（颜色/份数/目标机可覆盖，POST /reprint 成功提示新单号）、取消（confirm，打印中会下发停机）；血缘徽标「复刻自 Rxxx」；15s 轮询带当前参数刷新不跳页；后端未就绪时 legacy 数组内存分页兜底自动降级。待审批/进行中两段与审批动线零改动。行为级自测揪出并修复 2 个真 bug（排序比较器作用域 ReferenceError、页码未对齐服务端回显）。
+- **分页查询 API（index.js / reservationStore.js）**：GET /api/reservations 带任一分页/过滤参数（page/pageSize/status/q/from/to/sort）走 `store.query()` 返回 `{records, total, page, pageSize}`（total=过滤后总数、page/pageSize 回显钳后有效值）；不带参保持旧数组形态（index.html/status.html 零破坏）。过滤/排序/分页收口存储层：status 白名单（config.status 外忽略）、q 三字段大小写不敏感模糊（空串视为未提供）、from/to 闭区间（非法日期忽略该侧）、createdAt 双向排序（拷贝排序不污染缓存）、page<1 归 1/pageSize 钳 1..200。slim DTO 裁剪逻辑提成 `slimReservation()` 两分支共用；路由层 `normalizeQueryValue` 归一 express 多值数组参数（q=a&q=b 静默降级漏洞，hy3-verifier P1）。
+- **复刻血缘（reservation.js / reservationStore.js）**：reprintReservation 新单携带 `sourceRecordId`（create 白名单透传持久化+返回值兜底双保险）；源单追加「被复刻为新单 Rxxx」轨迹（新增 store.appendHistory 不流转状态记档方法）；返回浅拷贝防 store.get 缓存引用外泄。链式复刻血缘指向直接源单。
+- **审查与修复**：hy3-verifier 只读核查无 P0——P1×3 全修（数组参数归一+防御测试、sourceRecordId 持久化断言守住 create 白名单回归点、路由端到端盲区以数组防御测试覆盖）；P2×3 全修（acknowledgeReceipt 魔法数 200→HISTORY_CAP、reprint 过时注释更正、防御式 appendHistory 加 try/catch 收敛并发删除冒泡）。cross-check 异源复核（deepseek）实锤 **B3 reprint 越权面**——后端仅 requireUser 与前端「终态且本人||reviewer」显隐不一致，任何登录用户可 API 直调复刻任意状态/任意人的单：修复=reprint 路由补 assertCanManage + 终态校验（REPRINT_ALLOWED_STATUSES=已完成/已取消，与前端 canReprint 清单对齐，测试锚死两处不漂移）；另修 A1（copyFile 半途失败留半截文件孤儿——unlink 与其它分支对齐）、D2（越界页收口后补重拉免空表等下轮自愈）、F1（legacy 兜底排序 localeCompare→getTime 数值语义与后端对齐）。
+- **测试**：新增 reservation-query-test（27 项：分页切片/翻页不重叠/末页/越界页/钳制/默认值/status 白名单/q 三字段/from-to 边界/sort 双向/血缘透传/数组参数防御）+ reprint-lineage-test（6 项：血缘指向/独立副本/源单轨迹/分字段隔离/链式语义/端点权限契约）；40 套 stub 全绿（逐套退出码 0）。
+- **架构注**：本批为多工位并行开发批——卡B（workbuddy 二线）复刻血缘、卡A（trae-cn 攻坚，重派自限额的 bigmodel 主力池）分页 API、卡C（workbuddy 二线）前端总览；主会话合并 + hy3-verifier 核查 + cross-check 异源复核。
+
+### v91 续 · 2026-11-04 · 随本提交落地 · fix（曼波反馈「审批台迭代怎么没有自动分发」）
+
+**复刻链路接入自动分发：复刻新单不再卡待审批池**
+
+- **诊断**：自动分发 UI（提示条/开关）都在且线上 `autoDispatch=true` 开启——缺口是**复刻端点**：v85 提交链有「autoDispatch 开启→提交即 setImmediate 自动 approveReservation({auto:true}) 入队」分支，而复刻（2026-10-08 上线，早于自动分发）生成新单后只 notifyReviewers 落待审批。审批职能已停的模式下复刻单永远干等审批——v91 把复刻搬进管理台动线后才显形。
+- **修复（index.js reprint 路由）**：镜像提交链语义——autoDispatch 开启时 setImmediate 自动通过（`{auto:true}` 触发切片闸豁免+机型学习选机，v88 P0 教训防漏传），通过失败转人工通知审批人，窗口期用户取消属良性竞态不再通知；人工模式（开关关）才 notifyReviewers。审批备注记「自动分发（审批复核制）·复刻」，日志带「复刻自 Rxxx」可审计。
+- **前端（approve.html）**：复刻对话框文案按 `__autoDispatch` 自适应（「重新走审批流」→「提交后自动入队打印」）；成功提示「等待审批」→「🤖 自动分发入队中」；刷新延迟 800ms 留出异步入队窗口。
+- **测试**：reprint-lineage-test 新增「复刻链路接入自动分发」静态契约锚（7 项）——锚死路由判 autoDispatch 开关、必须传 {auto:true}、setImmediate 异步、notifyReviewers 只在 catch 兜底与 else 人工分支出现；40 套全绿 exit=0。
+
+### v92 · 2026-11-05 · 随本提交落地 · fix
+
+**全量审查收口批：memorizeFit 死链退役 + npm test 三口径归一（2026-11-04 深夜曼波令 qianli 全项目群全量审查，bambu 域 3×P1 本批收口）**
+
+- **P1 memorizeFit 死链（train.html）**：「🧠 把 N 项差异记忆为规则候选」按钮调用 `POST /api/print/rule-suggestions`，该路由已随 v84 待审池退役删除——DEVLOG v84「待审池自 v62 清理后已无前端生产者」论断被推翻，memorizeFit 就是漏网的前端生产者，点击即 404 静默坏死。修复：按钮 + memorizeFit 函数 + FIT 状态变量整体退役；拟合度条保留纯展示语义（差异项=人工比对参考，样本积累由训练工房标注承接），注释同步更新。
+- **P1 npm test 链漏挂**：reprint-lineage-test / multi-model-match-test 只进 push.js 闸门自动发现（40 套），`npm test` 手工链只有 38 套——ONBOARDING §2.3「npm test 全绿才能部署」给的是假信心，最核心回归锚（REPRINT_ALLOWED_STATUSES 不漂移 / auto:true 不漏传）在日常命令里根本不执行。根治：新增 `scripts/run-tests.js`（与 push.js 测试闸门同源自动发现 `test/*-test.js`），`npm test` 指向它——38/39/40 三套口径永久归一，以后新增测试零登记成本。
+- **文档口径**：README §测试 / ONBOARDING §2.3、§3 套数表述改为「自动发现（与 push.js 闸门同源）」。
+- **测试**：npm test（新 runner）40 套全绿 exit=0。
+- **关联**：同批全量审查本仓 P2×9（dispatchLearning null-est 中位数污染/queueWait 首轨迹/backfill printerModel 语义污染/receiptHold 恢复键归一/DM 静默闸缺口等）另批收口；v85→v91续 七版本随本批一并归档入顶层 git。

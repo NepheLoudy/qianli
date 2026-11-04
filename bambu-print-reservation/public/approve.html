@@ -35,6 +35,14 @@ function toggleTheme() {
   .qitem .qline { font-size: 13.5px; margin: 3px 0; }
   .qitem .qline .lbl { color: var(--subtle); font-size: 12px; margin-right: 6px; letter-spacing: .08em; }
   .roleTag { font-size: 11.5px; padding: 1px 8px; border: 1px solid var(--info); color: var(--info); letter-spacing: .1em; }
+
+  /* 单据总览（v91）：筛选 chips 行 / 分页脚——延续 1px 硬边框，选中态走 accent 边框（同 button.on 语言） */
+  .ovBar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  .ovChips { display: inline-flex; gap: 8px; flex-wrap: wrap; flex: 1 1 auto; }
+  .ovChips button { padding: 3px 12px; font-size: 12.5px; }
+  .ovChips button.on { border-color: var(--accent); color: var(--accent); font-weight: 500; box-shadow: inset 0 -2px 0 var(--accent); }
+  .ovFoot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .srcTag { display: inline-block; margin-top: 3px; padding: 0 6px; font-size: 11px; border: 1px solid var(--info); color: var(--info); letter-spacing: .05em; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -72,11 +80,22 @@ function toggleTheme() {
   <div id="appBody" style="display:none">
     <div class="card">
       <h2>⏳ 待审批 <span class="sub" id="pendingCount">（每 15s 自动刷新）</span></h2>
+      <div class="detail" id="autoDispatchNote" style="display:none;margin-bottom:8px">🤖 <b>自动分发模式已开启</b>——新单提交即自动入队，无需人工审批。本列表只出现「自动选机失败转人工」的单；下方进行中/已完成的单可随时干预（改派/取消/停机走观察台）。</div>
       <div id="pendingList"><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div></div>
     </div>
     <div class="card">
-      <h2>📜 最近处理 <span class="sub">（只读，最近 20 条）</span></h2>
-      <div id="recentList"><div class="empty">加载中…</div></div>
+      <h2>🖨 进行中 <span class="sub" id="activeCount"></span></h2>
+      <div class="detail" style="margin-bottom:8px">排队与打印中的单据——异常时可在此改派或取消（停机/画面走观察台）。</div>
+      <div id="activeList"><div class="empty">加载中…</div></div>
+    </div>
+    <div class="card">
+      <h2>🗂 单据总览 <span class="sub" id="ovTotal">（加载中…）</span></h2>
+      <div class="ovBar">
+        <div class="ovChips" id="ovChips"></div>
+        <input type="text" id="ovQuery" placeholder="搜单号 / 发起人 / 文件名…" autocomplete="off" style="width:220px;flex:0 0 auto" onkeydown="if(event.key==='Enter')ovSearch()">
+      </div>
+      <div id="ovList"><div class="empty">加载中…</div></div>
+      <div class="ovFoot" id="ovPager"></div>
     </div>
   </div>
 </div>
@@ -146,26 +165,85 @@ async function amsSync(btn) {
 function enter() {
   renderIdentity();
   if (!isReviewer()) return;
-  startPolling(loadAll, 15000);
+  // v91：轮询同时刷总览（带 OV_MODE 当前参数——翻页/筛选/搜索后不跳回第一页；输入框独立于重渲染区不打断）
+  startPolling(() => { loadAll(); loadOverview(); }, 15000);
 }
 
 // ---------- 数据 ----------
 window.__printers = [];
 async function loadAll() {
   try {
-    const [resList, resPrinters] = await Promise.all([fetch('/api/reservations'), fetch('/api/printers')]);
+    const [resList, resPrinters, resPolicy] = await Promise.all([fetch('/api/reservations'), fetch('/api/printers'), fetch('/api/print/policy')]);
     if (resList.status === 401) { ME = null; renderIdentity(); return; }
     const records = await resList.json();
     if (resPrinters.ok) window.__printers = await resPrinters.json();
+    if (resPolicy.ok) { try { const pj = await resPolicy.json(); window.__autoDispatch = Boolean((pj.dispatch || {}).autoDispatch); } catch { window.__autoDispatch = false; } }
     const pending = records.filter((r) => r.status === '待审批');
-    const recent = records.filter((r) => r.status !== '待审批').slice().reverse().slice(0, 20);
-    // v82 渐进渲染：先渲待批（高频关键），近期单让出主线程一帧后再渲——首屏不等全量 DOM
+    // v87 复核面板：自动分发模式下三段视图——待审批（自动选机失败转人工）/进行中（可干预）/单据总览
+    const autoMode = window.__autoDispatch === true;
+    $('autoDispatchNote').style.display = autoMode ? 'block' : 'none';
+    const active = records.filter((r) => r.status === '排队中' || r.status === '打印中').slice().reverse();
+    $('activeCount').textContent = active.length ? `（${active.length} 单）` : '';
     renderPending(pending);
-    await new Promise((r2) => requestAnimationFrame(() => requestAnimationFrame(r2)));
-    renderRecent(recent);
+    renderActive(active);
   } catch (err) {
     $('pendingList').innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
   }
+}
+
+/** 进行中单据卡（v87 复核面板）：排队/打印中，改派（模型直投）/取消 */
+function renderActive(list) {
+  const box = $('activeList');
+  if (!list.length) { box.innerHTML = '<div class="empty">没有进行中的单据</div>'; return; }
+  box.innerHTML = list.map((r) => {
+    const mine = ME && r.submittedBy === ME.id;
+    const canCancel = mine || isReviewer();
+    const reassign = r.status === '排队中' && isReviewer() && /\.(step|stp|stl|obj)$/i.test(r.fileName || '');
+    const prog = r.status === '打印中' && r.printer ? `<span class="detail"> @ ${esc(r.printer)}</span>` : '';
+    const ops = [];
+    if (reassign) ops.push(`<button class="mini" onclick="recoverGivenUp('${esc(r.id)}')" title="指定打印机立即分发">改派</button>`);
+    if (canCancel) ops.push(`<button class="mini ghost" onclick="cancelActive('${esc(r.id)}')">取消</button>`);
+    return `<div class="qitem"><div class="qhead">
+      <b>${esc(r.id)}</b><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span>
+      ${r.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡</span>' : ''}
+    </div>
+    <div class="qline"><span class="lbl">状态</span>${esc(r.status)}${prog}<span class="lbl" style="margin-left:12px">发起人</span>${esc(r.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc(r.fileName || '')}</div>
+    ${ops.length ? `<div class="actions">${ops.join('')}</div>` : ''}</div>`;
+  }).join('');
+}
+
+// ---------- 改派（v87 进行中卡）：排队单人工指定打印机（同品牌）----------
+async function recoverGivenUp(recordId) {
+  let names = (window.__printers || []).map(p => p.name);
+  if (!names.length) { try { const r = await fetch('/api/printers'); if (r.ok) names = (await r.json()).map(p => p.name); } catch { /* 忽略 */ } }
+  if (!names.length) return toast('暂无已登记打印机');
+  const dlg = document.createElement('dialog');
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">人工直发 #${esc(recordId)}</h3>
+    <div class="detail" style="margin-bottom:6px">选择要分发到的打印机（排队单改派 / 放弃池恢复共用）：</div>
+    <select id="recoverPrinterSel" style="width:100%;padding:8px">${names.map(n => `<option>${esc(n)}</option>`).join('')}</select>
+    <div class="actions" style="margin-top:10px">
+      <button class="ok" onclick="doRecover('${esc(recordId)}', this.closest('dialog'))">恢复分发</button>
+      <button class="mini" onclick="this.closest('dialog').close()">取消</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.showModal();
+}
+async function doRecover(recordId, dlg) {
+  const printerName = dlg.querySelector('#recoverPrinterSel').value;
+  const res = await fetch('/api/dispatch/manual', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ recordId, printerName }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return toast('❌ ' + (data.error || '失败'));
+  dlg.close();
+  toast(data.manualOnly ? `📝 ${data.message}` : `✅ ${data.message}`);
+  loadAll();
+}
+async function cancelActive(id) {
+  if (!confirm(`确认取消 ${id}？（打印中会下发停机指令）`)) return;
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`✅ ${id} 已取消`);
+  else toast('❌ ' + (data.error || '取消失败'));
+  loadAll();
 }
 
 // ---------- 参数智能层 provenance（v60）：模型修正/建议在审批台透明展示 ----------
@@ -243,18 +321,216 @@ function renderPending(list) {
   }).join('');
 }
 
-function renderRecent(list) {
-  const box = $('recentList');
-  if (!list.length) { box.innerHTML = '<div class="empty">暂无已处理记录</div>'; return; }
-  box.innerHTML = `<table>
-    <thead><tr><th>单号</th><th>状态</th><th>发起人/文件</th><th>需求</th><th>时间</th></tr></thead>
-    <tbody>${list.map((r) => `<tr>
-      <td><b>${esc(r.id)}</b></td>
-      <td><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}</td>
-      <td>${esc(r.applicant || '?')}<br><span class="detail">${esc(r.fileName || '')}</span></td>
-      <td class="detail">${esc(r.materialType || '?')}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
-      <td class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
-    </tr>`).join('')}</tbody></table>`;
+// ---------- 单据总览（v91 曼波令：最近 20 条 → 全量分页管理窗口） ----------
+// 服务端分页 + 筛选/搜索；旧后端返回裸数组时前端内存过滤+分页兜底（灰度期不炸）。
+const OV_STATUSES = ['全部', '待审批', '已通过', '排队中', '打印中', '已完成', '已驳回', '已取消'];
+const OV_PAGE_SIZES = [20, 50, 100];
+const OV_MODE = { page: 1, pageSize: 20, status: '全部', q: '', sort: 'createdAt_desc', legacy: false };
+
+/** 组装查询串（轮询保参：翻页/筛选/搜索后 15s 轮询带同一组参数刷新当前视图） */
+function ovParams() {
+  const p = new URLSearchParams();
+  p.set('page', String(OV_MODE.page));
+  p.set('pageSize', String(OV_MODE.pageSize));
+  if (OV_MODE.status !== '全部') p.set('status', OV_MODE.status);
+  if (OV_MODE.q) p.set('q', OV_MODE.q);
+  p.set('sort', OV_MODE.sort);
+  return p.toString();
+}
+
+/** 旧数组形态兜底：内存过滤（状态/关键词）+ 时间排序 + 切页（legacy 模式自愈：后端上线分页后自动摘除标记） */
+function ovLegacyPage(arr) {
+  let list = arr.slice();
+  if (OV_MODE.status !== '全部') list = list.filter((r) => r.status === OV_MODE.status);
+  if (OV_MODE.q) {
+    const kw = OV_MODE.q.toLowerCase();
+    list = list.filter((r) => [r.id, r.applicant, r.fileName].some((x) => String(x || '').toLowerCase().includes(kw)));
+  }
+  // 排序与后端 store.query 数值语义对齐（cross-check F1）：localeCompare 受 locale 影响且
+  // 时间戳格式不统一的老单可能排错——统一 getTime 数值比较
+  const t = (r) => { const v = new Date(r.createdAt).getTime(); return Number.isFinite(v) ? v : 0; };
+  list.sort((a, b) => OV_MODE.sort === 'createdAt_asc' ? t(a) - t(b) : t(b) - t(a));
+  const total = list.length;
+  const start = (OV_MODE.page - 1) * OV_MODE.pageSize;
+  return { records: list.slice(start, start + OV_MODE.pageSize), total, page: OV_MODE.page, pageSize: OV_MODE.pageSize };
+}
+
+async function loadOverview() {
+  const box = $('ovList');
+  try {
+    const res = await fetch(`/api/reservations?${ovParams()}`);
+    if (res.status === 401) { ME = null; renderIdentity(); return; }
+    const data = await res.json();
+    // 形态判别：带参请求返回分页对象；旧后端忽略参数仍返回数组 → 内存分页兜底并提示灰度
+    OV_MODE.legacy = Array.isArray(data);
+    const pageData = OV_MODE.legacy ? ovLegacyPage(data) : data;
+    renderOverview(pageData);
+  } catch (err) {
+    if (box) box.innerHTML = `<div class="empty">总览加载失败：${esc(err.message)}</div>`;
+  }
+}
+
+/** 需求列：materialType × color × quantity（v91：旧列「?」是字段没取对，修正；空值统一 —） */
+function ovNeedCell(r) {
+  const seg = [r.materialType, r.color].filter(Boolean).join(' ×');
+  const qty = Number(r.quantity) > 1 ? ` ×${r.quantity}件` : '';
+  return seg || qty ? esc(seg) + qty : '—';
+}
+
+function renderOverview(pg) {
+  const list = (pg && pg.records) || [];
+  const total = Number(pg && pg.total) || 0;
+  // 页码以服务端回显为准（服务端可对越界 page 收口），再防一手本地越界
+  if (Number.isFinite(Number(pg && pg.page)) && Number(pg.page) >= 1) OV_MODE.page = Number(pg.page);
+  const totalPages = Math.max(1, Math.ceil(total / OV_MODE.pageSize));
+  if (OV_MODE.page > totalPages) {
+    OV_MODE.page = totalPages; // 轮询窗口内记录被删空：收口末页
+    setTimeout(loadOverview, 0); // 收口后重拉一次（cross-check D2）：免得当前帧空表配「x/y 页」等下轮自愈
+    return;
+  }
+  $('ovTotal').textContent = `（共 ${total} 单${OV_MODE.legacy ? ' · 旧接口内存分页（服务端分页未上线）' : ''} · ${OV_MODE.sort === 'createdAt_desc' ? '新→旧' : '旧→新'}）`;
+  // 筛选 chips（单选；选中态 accent 边框）
+  $('ovChips').innerHTML = OV_STATUSES.map((s) =>
+    `<button class="mini${OV_MODE.status === s ? ' on' : ''}" onclick="ovSetStatus('${s}')">${s}</button>`).join('');
+  const box = $('ovList');
+  if (!list.length) { box.innerHTML = `<div class="empty">${OV_MODE.status === '全部' && !OV_MODE.q ? '暂无单据' : '没有匹配的单据'}</div>`; }
+  else {
+    box.innerHTML = `<table>
+      <thead><tr><th>单号</th><th>状态</th><th>发起人 / 文件</th><th>需求</th><th>机位</th><th>时间</th><th>操作</th></tr></thead>
+      <tbody>${list.map((r) => {
+        const mine = ME && r.submittedBy === ME.id;
+        const canCancel = !['已完成', '已取消', '已驳回'].includes(r.status) && (mine || isReviewer());
+        const canReprint = ['已完成', '已取消'].includes(r.status) && (mine || isReviewer());
+        const ops = [
+          `<button class="mini" onclick="openOverviewDetail('${esc(r.id)}')">详情</button>`,
+          canReprint ? `<button class="mini" onclick="openReprintDialog('${esc(r.id)}')">复刻</button>` : '',
+          canCancel ? `<button class="mini ghost" onclick="cancelOverview('${esc(r.id)}')">取消</button>` : '',
+        ].filter(Boolean).join(' ');
+        return `<tr>
+          <td><b>${esc(r.id)}</b>${r.sourceRecordId ? `<br><span class="srcTag">复刻自 ${esc(r.sourceRecordId)}</span>` : ''}</td>
+          <td><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.isUrgent ? ' ⚡' : ''}</td>
+          <td>${esc(r.applicant || '?')}<br><span class="detail">${esc(r.fileName || '')}</span></td>
+          <td class="detail">${ovNeedCell(r)}</td>
+          <td class="detail">${esc(r.assignedPrinter || r.printer || '—')}</td>
+          <td class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
+          <td style="white-space:nowrap">${ops}</td>
+        </tr>`;
+      }).join('')}</tbody></table>`;
+  }
+  // 分页脚：上一页/下一页 · x/y · 每页 20/50/100 · 排序切换（挂 DOM 后绑定，避免内联 onclick 字符串拼接事故）
+  const pager = $('ovPager');
+  const first = OV_MODE.page <= 1, last = OV_MODE.page >= totalPages;
+  pager.innerHTML = `
+    <button class="mini" id="ovPrev" ${first ? 'disabled' : ''}>← 上一页</button>
+    <span>第 <b>${OV_MODE.page}</b> / ${totalPages} 页</span>
+    <button class="mini" id="ovNext" ${last ? 'disabled' : ''}>下一页 →</button>
+    <span style="margin-left:auto">每页</span>
+    ${OV_PAGE_SIZES.map((n) => `<button class="mini${OV_MODE.pageSize === n ? ' on' : ''}" data-ps="${n}">${n}</button>`).join('')}
+    <button class="mini" id="ovSort" title="按创建时间正序/倒序">${OV_MODE.sort === 'createdAt_desc' ? '↓ 新→旧' : '↑ 旧→新'}</button>`;
+  pager.querySelector('#ovPrev').onclick = () => { if (!first) { OV_MODE.page--; loadOverview(); } };
+  pager.querySelector('#ovNext').onclick = () => { if (!last) { OV_MODE.page++; loadOverview(); } };
+  pager.querySelectorAll('[data-ps]').forEach((b) => { b.onclick = () => { if (OV_MODE.pageSize !== Number(b.dataset.ps)) { OV_MODE.pageSize = Number(b.dataset.ps); OV_MODE.page = 1; loadOverview(); } }; });
+  pager.querySelector('#ovSort').onclick = () => { OV_MODE.sort = OV_MODE.sort === 'createdAt_desc' ? 'createdAt_asc' : 'createdAt_desc'; OV_MODE.page = 1; loadOverview(); };
+}
+
+function ovSearch() {
+  const q = $('ovQuery').value.trim();
+  if (q === OV_MODE.q) return;
+  OV_MODE.q = q; OV_MODE.page = 1;
+  loadOverview();
+}
+function ovSetStatus(s) {
+  if (OV_MODE.status === s) return;
+  OV_MODE.status = s; OV_MODE.page = 1;
+  loadOverview();
+}
+
+/** 详情弹层：拉 /api/reservations/:id 全量——完整 history 时间线 + 参数摘要 */
+async function openOverviewDetail(id) {
+  const dlg = document.createElement('dialog');
+  dlg.style.cssText = 'width:min(680px,94vw);max-height:88vh;overflow:auto';
+  dlg.innerHTML = '<div class="detail">⏳ 拉取单据详情…</div>';
+  document.body.appendChild(dlg);
+  dlg.showModal();
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}`).catch(() => null);
+  const rec = res && res.ok ? await res.json().catch(() => null) : null;
+  if (!rec) {
+    const errMsg = res ? `详情拉取失败（HTTP ${res.status}）` : '网络错误';
+    dlg.innerHTML = `<h3 style="font-size:15px">📋 详情 · ${esc(id)}</h3>
+      <div class="detail" style="color:var(--bad)">❌ ${esc(errMsg)}</div>
+      <div class="actions" style="justify-content:flex-end"><button class="mini" onclick="this.closest('dialog').close()">关闭</button></div>`;
+    return;
+  }
+  const paramEntries = rec.processParams ? Object.entries(rec.processParams)
+    .filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null && !(Array.isArray(v) && !v.length)) : [];
+  const params = paramEntries.map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ');
+  const histRows = (rec.history || []).map((h) => `<tr>
+    <td class="detail">${esc((h.at || '').replace('T', ' ').slice(0, 16))}</td>
+    <td>${esc(h.from || '')} → <b>${esc(h.to)}</b></td>
+    <td class="detail">${esc(h.note || '—')}</td>
+  </tr>`).join('');
+  dlg.innerHTML = `<h3 style="font-size:15px">📋 详情 · ${esc(rec.id)}</h3>
+    <div class="qline"><span class="lbl">状态</span><span class="badge s-${esc(rec.status)}">${esc(rec.status)}</span>${rec.isUrgent ? ' <span class="badge" style="border-color:var(--warn);color:var(--warn)">⚡ 加急</span>' : ''}${rec.sourceRecordId ? ` <span class="srcTag">复刻自 ${esc(rec.sourceRecordId)}</span>` : ''}</div>
+    <div class="qline"><span class="lbl">发起人</span>${esc(rec.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc(rec.fileName || '')}</div>
+    <div class="qline"><span class="lbl">需求</span>${ovNeedCell(rec)}${rec.assignedPrinter || rec.printer ? `<span class="lbl" style="margin-left:12px">机位</span>${esc(rec.assignedPrinter || rec.printer)}` : ''}${rec.estMinutes ? `<span class="lbl" style="margin-left:12px">预计</span>${fmtMins(rec.estMinutes)}` : ''}</div>
+    ${params ? `<div class="qline"><span class="lbl">参数</span>${params}${paramEntries.length > 12 ? ` <span class="detail">…共 ${paramEntries.length} 项</span>` : ''}</div>` : ''}
+    ${rec.embeddedParams ? `<div class="qline"><span class="lbl">3mf 内嵌</span><span class="detail">${esc(Object.entries(rec.embeddedParams.params || {}).slice(0, 6).map(([k, v]) => (PARAM_LABELS[k] || k) + '=' + v).join(' · '))}${Object.keys(rec.embeddedParams.params || {}).length > 6 ? ' …' : ''}</span></div>` : ''}
+    <div style="margin-top:10px"><b class="detail">📜 完整轨迹（${(rec.history || []).length} 条）</b>
+      ${histRows ? '<table><thead><tr><th>时间</th><th>流转</th><th>备注</th></tr></thead><tbody>' + histRows + '</tbody></table>' : '<div class="detail">无轨迹记录</div>'}</div>
+    <div class="actions" style="justify-content:flex-end"><button class="mini" id="ovDetailClose">关闭</button></div>`;
+  dlg.querySelector('#ovDetailClose').onclick = () => { dlg.close(); dlg.remove(); };
+}
+
+/** 复刻对话框（v91 总览行内；样式同 openApproveDialog）：颜色/份数/目标机可覆盖，成功提示新单号 */
+async function openReprintDialog(id) {
+  const dlg = document.createElement('dialog');
+  const printers = (window.__printers || []);
+  const autoMode = window.__autoDispatch === true; // 自动分发开启时复刻即自动入队（v91 续：链路对齐提交链）
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">♻️ 复刻（${esc(id)}）</h3>
+    <div class="detail" style="margin-bottom:8px">以你的名义带原参数重提新单（免重传、${autoMode ? '提交后<b>自动入队打印</b>' : '重新走审批流'}）；以下留空则沿用原单值。</div>
+    <label>颜色</label><input type="text" id="rpColor" placeholder="留空沿用原单颜色">
+    <label>份数</label><input type="number" id="rpQty" min="1" placeholder="留空沿用原单份数" style="width:120px">
+    <label>目标打印机</label><select id="rpPrinter"><option value="">留空沿用原单机位</option>${printers.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.status)}）</option>`).join('')}</select>
+    <div class="actions" style="margin-top:10px">
+      <button class="ok" id="rpGo">复刻</button>
+      <button class="mini" id="rpCancel">取消</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#rpCancel').onclick = () => dlg.close();
+  dlg.querySelector('#rpGo').onclick = async () => {
+    const go = dlg.querySelector('#rpGo');
+    go.disabled = true; go.textContent = '⏳ 提交中…';
+    const body = {};
+    const color = dlg.querySelector('#rpColor').value.trim();
+    const qty = Number(dlg.querySelector('#rpQty').value);
+    const pr = dlg.querySelector('#rpPrinter').value;
+    if (color) body.color = color;
+    if (Number.isFinite(qty) && qty > 0) body.quantity = qty;
+    if (pr) body.assignedPrinter = pr;
+    const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/reprint`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+    const data = res ? await res.json().catch(() => ({})) : {};
+    if (res && res.ok) {
+      dlg.close(); dlg.remove();
+      // 自动分发模式：新单已提交即自动入队（服务器端异步通过）——提示语与人工模式区分
+      toast(autoMode ? `🤖 已复刻为新单 ${data.id || ''}，自动分发入队中` : `✅ 已复刻为新单 ${data.id || ''}，等待审批`);
+      OV_MODE.page = 1; // 保留当前筛选/搜索（新单落待审批→自动模式下秒转排队中，切该筛选即见），只回第 1 页
+      setTimeout(() => { loadOverview(); loadAll(); }, 800); // 留出自动通过入队的异步窗口再刷新
+    } else {
+      go.disabled = false; go.textContent = '复刻';
+      toast('❌ ' + (data.error || '复刻失败'));
+    }
+  };
+  dlg.showModal();
+}
+
+/** 总览行内取消（可取消状态才渲染按钮；打印中同 cancelActive 会下发停机） */
+async function cancelOverview(id) {
+  if (!confirm(`确认取消 ${id}？（打印中会下发停机指令）`)) return;
+  const res = await fetch(`/api/reservations/${encodeURIComponent(id)}/cancel`, { method: 'POST' }).catch(() => null);
+  const data = res ? await res.json().catch(() => ({})) : {};
+  if (res && res.ok) toast(`✅ ${id} 已取消`);
+  else toast('❌ ' + (data.error || '取消失败'));
+  loadOverview(); loadAll();
 }
 
 // ---------- 预览 / 切片核对（2026-10-18 曼波令 + P0 框架） ----------
@@ -722,7 +998,7 @@ document.addEventListener('keydown', (e) => {
 (async () => {
   await loadMe();
   renderIdentity();
-  if (isReviewer()) enter();
+  if (isReviewer()) { enter(); loadOverview(); } // v91：总览首屏即拉（loadAll 维持原轮询时序，首拉仍由 enter 的轮询接管）
   else if (ME) renderIdentity();
 })();
 </script>

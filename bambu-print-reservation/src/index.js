@@ -268,6 +268,8 @@ app.get('/api/print/policy', requireUser(), (req, res) => {
       useAms: config.dispatch.useAms,
       maxRetries: config.dispatch.maxRetries,
       retryCooldownMs: config.dispatch.retryCooldownMs,
+      autoDispatch: config.dispatch.autoDispatch, // v85：审批台「自动分发模式」提示条数据源
+      durationBias: (() => { try { return require('./services/dispatchLearning').durationBias(reservationStore.list()); } catch { return null; } })(), // v89 时长校准系数
       givenUpCount: (() => { try { return dispatcher.listGivenUp().length; } catch { return null; } })(),
     },
     queue: { waiting: Array.isArray(queue) ? queue.length : null, printingCount: printing ? (Array.isArray(printing) ? printing.length : Object.keys(printing).length) : null },
@@ -308,46 +310,16 @@ app.post('/api/print/process-rules', requireApiToken, (req, res) => {
   res.status(result.ok ? 200 : 400).json(result);
 });
 
-// ---------- 学习链路（2026-10-05 第三批）：预览 / 修正建议池 / 专家 3mf 导入 ----------
+// ---------- 学习链路（2026-10-05 第三批）：预览 / 专家 3mf 导入 ----------
+// v84 移除：阈值规则拟合（/api/training/rule-fit）与修正建议待审池（/api/print/rule-suggestions*）
+// ——曼波定「拟合应选取连续映射而非定态规则」：数值参数学习已由参数智能层（v60+，
+// kNN/岭回归/MLP 三族 LOFO 竞技）承担，单变量中位数差阈值规则与其职责重叠且表达力差；
+// 待审池自 v62 清理后已无前端生产者。ruleFitter.js 保留 median/expertOf（paramModel 消费）。
 
 // 参数实时预览（登录用户）：提交页勾选变化即调，让用户/审批人提交前看到「本单会怎么切」
 app.post('/api/print/process-rules/preview', requireUser(), (req, res) => {
   const { selection, material } = req.body || {};
   res.json(processRules.applyRules(selection || {}, { material }));
-});
-
-// 修正建议池（登录用户可提交——使用/审批中发现参数不合适即可提；待审池聚合，reviewer 采纳）
-app.post('/api/print/rule-suggestions', requireUser(), (req, res) => {
-  try {
-    const { when, set, reason, source, sourceRef } = req.body || {};
-    const result = require('./services/ruleSuggestions').add({
-      when, set, reason, source, sourceRef, suggestedBy: req.user.displayName,
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(400).json({ error: err.message, details: err.details });
-  }
-});
-
-app.get('/api/print/rule-suggestions', requireUser('reviewer', 'admin'), (req, res) => {
-  res.json(require('./services/ruleSuggestions').list(req.query.status));
-});
-
-app.post('/api/print/rule-suggestions/:id/adopt', requireUser('reviewer', 'admin'), (req, res) => {
-  try {
-    const { priority } = req.body || {};
-    res.json(require('./services/ruleSuggestions').adopt(req.params.id, req.user.displayName, priority));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-app.post('/api/print/rule-suggestions/:id/reject', requireUser('reviewer', 'admin'), (req, res) => {
-  try {
-    res.json(require('./services/ruleSuggestions').reject(req.params.id, req.user.displayName));
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
 });
 
 // 专家 3mf 作品导入（reviewer+）：提取参数 diff 生成候选草稿——不入库，前端确认后走建议池
@@ -446,33 +418,8 @@ app.post('/api/training/fit', requireUser(), (req, res) => {
   }
 });
 
-// 规则拟合（2026-10-15 曼波定原则）：从「优秀切片样本 × 几何特征」统计拟合学习型因果规则，
-// 候选进待审池（source='fit'）——采纳后进规则库生效；不手写工艺因果（手写已撤）
-app.post('/api/training/rule-fit', requireUser('reviewer', 'admin'), (req, res) => {
-  try {
-    const trainingStore = require('./services/trainingStore');
-    const { fitRules } = require('./services/ruleFitter');
-    const { deriveFeatures } = require('./services/featureDerive');
-    const result = fitRules(deriveFeatures, trainingStore.list(), req.body || {});
-    const suggestions = require('./services/ruleSuggestions');
-    let added = 0;
-    for (const c of result.candidates) {
-      suggestions.add({
-        when: c.when,
-        set: c.set,
-        reason: c.reason,
-        source: 'fit',
-        sourceRef: `fit:${c.stats.feature}×${c.stats.param}`,
-        suggestedBy: req.user.displayName,
-      });
-      added += 1;
-    }
-    res.json({ ...result, added, note: added ? `已产出 ${added} 条候选（待审池确认后生效）` : '暂无显著特征-参数关联（样本量或差异不足）' });
-  } catch (err) {
-    console.error('规则拟合失败:', err);
-    res.status(400).json({ error: err.message });
-  }
-});
+// v84 移除：/api/training/rule-fit（阈值规则拟合，2026-10-15 批）——数值参数学习由
+// 参数智能层（下方）承担；单变量中位数差阈值规则与「连续映射」方向相悖（曼波 84 令）。
 
 // ---------- 参数智能层（v60 · 2026-10-30 曼波令「学习和几何特征处理链路」） ----------
 // 学习模型（案例推理 kNN + 加权岭回归）对数值工艺参数做多变量预测，LOFO 择优；
@@ -484,6 +431,7 @@ app.post('/api/training/param-model/fit', requireUser('reviewer', 'admin'), (req
     const reservations = require('./services/reservationStore').list()
       // v83：已驳回/已取消单是「负样本」（参数被人工否决），不得以弱正样本权重进训练；
       // 行数封顶 800——tier2 的协同域是 O(rows²)，MLP 全量 batch 也随单量线性膨胀
+      // v84：reservationStore.list() 是存储全量（不经列表 DTO 裁剪），modelFeatures 完整
       .filter((r) => r.processParams && r.modelFeatures
         && r.status !== '已驳回' && r.status !== '已取消')
       .slice(-800);
@@ -951,62 +899,84 @@ app.delete('/api/training/samples/:id', requireUser('reviewer', 'admin'), (req, 
   }
 });
 
+// 列表 slim DTO（2026-11-04 审批台分页批：从路由内联逻辑提成模块函数，全量/分页分支共用）
+// 审查修复（v62）：列表 DTO 收敛——服务端绝对路径（filePath/sourceFile.storedPath）
+// 不下发（信息泄露面 + 前端无消费点）；详情端点 /:id 仍带全量供审批/复核
+// v82 续刀（曼波反馈「有些界面打开要加载半天」）：实测列表 218KB——大头是每单拖着
+// 完整 spatial（3D 标注坐标数组，列表页零消费）与 modelFeatures（体检快照，
+// 审批走 /fit 端点）。逐单精简后列表约缩 5-10 倍；详情端点 /:id 全量不变
+// v83b 实测续刀：裁后仍 210KB——remaining 大头=history（每条含 note 全文）、
+// embeddedParams.params（全量参数，列表只显示前 5 项）、spatial 摘要。继续精简：
+//  · history 截最近 4 条（详情页看全量）
+//  · embeddedParams 只留 {estMinutes, filaments, machineModel} + params 前 6 键
+//  · processParams 列表页显示前 10 项 → 传全量浪费，只传前 12 键 + 总数
+function slimReservation(r) {
+  const slim = {
+    ...r,
+    filePath: undefined,
+    sourceFile: Array.isArray(r.sourceFile)
+      ? r.sourceFile.map((sf) => ({ ...sf, storedPath: undefined }))
+      : (r.sourceFile ? { ...r.sourceFile, storedPath: undefined } : undefined),
+    // 大对象裁剪：列表页不消费，详情页才要
+    modelFeatures: undefined,
+    spatial: Array.isArray(r.spatial)
+      ? r.spatial.map((a) => ({ tool: a.tool, loadType: a.loadType, loadNature: a.loadNature, loadMagnitude: a.loadMagnitude }))
+      : r.spatial,
+  };
+  if (slim.history && slim.history.length > 4) {
+    slim.historyTruncated = slim.history.length;
+    slim.history = slim.history.slice(-4);
+  }
+  // v83b 续：history 列表只显示最近 2 条（前端 slice(-2)）→ 服务端截到 2 条 + 计数；
+  // spatial 列表零消费（spatialLabel 只吃本地标注器回调的 anns）→ 整个剔除
+  if (slim.history && slim.history.length > 2) {
+    slim.historyTruncated = slim.history.length;
+    slim.history = slim.history.slice(-2);
+  }
+  slim.spatial = undefined;
+  if (slim.embeddedParams && slim.embeddedParams.params) {
+    const keys = Object.keys(slim.embeddedParams.params);
+    if (keys.length > 6) {
+      const slimParams = {};
+      for (const k of keys.slice(0, 6)) slimParams[k] = slim.embeddedParams.params[k];
+      slim.embeddedParams = { ...slim.embeddedParams, params: slimParams, paramsTotal: keys.length };
+    }
+  }
+  if (slim.processParams && typeof slim.processParams === 'object') {
+    const keys = Object.keys(slim.processParams);
+    if (keys.length > 12) {
+      const slimParams = {};
+      for (const k of keys.slice(0, 12)) slimParams[k] = slim.processParams[k];
+      slim.processParams = slimParams;
+      slim.processParamsTotal = keys.length;
+    }
+  }
+  return slim;
+}
+
+// 带任一分页/过滤参数 → 分页形态响应 { records, total, page, pageSize }；全不带 → 数组（旧前端零破坏）
+const RESERVATION_QUERY_KEYS = ['page', 'pageSize', 'status', 'q', 'from', 'to', 'sort'];
+
+// express 多值键（q=a&q=b）会把 req.query 字段变成数组——store.query 的 typeof 守卫会把数组静默降级为
+// 「未提供」（过滤无声失效），这里归一为末值（与 PHP/Flask last-wins 惯例一致），保住查询语义
+function normalizeQueryValue(v) {
+  return Array.isArray(v) ? v[v.length - 1] : v;
+}
+
 app.get('/api/reservations', requireUser(), async (req, res) => {
   try {
+    const isQuery = RESERVATION_QUERY_KEYS.some((k) => req.query[k] !== undefined);
+    if (isQuery) {
+      // 分页/过滤参数归一后透传 store.query()（容错钳制在存储层统一做）
+      const queryOpts = {};
+      for (const k of RESERVATION_QUERY_KEYS) {
+        if (req.query[k] !== undefined) queryOpts[k] = normalizeQueryValue(req.query[k]);
+      }
+      const { records, total, page, pageSize } = reservationStore.query(queryOpts);
+      return res.json({ records: records.map(slimReservation), total, page, pageSize });
+    }
     const reservations = await reservationService.getAllReservations();
-    // 审查修复（v62）：列表 DTO 收敛——服务端绝对路径（filePath/sourceFile.storedPath）
-    // 不下发（信息泄露面 + 前端无消费点）；详情端点 /:id 仍带全量供审批/复核
-    // v82 续刀（曼波反馈「有些界面打开要加载半天」）：实测列表 218KB——大头是每单拖着
-    // 完整 spatial（3D 标注坐标数组，列表页零消费）与 modelFeatures（体检快照，
-    // 审批走 /fit 端点）。逐单精简后列表约缩 5-10 倍；详情端点 /:id 全量不变
-    // v83b 实测续刀：裁后仍 210KB——remaining 大头=history（每条含 note 全文）、
-    // embeddedParams.params（全量参数，列表只显示前 5 项）、spatial 摘要。继续精简：
-    //  · history 截最近 4 条（详情页看全量）
-    //  · embeddedParams 只留 {estMinutes, filaments, machineModel} + params 前 6 键
-    //  · processParams 列表页显示前 10 项 → 传全量浪费，只传前 12 键 + 总数
-    res.json(reservations.map((r) => {
-      const slim = {
-        ...r,
-        filePath: undefined,
-        sourceFile: Array.isArray(r.sourceFile)
-          ? r.sourceFile.map((sf) => ({ ...sf, storedPath: undefined }))
-          : (r.sourceFile ? { ...r.sourceFile, storedPath: undefined } : undefined),
-        // 大对象裁剪：列表页不消费，详情页才要
-        modelFeatures: undefined,
-        spatial: Array.isArray(r.spatial)
-          ? r.spatial.map((a) => ({ tool: a.tool, loadType: a.loadType, loadNature: a.loadNature, loadMagnitude: a.loadMagnitude }))
-          : r.spatial,
-      };
-      if (slim.history && slim.history.length > 4) {
-        slim.historyTruncated = slim.history.length;
-        slim.history = slim.history.slice(-4);
-      }
-      // v83b 续：history 列表只显示最近 2 条（前端 slice(-2)）→ 服务端截到 2 条 + 计数；
-      // spatial 列表零消费（spatialLabel 只吃本地标注器回调的 anns）→ 整个剔除
-      if (slim.history && slim.history.length > 2) {
-        slim.historyTruncated = slim.history.length;
-        slim.history = slim.history.slice(-2);
-      }
-      slim.spatial = undefined;
-      if (slim.embeddedParams && slim.embeddedParams.params) {
-        const keys = Object.keys(slim.embeddedParams.params);
-        if (keys.length > 6) {
-          const slimParams = {};
-          for (const k of keys.slice(0, 6)) slimParams[k] = slim.embeddedParams.params[k];
-          slim.embeddedParams = { ...slim.embeddedParams, params: slimParams, paramsTotal: keys.length };
-        }
-      }
-      if (slim.processParams && typeof slim.processParams === 'object') {
-        const keys = Object.keys(slim.processParams);
-        if (keys.length > 12) {
-          const slimParams = {};
-          for (const k of keys.slice(0, 12)) slimParams[k] = slim.processParams[k];
-          slim.processParams = slimParams;
-          slim.processParamsTotal = keys.length;
-        }
-      }
-      return slim;
-    }));
+    res.json(reservations.map(slimReservation));
   } catch (err) {
     console.error('获取预约列表失败:', err);
     res.status(500).json({ error: err.message });
@@ -1537,7 +1507,31 @@ app.post('/api/reservations', requireUser(), upload.fields([
       modelFeatures,  // STL 几何体检快照（需求链路单；3mf 直通为 null）
     });
 
-    reservationService.notifyReviewers(reservation).catch(() => {}); // fire-and-forget
+    // v85 自动分发（曼波令「审批功能停了，收到文件自动分发」）：autoDispatch 开启时
+    // 提交即自动通过入队（硬冲突/程序初审在上游已拦）——审批台降级为复核干预面板。
+    // 用正式 approveReservation 走完整语义（样本入库勾选/入队/状态机），审批人记自动分发。
+    // v88 审查修复（P0）：必须传 { auto: true }——切片闸豁免+机型学习选机的触发信号，
+    // 漏传会让每个切片 3mf 在自动审批时抛「仅对模型直投有效」静默回退人工（v86 实际状态）。
+    // catch 内先查单据状态：提交响应与异步回调窗口内的用户取消是良性竞态，不再通知审批人
+    if (config.dispatch.autoDispatch) {
+      setImmediate(() => {
+        reservationService.approveReservation(reservation.id, config.dispatch.autoApproverName, '自动分发（审批复核制）', { auto: true })
+          .then(() => console.log(`[自动分发] ${reservation.id} 已自动通过入队`))
+          .catch((err) => {
+            const cur = require('./services/reservationStore').get(reservation.id);
+            if (cur && cur.status !== '待审批') {
+              console.log(`[自动分发] ${reservation.id} 已被取消/流转（${cur.status}）——竞态良性，不再通知`);
+              return;
+            }
+            console.error(`[自动分发] ${reservation.id} 自动通过失败（转人工审批）:`, err.message);
+            try {
+              reservationService.notifyReviewers(reservation).catch(() => {});
+            } catch { /* 通知失败不影响主流程 */ }
+          });
+      });
+    } else {
+      reservationService.notifyReviewers(reservation).catch(() => {}); // fire-and-forget
+    }
     require('./services/usageReport').reportUsage(req.user.username, 'print-submit').catch(() => {});
     res.json({ ...reservation, precheckWarnings }); // 初审警告（占用排队告知）随单返回前端展示
   } catch (err) {
@@ -1633,16 +1627,49 @@ app.post('/api/reservations/:id/review', requireUser('reviewer', 'admin'), async
 });
 
 // 复刻（2026-10-08）：已完成单一键带参重提（打坏了重打/帮同学打同款）——
-// 服务端复制源文件免重传；需求链路单按当前规则库重新定档；新单走完整审批流
+// 服务端复制源文件免重传；需求链路单按当前规则库重新定档；新单走完整审批流。
+// 权限（v91 cross-check B3 收口）：本人或 reviewer/admin（assertCanManage，与前端显隐
+// 对齐——此前仅 requireUser，任何登录用户可复刻任意状态/任意人的单）；且仅终态单可复刻
+// （前端按钮只对 已完成/已取消 显示，后端同步拦截，防 API 直调绕过 UI）
+const REPRINT_ALLOWED_STATUSES = ['已完成', '已取消'];
 app.post('/api/reservations/:id/reprint', requireUser(), async (req, res) => {
   try {
+    const srcRecord = reservationStore.get(req.params.id);
+    assertCanManage(req.user, srcRecord);
+    if (!REPRINT_ALLOWED_STATUSES.includes(srcRecord.status)) {
+      const err = new Error(`「${req.params.id}」当前状态「${srcRecord.status}」——只有已完成/已取消的单才能复刻`);
+      err.statusCode = 400;
+      throw err;
+    }
     const reservation = await reservationService.reprintReservation(req.params.id, req.user, req.body || {});
-    reservationService.notifyReviewers(reservation).catch(() => {}); // fire-and-forget
+    // v91 续（曼波反馈「审批台迭代怎么没有自动分发」）：复刻链路接入自动分发——autoDispatch
+    // 开启时复刻新单提交即自动通过入队（镜像 v85 提交链语义：正式 approveReservation 走完整
+    // 语义，{ auto: true } 触发切片闸豁免+机型学习选机；v88 P0 教训：漏传会静默回退人工）。
+    // 自动通过失败转人工审批（通知审批人）；用户在窗口期取消属良性竞态不再通知
+    if (config.dispatch.autoDispatch) {
+      setImmediate(() => {
+        reservationService.approveReservation(reservation.id, config.dispatch.autoApproverName, '自动分发（审批复核制）·复刻', { auto: true })
+          .then(() => console.log(`[自动分发] ${reservation.id}（复刻自 ${req.params.id}）已自动通过入队`))
+          .catch((err) => {
+            const cur = require('./services/reservationStore').get(reservation.id);
+            if (cur && cur.status !== '待审批') {
+              console.log(`[自动分发] ${reservation.id} 已被取消/流转（${cur.status}）——竞态良性，不再通知`);
+              return;
+            }
+            console.error(`[自动分发] ${reservation.id}（复刻）自动通过失败（转人工审批）:`, err.message);
+            try {
+              reservationService.notifyReviewers(reservation).catch(() => {});
+            } catch { /* 通知失败不影响主流程 */ }
+          });
+      });
+    } else {
+      reservationService.notifyReviewers(reservation).catch(() => {}); // 人工模式才通知审批人
+    }
     require('./services/usageReport').reportUsage(req.user.username, 'print-reprint').catch(() => {});
     res.json(reservation);
   } catch (err) {
     console.error('复刻预约失败:', err);
-    res.status(400).json({ error: err.message, details: err.details, warnings: err.details?.warnings || [] });
+    res.status(err.statusCode === 403 || err.statusCode === 404 ? err.statusCode : 400).json({ error: err.message, details: err.details, warnings: err.details?.warnings || [] });
   }
 });
 

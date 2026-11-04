@@ -48,7 +48,7 @@ npm start          # 或 node src/index.js，默认 http://localhost:3001
 ### 2.3 跑测试
 
 ```bash
-npm test           # 35 套全量（每套独立 node 进程，断言数见各文件尾部）
+npm test           # 全量自动发现 test/*-test.js（当前 40 套，断言数见各文件尾部）
 node test/param-model-test.js   # 单跑一套
 ```
 
@@ -93,7 +93,7 @@ src/
     modelOrient.js       ← 24 轴向摆向搜索（接触/支撑/高度度量；只保留正当旋转）
     orientationExtract.js← 专家摆向标签提取（3mf matrix → 四元数）
     trainingStore.js     ← 训练样本库（模型特征×工况标注×专家参数 三方合成）
-    ruleFitter.js        ← 阈值规则拟合（单变量中位数差；v60 前的主学习器，保留）
+    ruleFitter.js        ← 阈值规则拟合（v84 已删 fitRules/lofoEvaluate——只余 median/expertOf 供 paramModel 消费）
     ruleSuggestions.js   ← 规则建议待审池（人工修正→聚合计数→reviewer 采纳）
     paramFit.js          ← 拟合度（引擎参数 vs 专家参数，知识覆盖缺口度量）
     chatService.js       ← /print-* 聊天指令（唯一入口 = hub 转发 POST /api/chat/command）
@@ -112,7 +112,7 @@ public/                ← 四页前端（无框架原生 JS + styles.css 共享
   annotator.js  3D 标注工房（canvas 网格 + spatial 标注）
   fleet-dock.js 机队悬浮坞（四页共享组件）
 scripts/               ← slice-with-engine.js（切片桥）/train-from-models.js 等
-test/                  ← 35 套测试，全部独立可跑
+test/                  ← 测试全部独立可跑（npm test 自动发现，与 push.js 闸门同源）
 ```
 
 ### 请求生命周期（以一次预约为例）
@@ -211,7 +211,16 @@ test/                  ← 35 套测试，全部独立可跑
 - 预览单点效果：`POST /api/training/param-model/preview`（selection+modelFeatures → 规则基线 vs 模型建议）；
 - 异常排查：看单据 `modelProvenance.params.<参数>`——applied=false 时看 confidence 是否低于 0.55、source 是哪族、参考案例是谁。
 
-## 7. 设计准则：使用强度节奏（v66 曼波定）
+## 7. 设计准则（曼波定）
+
+**使用强度节奏（v66）**：前端任何新模块先回答「谁看、多久看一次、值几屏」——高频操作占首屏黄金位；中频参考紧凑常驻；低频回顾默认折叠成一行数字摘要，点开才渲染。
+
+**连续映射优先于定态规则（v84）**：学习型工艺因果一律用连续拟合（kNN/岭回归/MLP），禁止「检测到某值就触发某参数」的阈值规则（v84 已删 fitRules——单变量中位数差是伪相关）。
+
+**新功能必须带端到端断言（v89）**：v86 自动分发曾漏传 {auto:true} 导致旗舰特性整体不可达，而单元测试全绿掩盖了断链——「谁被选中」「链路是否走通」要直接断言，不要只断言集合形状。
+
+**.env 用脚本修改必须校验**（v86 事故）：node 脚本写 .env 前后对比行数/键数，写坏会静默覆盖生产（pm2 进程内存是唯一抢救窗口）。
+
 
 前端任何新模块先回答「谁看、多久看一次、值几屏」：**高频操作**（提交/看单/取消）占首屏黄金位；**中频参考**（队列 ETA/机队状态）紧凑常驻——时间带 34px、生命体征行单卡 ~100px；**低频回顾**（热力日历/趋势/星图）默认折叠成一行数字摘要，点开才渲染。反例已修：热力图 v64 首版曾以 84 格铺首屏（低频信息占黄金位）。折叠交互用自制按钮（overview-strip 样式），热力图懒渲染（未展开不画）。
 
@@ -252,6 +261,7 @@ test/                  ← 35 套测试，全部独立可跑
 | param-model-test（15 断言）/ orientation-learn-test / learning-loop-test | 学习回路三件套（含 MLP 正弦/饱和曲线/竞技场闸门） |
 | model-features-test / model-orient-test / feature-derive-test / feature-labels-test / gcode-layers-test / golden-parts-test | 几何链路 |
 | auth-test / ops-test / bind-code-test / pickup-code-test / quiet-hours-test / bootstrap-test | 账号与运营 |
+| reservation-query-test / reprint-lineage-test | 分页查询（27 项含数组参数防御）/ 复刻血缘（5 项，v91） |
 | auto-slice-test / param-fit-test / slice-artifacts-test / printer-*-test / flashforge-client-test / rtsps-test / ams-filament-test / spatial-sanitize-test / source-pairing-test | 切片与打印机协议 |
 
 写新测试照现有模子：`check(name, fn)` + assert + 末尾 `process.exit(failures ? 1 : 0)`，然后挂进 package.json 的 test 链。

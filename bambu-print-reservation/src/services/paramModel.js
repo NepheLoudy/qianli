@@ -367,6 +367,11 @@ function train(samples, opts = {}) {
     choices: perParam,
   };
 
+  // ---------- 失败归因报告（v88 · 学习链路深化）：失败样本的「参数档 × 失败码」联合
+  // 统计——回答「哪种参数组合容易出哪种失败」，给曼波下次切片/录样本指方向。
+  // 纯统计不改模型权重（样本量上来后才值得做归因加权）。
+  stats.failureAttribution = failureAttribution(samples, rows);
+
   const adopted = Object.values(perParam).filter((p) => p.choice !== 'none');
   stats.params = perParam;
   stats.coverageRadius = Math.round(coverageRadius * 1000) / 1000;
@@ -380,6 +385,56 @@ function train(samples, opts = {}) {
     : '没有参数通过 LOFO 泛化闸门（都不比全局中位数基线更准）——不产出可采纳模型';
   if (!stats.enabledParams.length) return { insufficient: true, stats };
   return { insufficient: false, model, stats };
+}
+
+/**
+ * 失败归因统计（v88）：失败样本按失败码分组，输出各组的关键参数分布与几何特征均值——
+ * 「print_error 83902467 的 3 条失败样本，平均墙数 2、平均填充 15%」这类可读结论。
+ * 只统计 outcome.status=失败 且带 failCode 的样本；paramModel 训练不消费（样本量足够后
+ * 再考虑把失败码当分类目标）。
+ */
+function failureAttribution(samples, rows) {
+  const fails = (samples || []).filter((s) => s.outcome && s.outcome.status === '失败'
+    && Number.isFinite(Number(s.outcome.failCode)));
+  if (fails.length < 2) return { note: `失败样本带结构化失败码的不足 2 条（现 ${fails.length}）——样本量足够后自动出报告`, groups: [] };
+  const byCode = {};
+  for (const s of fails) {
+    const code = Number(s.outcome.failCode);
+    (byCode[code] = byCode[code] || []).push(s);
+  }
+  const rowsById = new Map((rows || []).map((r) => [r.id, r]));
+  const groups = Object.entries(byCode).map(([code, list]) => {
+    // 参数分布：每个可学习参数的「中位值 vs 全体成功样本中位值」
+    const paramDevs = {};
+    for (const P of LEARNABLE_PARAMS) {
+      const failVals = list.map((s) => Number((((s.slice || {}).extraction || {}).params || {})[P])).filter(Number.isFinite);
+      const okVals = (samples || []).filter((s) => s.outcome && s.outcome.status === '成功')
+        .map((s) => Number((((s.slice || {}).extraction || {}).params || {})[P])).filter(Number.isFinite);
+      if (failVals.length >= 2 && okVals.length >= 2) {
+        paramDevs[P] = {
+          failMedian: median(failVals),
+          okMedian: median(okVals),
+        };
+      }
+    }
+    // 几何 DNA 均值（有 DNA 的失败样本）
+    const dnaLists = list.map((s) => s.model && s.model.features && s.model.features.dna).filter(Boolean);
+    const dnaMean = dnaLists.length
+      ? dnaLists[0].vector.map((_, i) => {
+        const vals = dnaLists.map((d) => d.vector[i]).filter(Number.isFinite);
+        return vals.length ? Math.round(vals.reduce((s2, v) => s2 + v, 0) / vals.length * 100) / 100 : null;
+      })
+      : null;
+    return {
+      failCode: Number(code),
+      count: list.length,
+      sampleIds: list.map((s) => s.id),
+      paramDevs,
+      dnaMean,
+      files: list.map((s) => (s.model && s.model.originalName) || '').filter(Boolean).slice(0, 3),
+    };
+  }).sort((a, b) => b.count - a.count);
+  return { note: `${fails.length} 条失败样本 / ${groups.length} 种失败码`, groups };
 }
 
 function paramLabel(choice) { return choice === 'knn' ? '案例推理' : (choice === 'mlp' ? '神经网络' : '岭回归'); }
@@ -669,6 +724,7 @@ function preview(ruleParams, ctx, active) {
 }
 
 module.exports = {
+  failureAttribution,
   train,
   applyToParams,
   preview,

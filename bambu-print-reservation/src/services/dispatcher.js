@@ -728,6 +728,9 @@ class Dispatcher {
     });
   }
 
+  /** 回执闸查询（v85 机型学习选机的过滤面：持闸机不接新单） */
+  _receiptHoldHas(printerId) { return this.receiptHold.has(Number(printerId)); }
+
   /** 记录是否已在本引擎登记过（含排队/打印中/已完成；审批对账用于跳过已知实例） */
   isKnown(recordId) {
     return this.known.has(recordId);
@@ -1400,6 +1403,27 @@ class Dispatcher {
     announce(`完成卡 ${task.recordId}`, require('../feishu/bot').buildJobFinishCard(task, printer), (err) =>
       console.error('[分发] 完成播报失败:', err.message)
     );
+    // v89 分发学习信号落盘：机×料×几何 → 实际时长的原始数据（distributionPolicy 学习
+    // 素材）——历史里能算时间差但 estMinutes 全空（老单未采集），从现在起每单回填
+    try {
+      const actual = task.startedAt ? (Date.now() - task.startedAt) / 60000 : null;
+      storeSafe(() => {
+        const all = reservationStore.list();
+        const target = all.find((x) => x.id === task.recordId);
+        if (!target) return;
+        target.dispatchStats = {
+          printer: printer.name,
+          printerModel: printer.model,
+          material: task.materialType || null,
+          estMinutes: Number(task.estMinutes) > 0 ? Number(task.estMinutes) : null,
+          actualMinutes: actual != null ? Math.round(actual) : null,
+          volumeCm3: task.modelFeatures && task.modelFeatures.volumeCm3 ? task.modelFeatures.volumeCm3 : null,
+          triangles: task.modelFeatures ? task.modelFeatures.triangles || null : null,
+          recordedAt: new Date().toISOString(),
+        };
+        reservationStore._saveForBackfill(all);
+      }, 'dispatch-stats');
+    } catch (err) { console.warn('[分发] dispatchStats 回填失败（不影响主流程）:', err.message); }
     cleanupMachineAfterJob(printer.id, printer.name);
     plaza.append({ event: '打印完成', title: `${task.applicationNo || task.recordId} @ ${printer.name}` });
     // 续件重入队（2026-10-05 审查批落地：quantity 从「只存不用」到真实执行）：
@@ -1672,23 +1696,27 @@ class Dispatcher {
   }
 
   /** 运维置闸（2026-10-28 曼波「板上有件先停机」）：人工把某机按入「等待取件」态——
-   *  板上有未取件/需清板时防队列下一件顶上。与 completeTask 自动置闸同通道。 */
+   *  板上有未取件/需清板时防队列下一件顶上。与 completeTask 自动置闸同通道。
+   *  v88 审查修复（P2）：printerId 统一 Number——JSON body 传字符串键会让
+   *  matchPrinter 的 receiptHold.has(数值 id) 查不到，人工置闸对匹配层不可见。 */
   holdQueue(printerId, recordId) {
-    this.receiptHold.set(printerId, recordId || ('manual-' + Date.now().toString(36)));
+    const pid = Number(printerId);
+    this.receiptHold.set(pid, recordId || ('manual-' + Date.now().toString(36)));
     this.persistState();
-    console.log(`[分发] 人工置闸：printer=${printerId}（${this.receiptHold.get(printerId)}）——队列对该机暂停`);
-    return { held: true, printerId, recordId: this.receiptHold.get(printerId) };
+    console.log(`[分发] 人工置闸：printer=${pid}（${this.receiptHold.get(pid)}）——队列对该机暂停`);
+    return { held: true, printerId: pid, recordId: this.receiptHold.get(pid) };
   }
 
   /** 清闸（运维口）：取件完成/清板完毕后放行该机队列 */
   releaseHold(printerId) {
-    const rid = this.receiptHold.get(printerId);
+    const pid = Number(printerId);
+    const rid = this.receiptHold.get(pid);
     if (!rid) return { held: false };
-    this.receiptHold.delete(printerId);
+    this.receiptHold.delete(pid);
     this.persistState();
     this.trigger('receipt-ack');
-    console.log(`[分发] 人工清闸：printer=${printerId}（原 ${rid}）——队列恢复`);
-    return { held: true, printerId, recordId: rid };
+    console.log(`[分发] 人工清闸：printer=${pid}（原 ${rid}）——队列恢复`);
+    return { held: true, printerId: pid, recordId: rid };
   }
 
   /** 回执闸清单（queue 快照消费：页面显示哪台机卡在「等待取件回执」） */

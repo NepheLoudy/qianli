@@ -68,6 +68,16 @@ function coerce(raw, def) {
 function parseEstimatedMinutes(headText, raw) {
   const m1 = /;\s*total estimated time \(s\)\s*[:=]\s*(\d+)/i.exec(headText);
   if (m1) return Math.round(Number(m1[1]) / 60);
+  // v90：Bambu Studio 风味「; model printing time: 20h 37m 34s; total estimated time: 20h 42m 57s」
+  // ——新导出的注释行带分号分隔的 model/total 两段，m2 的 PrusaSlicer 风味咬不住
+  const mBbl = /total estimated time:\s*([\d\s*hms]+?)(?:;|$)/im.exec(headText);
+  if (mBbl) {
+    const h = /(\d+)\s*h/i.exec(mBbl[1]);
+    const min = /(\d+)\s*m/i.exec(mBbl[1]);
+    const s = /(\d+)\s*s/i.exec(mBbl[1]);
+    const mins = (h ? Number(h[1]) * 60 : 0) + (min ? Number(min[1]) : 0) + (s ? Math.round(Number(s[1]) / 60) : 0);
+    if (mins > 0) return mins;
+  }
   const m2 = /;\s*estimated printing time[^=\n]*=\s*([\d\shdms]+)/i.exec(headText);
   if (m2) {
     const h = /(\d+)\s*h/i.exec(m2[1]);
@@ -101,15 +111,20 @@ function extractRawParams(files) {
     } catch { /* 损坏则走 gcode 兜底 */ }
   }
 
-  // ② plate_*.gcode 头部注释键值（读前 96KB 足够覆盖头部参数块）
-  if (source === 'none') {
+  // ② plate_*.gcode 头部注释键值（读前 96KB 足够覆盖头部参数块）。
+  // v90 修复：headText 无条件采集（project_settings 存在时也读）——estMinutes 的
+  // 「total estimated time: 20h 42m 57s」在 gcode 头部，project_settings 优先分支
+  // 曾把 headText 留空导致带参数文件的预估时长恒 null（20h43m 实案）
+  {
     const gcode = files.find((f) => /metadata\/plate_\d+.*\.gcode$/i.test(f.entryName));
     if (gcode && entrySize(gcode) <= MAX_GCODE_READ_BYTES) {
       headText = gcode.getData().subarray(0, 96 * 1024).toString('utf8');
-      for (const m of headText.matchAll(/^;\s*([a-z_][a-z0-9_]*)\s*=\s*(\S+)\s*$/gim)) {
-        if (!(m[1] in raw)) raw[m[1]] = m[2];
+      if (source === 'none') {
+        for (const m of headText.matchAll(/^;\s*([a-z_][a-z0-9_]*)\s*=\s*(\S+)\s*$/gim)) {
+          if (!(m[1] in raw)) raw[m[1]] = m[2];
+        }
+        source = 'gcode';
       }
-      source = 'gcode';
     }
   }
   return { raw, source, headText };

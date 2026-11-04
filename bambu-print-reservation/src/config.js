@@ -96,6 +96,10 @@ module.exports = {
 
   // ---------- 分发引擎 ----------
   dispatch: {
+    // v85 自动分发（曼波令「审批功能停了，收到文件自动分发」）：提交后跳过人工审批
+    // 直接入队（勾选硬冲突/程序初审仍拦）；审批台降级为复核干预面板。默认关，.env 开
+    autoDispatch: process.env.DISPATCH_AUTO === 'true',
+    autoApproverName: process.env.DISPATCH_AUTO_APPROVER_NAME || '自动分发',
     // 审批表字段名
     materialField: process.env.DISPATCH_MATERIAL_FIELD || '材料类型',
     colorField: process.env.DISPATCH_COLOR_FIELD || '颜色',

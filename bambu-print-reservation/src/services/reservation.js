@@ -115,9 +115,39 @@ class ReservationService {
     const printerManager = require('../printer/manager');
     // 切片直通件必须显式指定打印机（2026-10-28 曼波令「自动分发只对纯 step 有效」）：
     // 切片文件内嵌机型锁死切片 profile，留空自动匹配=品牌级瞎配（A1 mini 的件落 X1C）
-    // ——审批时打回，让审批人从同型号机中指定
-    if (!dispatch.assignedPrinter && !isUnslicedFile(reservation)) {
+    // ——审批时打回，让审批人从同型号机中指定。
+    // v85 豁免：自动分发（dispatch.auto=true，来自 autoDispatch 提交链）时由「机型学习
+    // 选择器」定机——同型号优先/品牌族降级+历史成功率，选择依据入 comment 可审计
+    if (!dispatch.assignedPrinter && !isUnslicedFile(reservation) && dispatch.auto !== true) {
       throw new Error(`「${reservation.fileName}」是切片文件（内嵌机型锁定切片 profile）——自动分发仅对模型直投（STEP/STL）有效，请从登记打印机中指定同型号机后再审批`);
+    }
+    // v85 机型学习选择（autoDispatch 路径）：切片单无指定机时由历史统计选机。
+    // v88 审查修复（P1）：候选补 stateStale 过滤（幽灵空闲——断电后 status 残留空闲，
+    // 选机写死 assignedPrinter 后分发时刻指定即权威会静默滞留）。
+    if (!dispatch.assignedPrinter && !isUnslicedFile(reservation) && dispatch.auto === true) {
+      const printerManager = require('../printer/manager');
+      const embeddedModel = (reservation.embeddedParams && reservation.embeddedParams.machineModel) || null;
+      const apiStates = printerManager.getApiStates();
+      const cand = apiStates.filter((p) => p.autoDispatch
+        && (['空闲', '已完成'].includes(p.status) || printerManager.canDispatchResidueFailed(p))
+        && !p.stateStale // v88：状态过期（失联）的机器不进学习选机——防幽灵空闲写死指定
+        && !require('./dispatcher')._receiptHoldHas(p.id));
+      // v88 审查修复（P2）：品牌兜底按文件扩展名推导——gcode 系（闪铸）兜 'Bambu Lab'
+      // 会在品牌硬校验必败；无内嵌机型 + gcode 系 → 按 flashforge 兜底
+      const fileIsGcode = /\.(gcode|gx|g)$/i.test(reservation.fileName || '');
+      const fallbackModel = fileIsGcode ? 'Flashforge Adventurer 5M Pro' : 'Bambu Lab';
+      const choice = require('./machineLearning').chooseMachineForSliced(
+        embeddedModel || fallbackModel,
+        cand.map((p) => ({ name: p.name, model: p.model })),
+        store.list(),
+      );
+      if (!choice) {
+        throw new Error(`「${reservation.fileName}」自动选机失败：无可用同品牌机（内嵌机型 ${embeddedModel || '未知'}）——转人工审批指定`);
+      }
+      dispatch.assignedPrinter = choice.name;
+      dispatch.autoBasis = choice.basis;
+      dispatch.autoLowConfidence = choice.lowConfidence;
+      console.log(`[自动分发] ${reservation.id} 机型学习选机 → ${choice.name}（${choice.basis}）`);
     }
     const pref = {};
     if (dispatch.assignedPrinter) {
@@ -143,6 +173,11 @@ class ReservationService {
         }
       }
       pref.assignedPrinter = dispatch.assignedPrinter;
+      // v88 审查修复（P2）：机型学习选机的依据/低置信标记随单持久化——「为什么选这台」可审计
+      if (dispatch.autoBasis) {
+        pref.autoBasis = String(dispatch.autoBasis).slice(0, 200);
+        pref.autoLowConfidence = Boolean(dispatch.autoLowConfidence);
+      }
       const apiState = printerManager.getApiStates().find((p) => p.id === pr.id);
       const trays = (apiState && apiState.ams) || [];
       // 槽位名 → 实时料位 id 解析（2026-10-16）：前端只传槽位名，amsId/trayId 以服务端
@@ -186,8 +221,8 @@ class ReservationService {
       ? `·用料 ${pref.trays.map((t, i) => `${i + 1}→${t ? t.slot : '自动'}`).join(' ')}`
       : pref.tray ? `·${pref.tray.slot}` : '';
     const prefNote = pref.trays || pref.tray || pref.nozzleId || pref.assignedPrinter
-      ? `｜分发指定：${pref.assignedPrinter || '自动机'}${trayNote}${pref.nozzleId != null ? '·' + (pref.nozzleLabel || `喷头${pref.nozzleId + 1}`) : ''}`
-      : '';
+      ? `｜分发指定：${pref.assignedPrinter || '自动机'}${trayNote}${pref.nozzleId != null ? '·' + (pref.nozzleLabel || `喷头${pref.nozzleId + 1}`) : ''}${pref.autoBasis ? `｜🤖 ${pref.autoBasis}${pref.autoLowConfidence ? '（低置信——请留意幅面/喷嘴差异）' : ''}` : ''}`
+      : pref.autoBasis ? `｜🤖 ${pref.autoBasis}${pref.autoLowConfidence ? '（低置信）' : ''}` : '';
     const sampleNote = sampleEntry ? '｜📚 已勾选入库训练样本' : '';
 
     store.updateStatus(id, config.status.REVIEW_APPROVED, `审批人：${reviewer || '未署名'}${comment ? `｜意见：${comment}` : ''}${prefNote}${sampleNote}`);
@@ -195,7 +230,8 @@ class ReservationService {
       reviewer: reviewer || '',
       comment: comment || '',
       result: config.reviewResult.APPROVED,
-      dispatch: (pref.assignedPrinter || pref.tray || pref.trays || pref.nozzleId != null) ? pref : null, // 审批分发指定（审计+复刻参考）
+      // v88 审查修复（P2）：autoBasis/lowConfidence 并入 dispatch 持久化——选机依据可审计
+      dispatch: (pref.assignedPrinter || pref.tray || pref.trays || pref.nozzleId != null || pref.autoBasis) ? pref : null, // 审批分发指定（审计+复刻参考）
     });
 
     // 入队关键路径内不得有 await（v56 竞态修复）：JS 单线程，无 await 即无取消插窗。
@@ -287,6 +323,8 @@ class ReservationService {
    * 源文件在保留期内 → 服务端直接复制文件（浏览器无需重传 200MB）；
    * 需求链路单按当前规则库**重新定档**（规则库可能已演进），3mf 直通单保持快照为空。
    * overrides 可覆盖 color/quantity/assignedPrinter/materialType/isUrgent
+   * 血缘（2026-11-04 审批台全量单据管理批）：新单携带 sourceRecordId=源单 id（关联
+   * 视图数据源）；源单轨迹待 store.appendHistory 落地后记「被复刻为新单 Rxxx」。
    */
   async reprintReservation(id, requester, overrides = {}) {
     const src = store.get(id);
@@ -300,6 +338,8 @@ class ReservationService {
       fs.mkdirSync(store.UPLOAD_DIR, { recursive: true });
       await fs.promises.copyFile(src.filePath, newPath);
     } catch (err) {
+      // copyFile 半途失败（ENOSPC/EIO 等）可能在目标盘留半截文件——清理与硬冲突/create 抛错分支对齐
+      try { fs.unlinkSync(newPath); } catch { /* 本就不存在 */ }
       throw new Error(`源文件已不存在（${err.code === 'ENOENT' ? '可能已过保留期清理' : err.message}），请重新上传模型文件`);
     }
 
@@ -338,12 +378,28 @@ class ReservationService {
         processParams: applied ? applied.params : null,
         appliedRules: applied ? applied.applied : [],
         embeddedParams: src.embeddedParams, // 3mf 直通单参数摘要随单携带
+        sourceRecordId: src.id, // 复刻血缘：新单指向源单（关联视图数据源）
       });
     } catch (err) {
       try { fs.unlinkSync(newPath); } catch { /* 已不存在 */ }
       throw err;
     }
-    return store.get(record.id);
+
+    // 源单轨迹（2026-11-04 血缘批）：记「被复刻为新单」——store.appendHistory 已随补丁②
+    // 落地；防御式探测保留（极端并发/旧实例热更新窗口下静默跳过，不炸主流程）
+    if (typeof store.appendHistory === 'function') {
+      try {
+        store.appendHistory(src.id, `被复刻为新单 ${record.id}`);
+      } catch (err) {
+        // 源单极端并发下被删等异常不中断复刻主流程（新单已落档）
+        console.warn(`appendHistory(源单轨迹) 失败（复刻 ${record.id} ← ${src.id}）:`, err.message);
+      }
+    }
+
+    // sourceRecordId 已随补丁①入 create 白名单持久化；返回值再补同值兜底（双保险），
+    // 浅拷贝同时防 store.get 的缓存引用外泄（调用方改返回值不写回存储）
+    const fresh = store.get(record.id);
+    return fresh ? { ...fresh, sourceRecordId: src.id } : fresh;
   }
 
   // ---------- 遗留兼容 ----------

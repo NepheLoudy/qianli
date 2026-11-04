@@ -137,6 +137,7 @@ const reservationStore = {
       // STEP/STL 源文件配对（2026-10-27 曼波令「两个齐活视为一次训练素材」）：
       // 切片文件提单时补交的 CAD 源，训练入库时提取真网格特征（gcode 估计的升级）
       sourceFile: input.sourceFile || null,
+      sourceRecordId: input.sourceRecordId || null, // 复刻血缘（2026-11-04）：新单指向源单，关联视图数据源
       materialType: String(input.materialType || '').trim(),
       color: String(input.color || '').trim(),
       assignedPrinter: String(input.assignedPrinter || '').trim(),
@@ -167,6 +168,58 @@ const reservationStore = {
 
   list() {
     return load();
+  },
+
+  /**
+   * 分页查询（2026-11-04 审批台全量单据管理批）：过滤/排序/分页收口在存储层，路由只做参数解析。
+   * 容错：page<1/非法归 1；pageSize 钳 1..200（默认 20）；status 仅认状态机合法值，非法值忽略不过滤；
+   * q 空串视为未提供（大小写不敏感模糊匹配 id/applicant/fileName）；from/to 非法日期忽略该侧条件
+   * （按 createdAt 过滤，含边界）；sort 仅 createdAt_asc/createdAt_desc，其余取值按默认 createdAt_desc。
+   * 返回 { records, total, page, pageSize }（page/pageSize 为钳后有效值，路由原样回显）
+   */
+  query(opts = {}) {
+    let records = load();
+    // 状态过滤：精确匹配，字典外状态一律忽略（不做过滤）
+    const status = typeof opts.status === 'string' ? opts.status.trim() : '';
+    if (status && Object.values(config.status).includes(status)) {
+      records = records.filter((r) => r.status === status);
+    }
+    // 关键词模糊：三字段任一命中即保留；空串/纯空白视为未提供
+    const q = typeof opts.q === 'string' ? opts.q.trim().toLowerCase() : '';
+    if (q) {
+      records = records.filter((r) =>
+        String(r.id || '').toLowerCase().includes(q)
+        || String(r.applicant || '').toLowerCase().includes(q)
+        || String(r.fileName || '').toLowerCase().includes(q));
+    }
+    // 时间范围（含边界）：非法日期忽略该侧；createdAt 自身非法的记录不落入任何范围
+    const fromT = opts.from ? new Date(opts.from).getTime() : NaN;
+    const toT = opts.to ? new Date(opts.to).getTime() : NaN;
+    if (!Number.isNaN(fromT) || !Number.isNaN(toT)) {
+      records = records.filter((r) => {
+        const t = new Date(r.createdAt).getTime();
+        if (Number.isNaN(t)) return false;
+        if (!Number.isNaN(fromT) && t < fromT) return false;
+        if (!Number.isNaN(toT) && t > toT) return false;
+        return true;
+      });
+    }
+    // 排序：仅 createdAt 双向（拷贝后排序，不污染 mtime 缓存数组的既有顺序）
+    const dir = opts.sort === 'createdAt_asc' ? 1 : -1;
+    records = [...records].sort((a, b) =>
+      (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir);
+    // 分页钳制：page 从 1 起；pageSize 默认 20，上限 200
+    let page = Math.floor(Number(opts.page));
+    if (!Number.isFinite(page) || page < 1) page = 1;
+    let pageSize = Math.floor(Number(opts.pageSize));
+    if (!Number.isFinite(pageSize)) pageSize = 20;
+    pageSize = Math.max(1, Math.min(200, pageSize));
+    return {
+      records: records.slice((page - 1) * pageSize, page * pageSize),
+      total: records.length,
+      page,
+      pageSize,
+    };
   },
 
   countByStatus(status) {
@@ -244,7 +297,20 @@ const reservationStore = {
     };
     record.updatedAt = record.receipt.at;
     record.history.push({ at: record.receipt.at, from: record.status, to: record.status, note: `取件回执：${record.receipt.by}` });
-    if (record.history.length > 200) record.history = record.history.slice(-200);
+    if (record.history.length > HISTORY_CAP) record.history = record.history.slice(-HISTORY_CAP);
+    save(records);
+    return { ...record };
+  },
+
+  /** 轨迹追加（不流转状态）：复刻血缘等「单据间事件」记档（2026-11-04 任务卡 B） */
+  appendHistory(id, note) {
+    const records = load();
+    const record = records.find((r) => r.id === id);
+    if (!record) throw new Error(`预约不存在: ${id}`);
+    const at = new Date().toISOString();
+    record.history.push({ at, from: record.status, to: record.status, note });
+    if (record.history.length > HISTORY_CAP) record.history = record.history.slice(-HISTORY_CAP);
+    record.updatedAt = at;
     save(records);
     return { ...record };
   },
@@ -285,4 +351,5 @@ const reservationStore = {
   },
 };
 
+reservationStore._saveForBackfill = save; // v84：DNA 回填脚本专用保存通道（受控导出，不进常规 API）
 module.exports = reservationStore;
