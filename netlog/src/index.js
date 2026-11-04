@@ -100,6 +100,17 @@ const CONFIG = {
 };
 
 // ============================================================
+// 通用格式化（2026-11-05 自 createEngine 闭包提升到模块作用域）：main() 装配层的
+// boot_after_offline 分支（:776）也在用它——此前模块作用域无此名字，长停机启动
+// 必抛 ReferenceError（崩溃点在首个 engine.tick() 前 → jsonl 尾行永不推进 =
+// 确定性 crash loop，P0 全量审查实测）。engine 返回的 fmtTs 与此同址，语义零变化。
+// ============================================================
+function fmtTs(ts) {
+  // 全仓 Asia/Shanghai 口径：epoch → +08:00 ISO 文本
+  return new Date(ts + 8 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ') + '+08:00';
+}
+
+// ============================================================
 // 状态机引擎（依赖注入，纯逻辑）
 // ============================================================
 function createEngine(deps) {
@@ -130,10 +141,8 @@ function createEngine(deps) {
     events: [], // 内存 ring（最近 50 条事件，summary 直接吐）
   };
 
-  function fmtTs(ts) {
-    // 全仓 Asia/Shanghai 口径：epoch → +08:00 ISO 文本
-    return new Date(ts + 8 * 3600 * 1000).toISOString().slice(0, 19).replace('T', ' ') + '+08:00';
-  }
+  // fmtTs 已提升到模块作用域（main() 装配层 boot_after_offline 同用）——闭包内
+  // 不再重复定义，此处引用即提升版（engine 返回的 fmtTs 指向同一函数）。
 
   function record(type, row) {
     const line = { ts: now(), type, ...row };

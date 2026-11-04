@@ -71,10 +71,10 @@ pm2 名 `qianli-netlog`，`pm2 save` 后并入小电脑 `qianli-bots-autostart`�
 ## 测试
 
 ```bash
-node scripts/stub-test-netlog.js       # 60 断言：防抖/恢复历时/积压补发/冲刷竞态回归/egress 变化/事件分级/复活自愈冲刷+DownSince清零/JSONL 结构/通知节流/wan 三态判定
+node scripts/stub-test-netlog.js       # 67 断言：防抖/恢复历时/积压补发/冲刷竞态回归/egress 变化/事件分级/复活自愈冲刷+DownSince清零/JSONL 结构/通知节流/wan 三态判定/main() 装配层（长停机启动不崩溃+boot_after_offline 走通）
 node scripts/stub-test-routerwatch.js  # 33 断言：路由器无线观测（失联/恢复/射频异常/ax 翻转/DHCP 探测/设备数骤降的翻转触发与去重/停用/DISCOVER 报文结构/v17 固定探针 MAC 与超时）
-node scripts/stub-test-wanguard.js     # 52 断言：复活引擎（首选项优先/换号/慢速判定/exhausted 冷却/手动触发/基线/被抢持续垫底+跨轮避开/到期复位/全垫底不失能）
-# npm test = 三套合计 145 断言（push 闸门）
+node scripts/stub-test-wanguard.js     # 57 断言：复活引擎（首选项优先/换号/慢速判定/exhausted 冷却/手动触发/基线/被抢持续垫底+跨轮避开/到期复位/全垫底不失能）
+# npm test = 三套合计 157 断言（push 闸门）
 ```
 
 ## 已知限制

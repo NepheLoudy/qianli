@@ -8,6 +8,9 @@
  *   ⑥通知失败入积压；日志行 JSONL 可解析
  *   ⑫~⑮（v13）：翻转事故聚合（短抖动静默/抖动群汇总卡）、持续断开报警+复报、
  *     revive_session_mismatch 通知冷却、积压补发限频（恢复旁路/攒批/超时兜底）
+ *   ⑰（2026-11-05 fmtTs 提升批）：main() 装配层（子进程整体拉起）：过期 jsonl
+ *     （心跳间隔>OFFLINE_NOTIFY_MS）启动不再 ReferenceError crash loop、
+ *     boot_after_offline 落盘+通知路径走通、常规重启不误报
  * 全部外部依赖走桩；用法：node scripts/stub-test-netlog.js
  */
 const path = require('path');
@@ -319,6 +322,122 @@ function makeDeps({ threshold = 2 } = {}) {
     check('⑯e 部分过=restricted（半残指纹）', j2.ok === false && j2.restricted === true);
     check('⑯f 全不过=down 非受限', j3.ok === false && j3.restricted === false);
     check('⑯g 空表=down 非受限', j4.ok === false && j4.restricted === false);
+  }
+
+  // ============================================================
+  // ⑰（2026-11-05 fmtTs 提升批）：main() 装配层——子进程整体拉起 src/index.js。
+  // 背景：main() 的 boot_after_offline 分支曾引用闭包内 fmtTs（模块作用域不存在），
+  // 启动间隔>15min 即 ReferenceError，且崩溃在首个 engine.tick() 前 → jsonl 尾行永不
+  // 推进 → 每次重启必复现 = 确定性 crash loop（断电/长停机恢复场景全踩）。
+  // 做法：--require preload 在 loadDotEnv 之前钉死全部 NETLOG_* 桩值（探测目标指向
+  // 127.0.0.1:1 秒拒、通知目标置空=通知必失败入积压、数据目录=临时目录、routerWatch
+  // 无密码停用、账号池指临时空文件），零真实网络副作用。
+  // ============================================================
+  {
+    const fs = require('fs');
+    const os = require('os');
+    const { spawnSync } = require('child_process');
+    const INDEX = path.join(ROOT2, 'src', 'index.js');
+    const bootNetlog = (dataDir) => {
+      // preload 必须整段重新 stringify：dataDir 每个用例不同
+      const preload = `
+// 钉死环境（先于 index.js 的 loadDotEnv：已定义的键不会被 .env 覆盖）
+process.env.NETLOG_DATA_DIR = ${JSON.stringify(dataDir)};
+process.env.NETLOG_PORT = '0';                       // 随机端口，避免用例间冲突
+process.env.NETLOG_INTERVAL_MS = '60000';
+process.env.NETLOG_LAN_HOST = '127.0.0.1';           // 探测全指向必拒目标：秒失败
+process.env.NETLOG_LAN_PORT = '1';
+process.env.NETLOG_WAN_TARGETS = '127.0.0.1:1';
+process.env.NETLOG_HTTPS_TARGETS = '';
+process.env.NETLOG_TRAFFIC_URLS = '';
+process.env.NETLOG_EGRESS_URLS = '';
+process.env.NETLOG_FEISHU_APP_ID = '';
+process.env.NETLOG_FEISHU_APP_SECRET = '';
+process.env.NETLOG_NOTIFY_OPEN_IDS = '';             // 通知必失败 → 积压（离线语义）
+process.env.NETLOG_ROUTER_PASSWORD = '';             // routerWatch 停用
+process.env.NETLOG_ACCOUNT_POOL = ${JSON.stringify(path.join(dataDir, 'campus-accounts.local.json'))};
+process.env.NETLOG_DEMOTE_FILE = ${JSON.stringify(path.join(dataDir, 'account-demotions.json'))};
+process.env.NETLOG_REVIVE_ENABLED = 'false';         // 复活引擎不介入（纯探针语义）
+process.env.NETLOG_API_TOKEN = '';
+// 让 main() 装配完首轮 tick 后自然退出：HTTP 服务句柄与 setInterval 均不钉住事件循环，
+// 首轮 tick 的探测 I/O 结束后 loop 清空 → exit 0（装配全程无异常）。零生产代码改动。
+const httpMod = require('http');
+const origCreateServer = httpMod.createServer;
+httpMod.createServer = function (...args) {
+  const srv = origCreateServer.apply(this, args);
+  const origListen = srv.listen.bind(srv);
+  srv.listen = function (...largs) {
+    const ret = origListen(...largs);
+    srv.unref(); // listen 建好句柄之后再 unref
+    return ret;
+  };
+  return srv;
+};
+const origSetInterval = setInterval;
+global.setInterval = function (fn, ms, ...rest) {
+  const t = origSetInterval(fn, ms, ...rest);
+  t.unref();
+  return t;
+};
+`;
+      const preloadFile = path.join(os.tmpdir(), `netlog-boot-preload-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.js`);
+      fs.writeFileSync(preloadFile, preload);
+      try {
+        return spawnSync(process.execPath, ['--require', preloadFile, INDEX], { timeout: 15000, encoding: 'utf8' });
+      } finally {
+        try { fs.unlinkSync(preloadFile); } catch { /* 清理失败不影响判定 */ }
+      }
+    };
+    const readJsonlEvents = (dataDir) => {
+      try {
+        return fs.readFileSync(path.join(dataDir, 'net-log.jsonl'), 'utf8')
+          .trim().split('\n').map((l) => { try { return JSON.parse(l); } catch { return null; } })
+          .filter((l) => l && l.type === 'event');
+      } catch { return []; }
+    };
+
+    console.log('\n== 17. main() 装配层（子进程）：过期 jsonl 启动不崩溃 + boot_after_offline 走通 ==');
+    // 17a 长停机恢复（间隔 2h > 15min 阈值）：修复前 = ReferenceError crash loop
+    const dirA = fs.mkdtempSync(path.join(os.tmpdir(), 'netlog-boot-a-'));
+    const preloadedLine = `${JSON.stringify({ ts: Date.now() - 2 * 3600 * 1000, type: 'state', lan: true, wan: true, traffic: true, egressIp: '' })}\n`;
+    fs.writeFileSync(path.join(dirA, 'net-log.jsonl'), preloadedLine);
+    const rA = bootNetlog(dirA);
+    const evA = readJsonlEvents(dirA);
+    check('长停机 jsonl 启动不抛 ReferenceError（进程正常跑完首轮退出）', rA.status === 0 && !/ReferenceError/.test(rA.stderr || ''),
+      `status=${rA.status} stderr=${String(rA.stderr).slice(0, 200)}`);
+    check('boot_after_offline 事件已落盘（jsonl 可回放）', evA.some((e) => e.event === 'boot_after_offline'),
+      `events=${JSON.stringify(evA.map((e) => e.event))}`);
+    check('boot_after_offline detail 时间戳格式为 +08:00 口径（fmtTs 语义不变）',
+      evA.some((e) => e.event === 'boot_after_offline' && /\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\+08:00/.test(e.detail || '')),
+      JSON.stringify(evA.find((e) => e.event === 'boot_after_offline') || {}));
+    check('boot_after_offline 进积压（通知目标未配置 → 失败入积压语义）',
+      (() => { try { return JSON.parse(fs.readFileSync(path.join(dirA, 'backlog.json'), 'utf8')).some((b) => b.event === 'boot_after_offline'); } catch { return false; } })(),
+      (() => { try { return JSON.stringify(JSON.parse(fs.readFileSync(path.join(dirA, 'backlog.json'), 'utf8')).map((b) => b.event)); } catch { return 'no-backlog'; } })());
+    check('首轮 tick 照常完成（崩溃点在 tick 前，须有新 state 行追加）',
+      (() => {
+        try {
+          const lines = fs.readFileSync(path.join(dirA, 'net-log.jsonl'), 'utf8').trim().split('\n');
+          return lines.length >= 2 && lines.slice(1).some((l) => { try { return JSON.parse(l).type === 'state'; } catch { return false; } });
+        } catch { return false; }
+      })());
+
+    // 17b 常规重启（间隔 5s < 15min 阈值）：不误报
+    const dirB = fs.mkdtempSync(path.join(os.tmpdir(), 'netlog-boot-b-'));
+    fs.writeFileSync(path.join(dirB, 'net-log.jsonl'),
+      `${JSON.stringify({ ts: Date.now() - 5 * 1000, type: 'state', lan: true, wan: true, traffic: true, egressIp: '' })}\n`);
+    const rB = bootNetlog(dirB);
+    const evB = readJsonlEvents(dirB);
+    check('常规重启（5s 间隔）不触发 boot_after_offline', rB.status === 0 && !evB.some((e) => e.event === 'boot_after_offline'),
+      `status=${rB.status} events=${JSON.stringify(evB.map((e) => e.event))}`);
+
+    // 17c 首跑（无 jsonl）：不误报
+    const dirC = fs.mkdtempSync(path.join(os.tmpdir(), 'netlog-boot-c-'));
+    const rC = bootNetlog(dirC);
+    const evC = readJsonlEvents(dirC);
+    check('首跑（无历史）不触发 boot_after_offline 且正常首轮', rC.status === 0 && !evC.some((e) => e.event === 'boot_after_offline') && evC.length === 0,
+      `status=${rC.status} events=${JSON.stringify(evC.map((e) => e.event))}`);
+
+    for (const d of [dirA, dirB, dirC]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* tmp 清理尽力而为 */ } }
   }
 
   console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
