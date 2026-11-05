@@ -169,6 +169,15 @@ async function deliverTo(consumer, mode, frame, text) {
   } catch (err) {
     // 首败不预记：终态（重试后再败/再抛）才计一次 failed，与 HTTP 层失败路径同口径
     //（此前传输异常路径首败+终态各计一次，最终失败被计成 2）
+    // 2026-11-05 全量审查 P2：传输异常（超时等）与 HTTP 失败分支同语义——command 模式
+    // 不重试。超时意味着下游可能已执行指令（无幂等键，双执行风险大于丢指令），
+    // 此前 catch 分支不区分 mode，command 一旦启用即双执行隐患。
+    if (mode === 'command') {
+      console.warn(`[路由] 投递 ${consumer.name} 传输异常（${err.message}），command 模式不重试（防双执行）`);
+      deliveryStats.failed += 1;
+      deliveryStats.byConsumer[consumer.name] = (deliveryStats.byConsumer[consumer.name] || 0) + 1;
+      throw err;
+    }
     console.warn(`[路由] 投递 ${consumer.name} 失败（${err.message}），3s 后重试一次`);
     await new Promise((r) => setTimeout(r, 3000));
     try {

@@ -2,7 +2,7 @@
 
 版本隔离单位：一次 `npm run push`（= 一次 git 提交 + 一次部署）。本项目无独立远端，push.js 只暂存 `feishu-gateway/` 路径提交进顶层 monorepo——版本即顶层仓库中触碰本路径的提交。v1~v8 于 2026-09-04 回溯编号，此后每次 push 在文末追加新版本（规则见顶层 [AGENTS.md](../AGENTS.md)）。
 
-当前最新：**v40**（2026-10-30，全量审查修复批：统计落盘原子写+日桶钉东八区+health 透出 SDK 真实态+注释勘误，三桩全绿）。
+当前最新：**v41**（2026-11-05，全量审查收口——command 传输异常不重试/退出原子写/学习清单 90 天过期，四套全绿）。上一版 v40（2026-10-30，全量审查修复批：统计落盘原子写+日桶钉东八区+health 透出 SDK 真实态+注释勘误，三桩全绿）。
 上一版：**v39**（2026-10-17，全量审查批：v38 巡检计时缺陷修复 + 部署缺口回补 + 文档/锁文件卫生，三桩+冒烟全绿）。
 上一版：**v38**（2026-10-14，`cf2e12c`，审查修复批：connecting 恒挂兜底 + command 投递带共享 token + cors 死依赖清理，三桩+冒烟全绿）。上一版：**v37**（2026-10-10，文档收口批——纯 docs 随顶层 v145 归档，部署待小电脑上线补跑）。上一版 v36（2026-10-07，NAS_*→DEPLOY_* 连接键改名批）。上一版 v35（2026-10-05，随本提交落地）。上一版 v34（2026-09-27，已上线）。上一版 v33（2026-09-26，`66dc3a3`，七仓全量审查修复批）。上一版 v32（`50f3029`）。上一版 v31（2026-09-24，`97bd02b`）。更早：v30（顶层归档随批，仅工具链未部署）。）
 
@@ -306,3 +306,11 @@
 - **P3 清扫**：bitable-sync 签名保留注释 35→30 天勘误；.env.example 补 WS_CONNECTING_GIVE_UP_MS / GATEWAY_DATA_DIR 两键；usage flush interval 补 .unref()（与 bitable-sync 一致）。
 - 审查遗留待确认（未修）：巡检早退致「建立后」阶段失明的行为面（SDK 无限重试下是否真实存在停摆待运行时证据）；subscribeDocs 启动一次性执行失败不重试（新配置窗口期静默缺事件）。
 - 三桩 stub 全绿。
+## v41 · 2026-11-05 · 随本提交落地 · fix
+
+**全量审查 P2/P3 收口批（2026-11-04 深夜全量审查 gateway 域清单）**
+
+- **P2 command 模式传输异常不重试（src/dispatch.js）**：HTTP 失败分支早有 `mode !== 'command'` 守卫（指令无幂等键，双执行风险大于丢指令），但 catch 分支（fetchWithTimeout 超时等传输异常）的 3s 重试不区分 mode——超时意味着下游可能已执行指令，command 一旦启用即双执行隐患。修：catch 分支同语义跳过 command（直接计 failed 并上抛）。现网 command 未启用，属潜伏缺陷前置修复。
+- **P3 退出落盘原子写（src/usage.js）**：SIGINT/SIGTERM 退出落盘此前走非原子 writeFileSync，v40 给 60s flush 建立的 .tmp+rename 模式没盖住退出路径。修：新增 flushStatsSync（writeFileSync+renameSync 同步原子）接入两个退出信号。
+- **P3 学习清单 90 天过期 + token 截断（src/usage.js）**：funFeats/funCmds 此前只增不减，误学触发词只能手改文件。修：新增 funHits lastHit 时间戳（随 stats 落盘），加载时对 90 天无命中条目三表联动清理；存量旧数据无时间戳视为「首次见到今天」不误删；learn token 40 字符截断（与 feature 同款）。命中路径（isFunFeature/recordFeature fun 上报/learnFunTokens）全部续签时间戳。
+- **测试**：四套全绿（usage-sync/usage-serious/usage-mentions/smoke）。

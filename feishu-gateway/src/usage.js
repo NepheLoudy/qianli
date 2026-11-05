@@ -48,14 +48,17 @@ setInterval(() => {
   dirty = false;
   flushStats();
 }, 60 * 1000).unref();
-process.on('SIGINT', () => {
-  try { fs.writeFileSync(FILE, JSON.stringify(stats)); } catch (err) { /* 退出不等落盘 */ }
-  process.exit(0);
-});
-process.on('SIGTERM', () => {
-  try { fs.writeFileSync(FILE, JSON.stringify(stats)); } catch (err) { /* 退出不等落盘 */ }
-  process.exit(0);
-});
+// 退出落盘走同步原子写（2026-11-05 全量审查 P3）：writeFileSync+renameSync——
+// 异步 flushStats 在 exit 前来不及完成，v40 的原子模式此前没盖住退出路径
+function flushStatsSync() {
+  const tmp = `${FILE}.tmp`;
+  try {
+    fs.writeFileSync(tmp, JSON.stringify(stats));
+    fs.renameSync(tmp, FILE);
+  } catch (err) { /* 退出不等落盘（.corrupt-* 留存兜底仍在） */ }
+}
+process.on('SIGINT', () => { flushStatsSync(); process.exit(0); });
+process.on('SIGTERM', () => { flushStatsSync(); process.exit(0); });
 
 const pad = (n) => String(n).padStart(2, '0');
 // 日桶按东八区固定偏移截取（2026-10-30 审查批 P2：与 bitable-sync toMs 的 +08:00 统一口径，
@@ -81,18 +84,38 @@ function prune() {
 // 盖住抽奖动态触发词在路由层被记成正经 '/指令' 的漏洞。均随 stats 持久化，重启不丢。
 // 新增娱乐类功能时按规则上报（见顶层 AGENTS），静态清单同步补一行。
 const STATIC_FUN_FEATURES = new Set(['抽奖', '关键词回答', '/lottery']);
+// 学习清单 90 天无命中自动过期（2026-11-05 全量审查 P3：只增不减会永久占位，
+// 误学的触发词只能手改文件）。lastHit 时间戳随 stats 落盘；存量旧数据无时间戳
+// 视为「首次见到今天」，不误删。
+const FUN_TTL_MS = 90 * 86400000;
+stats.funHits = stats.funHits || {};
+function pruneFunLists() {
+  const now = Date.now();
+  const stale = (k) => typeof stats.funHits[k] === 'number' && now - stats.funHits[k] > FUN_TTL_MS;
+  let changed = false;
+  for (const k of Object.keys(stats.funFeats)) if (stale(k)) { delete stats.funFeats[k]; changed = true; }
+  for (const k of Object.keys(stats.funCmds)) if (stale(k)) { delete stats.funCmds[k]; changed = true; }
+  for (const k of Object.keys(stats.funHits)) if (stale(k)) { delete stats.funHits[k]; changed = true; }
+  if (changed) dirty = true;
+}
+pruneFunLists();
+function stampFunHit(key) { stats.funHits[key] = Date.now(); }
 
 function isFunFeature(feat) {
-  return STATIC_FUN_FEATURES.has(feat) || stats.funFeats[feat] === 1 || stats.funCmds[feat] === 1;
+  const hit = STATIC_FUN_FEATURES.has(feat) || stats.funFeats[feat] === 1 || stats.funCmds[feat] === 1;
+  if (hit && stats.funFeats[feat] === 1) stampFunHit(feat);
+  return hit;
 }
 
 function learnFunTokens(tokens) {
   for (const kw of tokens) {
-    const token = '/' + String(kw || '').trim().toLowerCase().split(/\s+/)[0];
+    // 40 字符截断（2026-11-05 全量审查 P3：与 feature 同款防超长 token 撑爆清单）
+    const token = ('/' + String(kw || '').trim().toLowerCase().split(/\s+/)[0]).slice(0, 40);
     if (token !== '/' && stats.funCmds[token] !== 1) {
       stats.funCmds[token] = 1;
       dirty = true;
     }
+    if (token !== '/') stampFunHit(token);
   }
 }
 
@@ -123,9 +146,9 @@ function recordMessage({ senderId, feature }) {
 function recordFeature({ senderId, feature, fun, learn }) {
   try {
     if (!senderId || !feature) return;
-    if (fun && stats.funFeats[feature] !== 1) {
-      stats.funFeats[feature] = 1;
-      dirty = true;
+    if (fun) {
+      if (stats.funFeats[feature] !== 1) { stats.funFeats[feature] = 1; dirty = true; }
+      stampFunHit(feature);
     }
     if (Array.isArray(learn) && learn.length) learnFunTokens(learn.slice(0, 50));
     const day = stats.days[today()] || (stats.days[today()] = { total: 0, users: {}, feats: {} });
