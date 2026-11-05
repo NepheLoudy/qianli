@@ -118,6 +118,30 @@ check('状态文件缺失时静默跳过', () => assert.equal(d5.queue.length, 0
     assert.ok(d7.givenUp instanceof Map && d7.givenUp.has('g1'), JSON.stringify([...d7.givenUp.keys()]));
   });
 
+  // ---------- 7.5 receiptHold 恢复键型归一（2026-11-05 P2 审查） ----------
+  // 旧 state 文件遗留字符串键（holdQueue v88 前未 Number 归一落盘）：恢复后
+  // receiptHold.has(数值id) 必须查得到——否则匹配层对人工置闸置盲，队列对该机停摆
+  {
+    const holder = freshDispatcher();
+    holder.restoreState();
+    holder.receiptHold = new Map([[3, 'R-num'], ['5', 'R-str'], ['7', 'R-str7']]);
+    holder.flushState();
+    const dHold = freshDispatcher();
+    dHold.restoreState();
+    check('receiptHold 恢复：字符串键归一 Number（数值/字符串键都查得到）', () => {
+      assert.ok(dHold.receiptHold.has(3), '数值键 3 应查得到');
+      assert.ok(dHold.receiptHold.has(5), '字符串键 "5" 恢复后应归一为 5');
+      assert.ok(dHold.receiptHold.has(7), '字符串键 "7" 恢复后应归一为 7');
+      assert.equal(dHold.receiptHold.get(5), 'R-str', '归一只动键，值原样');
+      assert.ok(!dHold.receiptHold.has('5'), '键应为数值型（字符串键不再命中）');
+    });
+    // 与匹配层口径联动断言：_receiptHoldHas 是 matchPrinter 消费的入口
+    check('receiptHold 恢复：_receiptHoldHas（匹配层入口）对归一后键可见', () => {
+      assert.ok(dHold._receiptHoldHas(5), '匹配层查数值 5 应命中（旧字符串键场景置盲回归锚）');
+      assert.ok(!dHold._receiptHoldHas(9), '未置闸机器不受影响');
+    });
+  }
+
   const config = require('../src/config');
   const d8 = freshDispatcher();
   d8.givenUp = new Map();

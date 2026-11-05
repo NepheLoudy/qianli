@@ -1,4 +1,4 @@
-当前最新：**v163**（2026-11-05，bambu v85→v92 归档批——八版积压入库+全量审查 bambu 域 3×P1 收口）。上一版 v161（2026-11-03，c74cb5a，bambu v59→v83d 批量会话遗留归档+全量审查修复批（bambu v84）联动——27 版积压入库、P0×1/P1×11/P2×17 修复、37 套测试全绿，bambu DEVLOG v84 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
+当前最新：**v164**（2026-11-05，全量审查修复批总归档——八仓九版本：netlog P0/duty v68-69/bambu v93/gateway v41/ticket v95/pm v138/approval v91+registry 清理，曼波令统一结项）。上一版 v163（2026-11-05，bambu v85→v92 归档批——八版积压入库+全量审查 bambu 域 3×P1 收口）。上一版 v161（2026-11-03，c74cb5a，bambu v59→v83d 批量会话遗留归档+全量审查修复批（bambu v84）联动——27 版积压入库、P0×1/P1×11/P2×17 修复、37 套测试全绿，bambu DEVLOG v84 详录）。上一版 v160（2026-11-03，ticket-bot v94（63c832c）对账卡死 48.8h 事故修复批联动——出站 fetch 无界清零 + 定时任务看门狗，LOGIC-MAP §1.4 同步）。上一版 v159（2026-10-30，运维台印刷品 UI 重置+人机工效迭代+netlog 复活按钮 401 修复+四仓全量审查修复批联动——ticket v93/pm v137/approval v90/gateway v40，各仓 DEVLOG 详录）。上一版 v158（2026-10-17，全量审查修复批：gateway v39 部署缺口回补 + duty v56 口径改定/部署链 P1 修复 + ticket-bot v92 补推 + 三层 gitlink 收编）。上一版 v157（2026-10-17，04efc29，运维台 push 链路回归修复批；approval 指针实录 3d63cee、本批勘误）。上一版 v156（2026-10-15，0ae4a37，ticket-bot v92 + pm-robot v132 联动批——DDL 播报「📨 已指派待确认」分栏）。上一版 v155（2026-10-14，34af792，迁移后全量审查修复批——bambu v54/gateway v38/duty v55/hub v131 等六仓，头部指针本批补正）。上一版 v154（2026-10-14，575d84a，dashboard keepalive.vbs 双机路径探测批——保活脚本硬编码笔记本路径改两机探测，修台式机每 10 分钟 WSH 弹窗）。上一版 v153（2026-10-14，迁移基础设施批——顶层仓正名 NepheLoudy/qianli+ticket-bot 转正第 6 子模块+大脑记忆链路 qianli-brain/brain-sync 落地，两机一致性达成）。
 
 ## 阶段一 · bambu 独立仓库时期（2026-07-15 ~ 07-21）
 
@@ -1398,3 +1398,23 @@ dashboard keepalive.vbs 双机路径探测批：保活脚本硬编码笔记本�
 - **v92（随本批部署上线）**：全量审查 bambu 域 3×P1 收口——①train.html memorizeFit 死链退役（调用 v84 已删路由，「待审池无前端生产者」论断被推翻）；②npm test 自动发现归一（scripts/run-tests.js 与 push.js 闸门同源，38/39/40 三口径永久归一）；③README/ONBOARDING 套数口径。40 套全绿，SFTP 上线 /api/health 200（printers:6，收尾 ECONNRESET 已知误报）。
 - **docs**：magpie 策略全量审查实录 v4.0→v4.5（hook 空转事故修复/免费勤务兵团 group/aux 定位纠偏/并发嗅探收编）+ agentsmd 策略节备份更新。
 - **遗留登记**：approval-bot 工作区有 11-03 并行会话遗留批（宣运物资警戒线等 22 文件），随 approval-bot 下批（全量审查 P1×2 修复）一并入库；duty-bot/netlog 修复批进行中各自入库。
+## v164 · 2026-11-05 · 随本提交落地 · fix
+
+**全量审查修复批总归档（Z1 抢救+Z2 横切收口全线落地，八仓九版本，曼波令「统一结项」）**
+
+2026-11-04 深夜曼波令全项目群全量审查（七工位混合编队：侦察+审查×5+双工位），本批为全部修复的顶层归档。各仓锚点：
+
+- **netlog v20（a50ba9b）**：🔴 P0 断电 crash loop 修复（fmtTs 提升作用域+main() 装配层 7 断言补桩，红绿实证 4 败→67/67）——v19 欠账同批清偿上线。network 域 evt_018/019。
+- **duty-bot v68（917f7d9）+ v69（10a8fa8）**：P1 token 15s 超时（全群出站横切审计唯一真缺口）+ mutate 原子性守卫（诚实裁定：纯同步天然原子，拒绝异步回调）+ P2 卫生批（zklink fetchFlows 死代码/文件头注释改写/cron 状态口径/photoOnly/express 日志净化）。
+- **bambu-print-reservation v93（随部署 SFTP，本批归档）**：全量审查 P2×12 收口 + dispatchLearning 首个专属测试（12 断言）+ DM 静默闸 + receiptHold 恢复键归一；v85→v92 八版已于 v163 归档。
+- **feishu-gateway v41（bcb6cce，push 链自动归档）**：command 模式传输异常不重试（防双执行潜伏缺陷）+ 退出落盘同步原子写 + 学习清单 90 天过期/token 截断。
+- **ticket-bot v95（d9dfd81）**：unclosed-by-group 增量回传 unconfirmedHours（单一真相源供给端）+ push.js PM2 常量化。
+- **project-management-robot v138（3d4ae1d）**：阈值真相源消费端（API 回传>ASSIGN_NUDGE_HOURS>历史键>24h，5 断言）+ tearingDown。
+- **approval-bot v91（83e4239）**：宣运物资组别独立警戒线（11-03 遗留批 22 文件合并入库）+ invoice_buyer_alert 发送端接静默闸（11-03 静默改造落空补完）+ 双计裁定注释成文（applyNo 链路互斥已验证）。
+- **dashboard registry.js**：bambu rule-suggestions 悬空窗口清理（v84 退役残留）+ 补登 process-rules/preview——registry 单一事实来源纯度恢复。
+
+**横切战果**：tearingDown 守卫七仓满编（三次部署实测立功）；出站超时横切审计确认唯一缺口已修（ticket v94→duty v68 家族清零）；registry 启动交叉校验自动比对（防悬空复发）留待后续批。
+
+**Z3 交接**：ML 样本积累作战方案已入 bambu 域（evt_010，L+M 组合+H 滚动，前置=LOFO 配对留出改造+默认参数成功件降权）；对照实验设计（top-3 参数 A/B 影子模式）待排期。
+
+**外部解锁**：曼波已授权《2027年千里团队报销台账》协作者编辑权限——approval 台账同步 91403 解锁，两单待审批群 `/approval-batch ledger submit` 补录（资金白名单操作人动作）。

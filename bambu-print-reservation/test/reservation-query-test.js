@@ -274,6 +274,32 @@ check('数组参数防御：sort 传数组按默认 desc（不炸）', () => {
   assert.deepEqual(ts, [...ts].sort((a, b) => b - a), 'sort 数组不等合法值 → 默认 desc');
 });
 
+// ---------- 比较器 NaN 兜底（2026-11-05 P2 审查） ----------
+
+check('排序防御：createdAt 非法记录不炸、NaN 比较器兜 0（双向均不崩）', () => {
+  // 混入两条 createdAt 非法记录（脏数据/手写存储）：旧比较器 NaN 进 sort 语义未定义
+  const raw = JSON.parse(fs.readFileSync(process.env.RESERVATIONS_STORE_FILE, 'utf8'));
+  const bad = (id) => ({ ...raw.records[0], id, createdAt: 'not-a-date', history: [] });
+  raw.records.push(bad('R-BAD-1'), bad('R-BAD-2'));
+  fs.writeFileSync(process.env.RESERVATIONS_STORE_FILE, JSON.stringify(raw, null, 2));
+  try {
+    for (const sort of ['createdAt_asc', 'createdAt_desc', undefined]) {
+      const r = store.query({ page: 1, pageSize: 200, ...(sort ? { sort } : {}) });
+      assert.equal(r.total, SEED_COUNT + 2, `sort=${sort}：脏记录仍在 total（不过滤，与 from/to 语义区分）`);
+      assert.equal(r.records.length, SEED_COUNT + 2, '全部记录可分页返回');
+      assert.ok(r.records.some((x) => x.id === 'R-BAD-1'), '非法 createdAt 记录在结果中（兜 0 排序，不炸不丢）');
+    }
+    // 有序记录之间的相对顺序仍正确（脏记录兜 0 排最老端，不扰乱合法段排序）
+    const asc = store.query({ sort: 'createdAt_asc', page: 1, pageSize: 200 }).records.map((x) => x.createdAt);
+    const legal = asc.filter((t) => !Number.isNaN(new Date(t).getTime()));
+    assert.deepEqual(legal, [...legal].sort(), '合法记录升序保持');
+  } finally {
+    fs.writeFileSync(process.env.RESERVATIONS_STORE_FILE, JSON.stringify(raw.records.slice(0, SEED_COUNT).map((x) => x), null, 2));
+    // 恢复为标准 seed 形态（外层 {savedAt, records}）
+    fs.writeFileSync(process.env.RESERVATIONS_STORE_FILE, JSON.stringify({ savedAt: new Date().toISOString(), records: raw.records.slice(0, SEED_COUNT) }, null, 2));
+  }
+});
+
 // ---------- 收尾 ----------
 
 console.log(failures === 0 ? `\n全部通过（${passed} 项）` : `\n${failures} 项失败`);

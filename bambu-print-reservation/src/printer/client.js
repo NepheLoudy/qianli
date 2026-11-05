@@ -188,12 +188,16 @@ class PrinterClient {
     this.connecting = true;
 
     try {
+      // connectTimeout 显式 10s（2026-11-05 P2 审查）：不传时吃 mqtt.js 默认 30s——
+      // 与全仓出站超时口径（10s）对齐，失联机的连接失败反馈提早 20s 到位。
+      // 重连策略不动（bambu-link 内置 reconnectPeriod 5s 照旧）
       this.client = new BambuLink(
         this.config.accessCode,
         this.config.host,
         0,
         8883,
-        this.config.serial
+        this.config.serial,
+        { connectTimeout: 10000 }
       );
 
       this.client.on('connect', () => {

@@ -20,9 +20,14 @@ const store = require('../src/services/reservationStore');
     if (!(mins > 1 && mins < 60 * 24)) { skip++; continue; }
     if (!dry) {
       const target = all.find((x) => x.id === r.id);
+      // printerModel 口径统一（2026-11-05 P2 审查）：实时回填（dispatcher 完成钩子）写
+      // printer.model（型号）——回填侧旧写 assignedPrinter（名字），同名异义。从登记
+      // 打印机按名反查 model；查不到（打印机退役/改名）留空不猜（dispatchLearning 按
+      // printer 名聚合，printerModel 仅展示/分析字段，缺失不伤统计）
+      const registered = require('../src/config').printers.find((p) => p.name === r.printer);
       target.dispatchStats = {
         printer: r.printer,
-        printerModel: (r.review && r.review.dispatch && r.review.dispatch.assignedPrinter) || r.printer,
+        printerModel: (registered && registered.model) || null,
         material: r.materialType || null,
         estMinutes: Number(r.estMinutes) > 0 ? Number(r.estMinutes) : null,
         actualMinutes: Math.round(mins),

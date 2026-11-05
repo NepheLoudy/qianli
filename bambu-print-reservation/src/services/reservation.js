@@ -329,6 +329,12 @@ class ReservationService {
   async reprintReservation(id, requester, overrides = {}) {
     const src = store.get(id);
     if (!src) throw new Error('预约记录不存在');
+    // P2 修复（2026-11-05 全量审查）：服务层补终态门槛——此前 REPRINT_ALLOWED_STATUSES
+    // 只在路由层拦，直调服务层（脚本/测试/未来消费者）可复刻非终态单。与路由层共用
+    // config.reprintAllowedStatuses（同一常量，勿复制清单）
+    if (!config.reprintAllowedStatuses.includes(src.status)) {
+      throw new Error(`「${id}」当前状态「${src.status}」——只有${config.reprintAllowedStatuses.join('/')}的单才能复刻`);
+    }
     if (src.fileCleaned) throw new Error('源文件已过保留期被清理，请重新上传模型文件');
 
     // 服务端复制源文件（复刻单与源单生命周期独立：源单日后清理不影响复刻单）
@@ -705,6 +711,9 @@ function precheckSlicedSubmission(input = {}) {
  * 打印进程私信申请人（2026-10-28 曼波令「群播全面关闭，转私信告知」）：按单据
  * submittedBy → 账号 → feishuOpenId 发 DM；未绑定飞书的账号跳过（页面状态可见）。
  * fire-and-forget：DM 失败只记日志，绝不影响事件主流程。
+ * 2026-11-05 P2 审查修复：DM 补接晚间静默闸——notifyReviewers 同款 gatePayload
+ * 范式（载荷走 quietHours 注册的 dm-text 补发处理器：静默窗口内落盘积压、09:00
+ * 整点按原样补发；非静默直接发送）。
  */
 function notifyApplicantDm(recordId, text) {
   setImmediate(() => {
@@ -717,7 +726,12 @@ function notifyApplicantDm(recordId, text) {
       if (!openId) return; // 未绑定：静默跳过（页面可见）
       const { sendTextToUser } = require('../feishu/bot');
       const name = (rec.applicant || user.displayName || recordId);
-      sendTextToUser(openId, `${text}\n—— 打印预约机器人（单 ${rec.id} · ${rec.fileName || ''} · 申请人 ${name}）`)
+      const dmPayload = {
+        openId,
+        text: `${text}\n—— 打印预约机器人（单 ${rec.id} · ${rec.fileName || ''} · 申请人 ${name}）`,
+      };
+      if (quietHours.gatePayload('dm-text', dmPayload, `打印进程私信 ${rec.id}`)) return; // 已积压补发，勿直发
+      sendTextToUser(dmPayload.openId, dmPayload.text)
         .catch((err) => console.warn('[DM] 私信发送失败:', err.message));
     } catch (err) {
       console.warn('[DM] 私信组装失败:', err.message);

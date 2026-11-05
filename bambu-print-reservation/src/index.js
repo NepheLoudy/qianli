@@ -1630,8 +1630,10 @@ app.post('/api/reservations/:id/review', requireUser('reviewer', 'admin'), async
 // 服务端复制源文件免重传；需求链路单按当前规则库重新定档；新单走完整审批流。
 // 权限（v91 cross-check B3 收口）：本人或 reviewer/admin（assertCanManage，与前端显隐
 // 对齐——此前仅 requireUser，任何登录用户可复刻任意状态/任意人的单）；且仅终态单可复刻
-// （前端按钮只对 已完成/已取消 显示，后端同步拦截，防 API 直调绕过 UI）
-const REPRINT_ALLOWED_STATUSES = ['已完成', '已取消'];
+// （前端按钮只对 已完成/已取消 显示，后端同步拦截，防 API 直调绕过 UI）。
+// 2026-11-05 P2 审查：终态白名单上收到 config.reprintAllowedStatuses——路由层与服务层
+// （reprintReservation 内同款门槛）共用同一常量，不再两处清单漂移
+const REPRINT_ALLOWED_STATUSES = config.reprintAllowedStatuses;
 app.post('/api/reservations/:id/reprint', requireUser(), async (req, res) => {
   try {
     const srcRecord = reservationStore.get(req.params.id);

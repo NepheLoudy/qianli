@@ -205,9 +205,12 @@ const reservationStore = {
       });
     }
     // 排序：仅 createdAt 双向（拷贝后排序，不污染 mtime 缓存数组的既有顺序）
+    // P2 修复（2026-11-05 全量审查）：createdAt 非法时 new Date(...).getTime()=NaN，
+    // NaN 进比较器返回 NaN——V8 sort 视为 0 但语义未定义且跨引擎有异，前置
+    // Number.isFinite 兜底 0（非法时间记录排序退化为「保持相等」，不炸不乱序崩）
+    const ts = (r) => { const t = new Date(r.createdAt).getTime(); return Number.isFinite(t) ? t : 0; };
     const dir = opts.sort === 'createdAt_asc' ? 1 : -1;
-    records = [...records].sort((a, b) =>
-      (new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()) * dir);
+    records = [...records].sort((a, b) => (ts(a) - ts(b)) * dir);
     // 分页钳制：page 从 1 起；pageSize 默认 20，上限 200
     let page = Math.floor(Number(opts.page));
     if (!Number.isFinite(page) || page < 1) page = 1;

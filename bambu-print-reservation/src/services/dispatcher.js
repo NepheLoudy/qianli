@@ -568,7 +568,12 @@ class Dispatcher {
       this.completedCount = new Map(Array.isArray(data.completedCount) ? data.completedCount : []);
       this.known = new Set(Array.isArray(data.known) ? data.known : []);
       this.givenUp = new Map(Array.isArray(data.givenUp) ? data.givenUp.slice(-GIVEN_UP_CAP) : []);
-      this.receiptHold = new Map(Array.isArray(data.receiptHold) ? data.receiptHold : []);
+      // P2 修复（2026-11-05 全量审查）：旧 state 文件遗留字符串键（holdQueue v88 前
+      // 未归一 Number 落盘）恢复后 receiptHold.has(数值id) 查不到，匹配层对人工置闸
+      // 置盲——恢复时统一 Number 归一键型
+      this.receiptHold = new Map(
+        (Array.isArray(data.receiptHold) ? data.receiptHold : []).map(([k, v]) => [Number(k), v])
+      );
       for (const t of this.queue) this.known.add(t.recordId);
       for (const [, t] of this.printing) this.known.add(t.recordId);
       // 审查修复（v62）：printing 映射回灌 manager 的 activeTask——首报文补收尾路径

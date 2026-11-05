@@ -192,19 +192,21 @@ check('3mf 提取摘要随单入档(embeddedParams),列表/卡片可展示', () 
 
 // ---------- 数据备份 ----------
 
-check('备份:四 JSON 快照落盘,轮转清超期文件', () => {
+check('备份:三 JSON 快照落盘,轮转清超期文件', () => {
   submitFile('bk.3mf'); // 确保预约文件存在
-  // 播种其余三类文件（生产中它们必然存在：注册/改规则/提建议即生成）
+  // 播种其余两类文件（生产中它们必然存在：注册/改规则即生成）
   require('../src/services/authStore').register({ username: 'bkop', password: 'secret1', displayName: '备份播种' });
   processRules.upsertRule({ id: 'bk-seed', priority: 300, when: { load_magnitude: ['light'] }, set: { wallLoops: 2 }, reason: '备份播种规则' });
-  require('../src/services/ruleSuggestions').add({ when: { load_magnitude: ['light'] }, set: { wallLoops: 2 }, reason: '备份播种建议' });
+  // rule-suggestions.json 已移出备份清单（2026-11-05 P2 审查：待审池 v84 退役，
+  // ruleSuggestions 服务本体保留但无生产写入路由）——不再播种建议文件
   // 用「两天前」而非固定 2026-10-06：轮转按 Date.now()-14d 计算，固定日期跨过保留期后
   // 会把刚生成的快照当过期删掉（2026-10-20 测试到期实锤）
   const now = new Date(Date.now() - 2 * 24 * 3600 * 1000);
   now.setUTCHours(3, 30, 0, 0);
   const stamp = now.toISOString().slice(0, 10);
   const r = backup.runBackup(now);
-  assert.equal(r.copied.length, 4, `应复制 4 个文件,实际: ${r.copied.join(',')}（跳过 ${r.skipped.join(',')}）`);
+  assert.equal(r.copied.length, 3, `应复制 3 个文件,实际: ${r.copied.join(',')}（跳过 ${r.skipped.join(',')}）`);
+  assert.ok(!r.copied.includes('rule-suggestions.json'), '待审池已退役：建议文件不应再进备份清单');
   const files = fs.readdirSync(backup.BACKUP_DIR);
   assert.ok(files.some((f) => f.endsWith('-reservations.json')), '预约快照应存在');
   assert.ok(files.some((f) => f.endsWith('-auth-users.json')), '账号快照应存在');
@@ -222,7 +224,7 @@ check('备份:同日重跑覆盖不膨胀', () => {
   later.setUTCHours(15, 0, 0, 0);
   backup.runBackup(later);
   const sameDay = fs.readdirSync(backup.BACKUP_DIR).filter((f) => f.startsWith(later.toISOString().slice(0, 10))).length;
-  assert.equal(sameDay, 4, '同日 4 文件不因重跑翻倍');
+  assert.equal(sameDay, 3, '同日 3 文件不因重跑翻倍');
 });
 
 // ---------- 使用上报 ----------

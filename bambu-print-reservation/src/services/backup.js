@@ -1,9 +1,11 @@
 // ============================================================
 // 数据面备份（2026-10-06 流程债清偿：五类数据全在小电脑单机单副本）
 //
-// 每日快照四类 JSON（预约/账号/规则/建议）到 BACKUP_DIR（默认数据目录同盘
+// 每日快照三类 JSON（预约/账号/规则）到 BACKUP_DIR（默认数据目录同盘
 // backup/ 子目录），保留最近 BACKUP_KEEP_DAYS 天（默认 14）；启动即备一份保底。
 // uploads 源文件目录不备份（体积大且可由队员重传）——README 记录此边界。
+// 2026-11-05 P2 审查：移除 rule-suggestions.json 备份项——待审池 v84 已退役
+// （服务本体仅备份/测试在引用，生产路由已删；ruleSuggestions.js 文件本体保留）。
 // 失败仅 warn，绝不影响主链路。
 // ============================================================
 
@@ -14,13 +16,13 @@ const reservationStore = require('./reservationStore');
 const BACKUP_DIR = process.env.BACKUP_DIR || path.join(path.dirname(reservationStore.STORE_FILE), 'backup');
 const KEEP_DAYS = Number(process.env.BACKUP_KEEP_DAYS || 14);
 
-/** 四类 JSON 源文件路径（authStore/processRules/ruleSuggestions 的 AUTH_FILE 惰性取,避免循环依赖） */
+/** 三类 JSON 源文件路径（authStore/processRules 的 AUTH_FILE 惰性取,避免循环依赖） */
 function sourceFiles() {
   return {
     'reservations.json': reservationStore.STORE_FILE,
     'auth-users.json': require('./authStore').AUTH_FILE,
     'process-rules.json': require('./processRules').getRulesSnapshot().rulesFile,
-    'rule-suggestions.json': require('./ruleSuggestions').FILE,
+    // rule-suggestions.json 不再备份：待审池已退役（v84），ruleSuggestions 服务保留但无生产写入
   };
 }
 

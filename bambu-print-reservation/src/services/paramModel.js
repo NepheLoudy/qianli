@@ -402,7 +402,6 @@ function failureAttribution(samples, rows) {
     const code = Number(s.outcome.failCode);
     (byCode[code] = byCode[code] || []).push(s);
   }
-  const rowsById = new Map((rows || []).map((r) => [r.id, r]));
   const groups = Object.entries(byCode).map(([code, list]) => {
     // 参数分布：每个可学习参数的「中位值 vs 全体成功样本中位值」
     const paramDevs = {};
@@ -418,10 +417,19 @@ function failureAttribution(samples, rows) {
       }
     }
     // 几何 DNA 均值（有 DNA 的失败样本）
+    // P2 修复（2026-11-05 全量审查）：旧写法以首个样本长度为基准——ragged vector
+    // 首样本短时高维静默缺位、首样本长时短样本越界读 undefined。改以规则库当前
+    // 维度（featureVector.DNA 键数）为准：长度不符的样本跳过并计数（退回旧基准
+    // 只在维度信息不可用时兜底）；逐维无有效值的位输出 null（缺失诚实可见）
     const dnaLists = list.map((s) => s.model && s.model.features && s.model.features.dna).filter(Boolean);
-    const dnaMean = dnaLists.length
-      ? dnaLists[0].vector.map((_, i) => {
-        const vals = dnaLists.map((d) => d.vector[i]).filter(Number.isFinite);
+    const dnaTargetDim = featureVector.GEOMETRY_FEATURES.filter((k) => /^dna_\d+$/.test(k)).length
+      || (dnaLists[0] && dnaLists[0].vector && dnaLists[0].vector.length)
+      || 0;
+    const dnaAligned = dnaLists.filter((d) => Array.isArray(d.vector) && d.vector.length === dnaTargetDim);
+    const dnaSkipped = dnaLists.length - dnaAligned.length;
+    const dnaMean = dnaAligned.length
+      ? Array.from({ length: dnaTargetDim }, (_, i) => {
+        const vals = dnaAligned.map((d) => d.vector[i]).filter(Number.isFinite);
         return vals.length ? Math.round(vals.reduce((s2, v) => s2 + v, 0) / vals.length * 100) / 100 : null;
       })
       : null;
@@ -431,6 +439,7 @@ function failureAttribution(samples, rows) {
       sampleIds: list.map((s) => s.id),
       paramDevs,
       dnaMean,
+      dnaSkipped, // DNA 维度与规则库不符被跳过的样本数（ragged vector 防御，0=全部对齐）
       files: list.map((s) => (s.model && s.model.originalName) || '').filter(Boolean).slice(0, 3),
     };
   }).sort((a, b) => b.count - a.count);

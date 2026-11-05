@@ -69,6 +69,43 @@ function completedSource(fileName, selection = {}) {
   return { rec, srcFile };
 }
 
+// ---------- 服务层终态门槛（2026-11-05 P2 审查：reprintReservation 自带校验） ----------
+
+check('reprint 服务层:非终态单直调被拒（REPRINT_ALLOWED_STATUSES 不再只在路由层）', async () => {
+  // 造一份带真实源文件的非终态单（打印中）——fileCleaned 闸不先触发，专测状态门槛
+  const srcFile = path.join(os.tmpdir(), `bambu-lineage-live-${process.pid}.3mf`);
+  fs.writeFileSync(srcFile, 'fake-content');
+  const live = submit({ fileName: 'live.3mf', filePath: srcFile });
+  for (const s of ['已通过', '排队中', '打印中']) store.updateStatus(live.id, s, 't');
+  await assert.rejects(
+    () => reservationService.reprintReservation(live.id, { id: 'u-x', displayName: 'X' }, {}),
+    (err) => /打印中.*只有已完成\/已取消的单才能复刻/.test(err.message),
+    `应抛可读终态错误（实际应含状态名与白名单）`
+  );
+  // 待审批单同样拒绝（未走任何流转）
+  const pending = submit({ fileName: 'pend.3mf', filePath: srcFile });
+  await assert.rejects(
+    () => reservationService.reprintReservation(pending.id, { id: 'u-x', displayName: 'X' }, {}),
+    (err) => /待审批/.test(err.message),
+    '待审批单也应被服务层终态门槛拦截'
+  );
+  // 已取消是合法终态：能正常复刻
+  const cancelled = submit({ fileName: 'canc.3mf', filePath: srcFile });
+  for (const s of ['已通过', '已取消']) store.updateStatus(cancelled.id, s, 't');
+  const copy = await reservationService.reprintReservation(cancelled.id, { id: 'u-x', displayName: 'X' }, {});
+  assert.ok(copy && copy.id !== cancelled.id, '已取消单应可复刻');
+  for (const f of [copy.filePath, srcFile]) { try { fs.unlinkSync(f); } catch { /* 收尾 */ } }
+});
+
+check('reprint 服务层:状态白名单与路由层共用同一常量（config.reprintAllowedStatuses）', () => {
+  const config = require('../src/config');
+  assert.deepEqual([...config.reprintAllowedStatuses].sort(), ['已取消', '已完成'], 'config 常量=已完成/已取消');
+  const indexSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.js'), 'utf8');
+  assert.ok(indexSrc.includes('config.reprintAllowedStatuses'), '路由层应引用 config 常量（不再字面量两份）');
+  const svcSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'services', 'reservation.js'), 'utf8');
+  assert.ok(svcSrc.includes('config.reprintAllowedStatuses'), '服务层应引用 config 常量（同一清单）');
+});
+
 check('reprint 血缘:新单 sourceRecordId === 源单 id,文件独立副本', async () => {
   const { rec, srcFile } = completedSource('origin.3mf');
   const copy = await reservationService.reprintReservation(rec.id, { id: 'u-x', displayName: '复刻人' }, {});
@@ -92,6 +129,9 @@ check('reprint 血缘:血缘指向语义（复刻单的复刻仍指向其源单�
   // 血缘语义=「复刻自哪单」，指向直接源（不做祖先追溯）
   const { rec: a, srcFile: srcA } = completedSource('chain-a.3mf');
   const b = await reservationService.reprintReservation(a.id, { id: 'u-x', displayName: 'B' }, {});
+  // B 是新单（待审批）——服务层终态门槛落地后（2026-11-05 P2 批），C 要复刻 B
+  // 需先把 B 推到终态：链式血缘验证的语义不变（C 指向直接源 B）
+  for (const s of ['已通过', '排队中', '打印中', '已完成']) store.updateStatus(b.id, s, 't');
   const c = await reservationService.reprintReservation(b.id, { id: 'u-x', displayName: 'C' }, {});
   assert.equal(b.sourceRecordId, a.id, 'B 的血缘应指向 A');
   assert.equal(c.sourceRecordId, b.id, 'C 的血缘应指向 B（直接源，非祖先）');
@@ -172,13 +212,14 @@ Promise.all(pending).then(() => {
   });
 
   check('reprint 血缘:REPRINT_ALLOWED_STATUSES 端点权限契约（与前端显隐对齐，v91 cross-check B3）', () => {
-    // 路由层常量：只有终态单可复刻——锚死 index.js 的 REPRINT_ALLOWED_STATUSES 与
-    // 前端 canReprint（approve.html 已完成/已取消）两处清单不漂移
+    // 状态白名单权威在 config.reprintAllowedStatuses（2026-11-05 P2 上收：路由/服务
+    // 两层共用同一常量，不再字面量两份）——锚死它与前端 canReprint（approve.html
+    // 已完成/已取消）显隐口径不漂移
+    const allowed = require('../src/config').reprintAllowedStatuses;
+    assert.ok(Array.isArray(allowed) && allowed.length, 'config 应声明 reprintAllowedStatuses 常量');
+    assert.deepEqual([...allowed].sort(), ['已取消', '已完成'], '后端可复刻状态=已完成/已取消（与前端显隐一致）');
     const indexSrc = fs.readFileSync(path.join(__dirname, '..', 'src', 'index.js'), 'utf8');
-    const m = indexSrc.match(/const REPRINT_ALLOWED_STATUSES = (\[[^\]]+\])/);
-    assert.ok(m, 'index.js 应声明 REPRINT_ALLOWED_STATUSES 常量');
-    const allowed = eval(m[1]); // 测试内受控 eval：常量是字面量数组
-    assert.deepEqual(allowed.sort(), ['已取消', '已完成'], '后端可复刻状态=已完成/已取消（与前端显隐一致）');
+    assert.ok(indexSrc.includes('REPRINT_ALLOWED_STATUSES = config.reprintAllowedStatuses'), '路由层常量应引自 config（单一事实来源）');
     assert.ok(indexSrc.includes('assertCanManage(req.user, srcRecord)'), 'reprint 路由应挂 assertCanManage（本人||reviewer）');
   });
 

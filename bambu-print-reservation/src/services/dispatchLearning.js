@@ -23,7 +23,12 @@ const median = (arr) => {
 
 /** 从预约单聚合 dispatchStats 样本 */
 function collectStats(records) {
-  return (records || []).filter((r) => r.dispatchStats && Number.isFinite(Number(r.dispatchStats.actualMinutes)));
+  // P2 修复（2026-11-05 全量审查）：actualMinutes=null（老单/极端回填失败）经
+  // Number() 变 0 混入统计会把 actualMedian 拉向 0——null 语义归 null，由
+  // Number.isFinite 自然剔除（undefined 同理由 NaN 剔除）
+  return (records || []).filter((r) => r.dispatchStats
+    && r.dispatchStats.actualMinutes != null
+    && Number.isFinite(Number(r.dispatchStats.actualMinutes)));
 }
 
 /** ① 按机时长校准：{printer: {estMedian, actualMedian, bias, n}}。
@@ -33,7 +38,13 @@ function durationBias(records) {
   const byPrinter = {};
   for (const s of collectStats(records)) {
     const st = s.dispatchStats;
-    (byPrinter[st.printer] = byPrinter[st.printer] || []).push({ est: Number(st.estMinutes), act: Number(st.actualMinutes) });
+    // P2 修复（2026-11-05 全量审查）：老单 estMinutes=null（回填不可补），旧写法
+    // Number(null)=0 会把 0 混进中位数拉低 estMedian——null 语义归 null，由 median
+    // 的 Number.isFinite 过滤自然剔除
+    (byPrinter[st.printer] = byPrinter[st.printer] || []).push({
+      est: st.estMinutes == null ? null : Number(st.estMinutes),
+      act: Number(st.actualMinutes),
+    });
   }
   const out = {};
   for (const [printer, list] of Object.entries(byPrinter)) {
@@ -77,32 +88,47 @@ function recommendBySpeed(task, machines, records) {
   for (const m of machines || []) {
     // 同机样本优先取「体积同量级」的（±1 个数量级内），不足 2 条退回全机样本
     let pool = stats.filter((s) => s.printer === m.name);
+    let usedSizedPool = false;
     if (vol) {
       const sized = pool.filter((s) => Number.isFinite(Number(s.volumeCm3)) && Math.abs(Math.log10(Math.max(0.1, Number(s.volumeCm3))) - Math.log10(Math.max(0.1, vol))) <= 1);
-      if (sized.length >= 2) pool = sized;
+      if (sized.length >= 2) { pool = sized; usedSizedPool = true; }
     }
     const med = median(pool.map((s) => Number(s.actualMinutes)));
     if (med == null) continue;
+    // P2 修复（2026-11-05 全量审查）：basis 文案按实际采样路径给——vol 提供但同量级
+    // 样本 <2 退回全机池时不再误称「（同体积量级）」
     out.push({
       name: m.name,
       predictedMedian: med,
       n: pool.length,
-      basis: `${m.name} 历史同机${vol ? '（同体积量级）' : ''}实际时长中位 ${med}min（n=${pool.length}）`,
+      basis: `${m.name} 历史同机${usedSizedPool ? '（同体积量级）' : ''}实际时长中位 ${med}min（n=${pool.length}）`,
     });
   }
   return out.sort((a, b) => a.predictedMedian - b.predictedMedian);
 }
 
-/** 排队等待中位数（负载视角）：从 history 排队中→打印中 时间差按机聚合 */
+/** 排队等待中位数（负载视角）：从 history 取「紧邻打印中的那次排队」时间差按机聚合。
+ *  P2 修复（2026-11-05 全量审查）：旧口径取首个「排队中」轨迹——失败重排单的等待
+ *  含重试+冷却虚高；改为紧邻「打印中」之前的那条排队轨迹（实际生效的排队） */
 function queueWaitByPrinter(records) {
   const byP = {};
   for (const r of records || []) {
-    const q = (r.history || []).find((h) => h.to === '排队中');
-    const p = (r.history || []).find((h) => h.to === '打印中');
-    if (!q || !p) continue;
-    const mins = (Date.parse(p.at) - Date.parse(q.at)) / 60000;
-    if (!(mins >= 0 && mins < 60 * 48)) continue;
-    (byP[r.printer] = byP[r.printer] || []).push(mins);
+    const hist = r.history || [];
+    // 取最后一条「打印中」——失败重排单会多次开打，负载等待关心的是实际生效的
+    // 那轮（旧口径取首个打印中+首个排队，重试+冷却全计入，等待虚高）
+    let pIdx = -1;
+    for (let i = hist.length - 1; i >= 0; i--) {
+      if (hist[i].to === '打印中') { pIdx = i; break; }
+    }
+    if (pIdx < 0) continue;
+    // 逆着找紧邻它之前的那条「排队中」（多轮排队取最后一轮）
+    for (let i = pIdx - 1; i >= 0; i--) {
+      if (hist[i].to === '排队中') {
+        const mins = (Date.parse(hist[pIdx].at) - Date.parse(hist[i].at)) / 60000;
+        if (mins >= 0 && mins < 60 * 48) (byP[r.printer] = byP[r.printer] || []).push(mins);
+        break;
+      }
+    }
   }
   const out = {};
   for (const [p, list] of Object.entries(byP)) out[p] = { median: median(list), n: list.length };
