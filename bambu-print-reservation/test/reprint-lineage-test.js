@@ -234,12 +234,21 @@ Promise.all(pending).then(() => {
     assert.ok(/config\.dispatch\.autoDispatch/.test(routeBody), 'reprint 路由应判 autoDispatch 开关');
     assert.ok(/approveReservation\([\s\S]*?\{\s*auto:\s*true\s*\}/.test(routeBody), '自动通过必须传 { auto: true }（切片闸豁免+机型学习信号，v88 P0）');
     assert.ok(/setImmediate/.test(routeBody), '自动通过应 setImmediate 异步执行（响应不被审批链阻塞）');
-    // notifyReviewers 合法出现位：①catch 内（自动通过失败转人工的兜底通知）②else 人工分支；
+    // notifyReviewers 合法出现位：①自动失败兜底（2026-11-05 起收敛进
+    // handleAutoDispatchFailure 公共函数，提交链/复刻链共用）②else 人工分支；
     // 非法位：紧跟 reprintReservation 的无条件 fire-and-forget（自动模式下催审批人=打扰）
     const afterReprint = routeBody.indexOf('reprintReservation');
     const firstNotify = routeBody.indexOf('notifyReviewers');
     assert.ok(firstNotify > afterReprint + routeBody.slice(afterReprint).indexOf('if (config.dispatch.autoDispatch)'), 'reprintReservation 之后应先判 autoDispatch 分支，不再无条件 notifyReviewers');
-    assert.ok(/catch[\s\S]*?notifyReviewers[\s\S]*?\} else \{\s*reservationService\.notifyReviewers/.test(routeBody), 'notifyReviewers 应只在 catch 转人工兜底与 else 人工分支出现');
+    assert.ok(/\.catch\(\(err\)\s*=>\s*handleAutoDispatchFailure\(/.test(routeBody), '自动通过失败应走 handleAutoDispatchFailure 公共兜底（含 notifyReviewers + 申请人 DM 回执）');
+    assert.ok(/\} else \{\s*reservationService\.notifyReviewers\(reservation\)/.test(routeBody), '人工模式分支才直接 notifyReviewers');
+    // 兜底函数本身必须同时通知审批人与申请人（曼波令「没法打要给提交人飞书回执」）
+    const fnIdx = indexSrc.indexOf('function handleAutoDispatchFailure(');
+    assert.ok(fnIdx > 0, 'handleAutoDispatchFailure 应定义在 index.js');
+    const fnBody = indexSrc.slice(fnIdx, indexSrc.indexOf('/** 取消/删除权限'));
+    assert.ok(/notifyReviewers/.test(fnBody), '兜底函数应通知审批人（人工接力）');
+    assert.ok(/notifyApplicantDm\(/.test(fnBody), '兜底函数应私信申请人回执（没法打要让提交人知道）');
+    assert.ok(/autoPickFail/.test(fnBody), '兜底函数应消费结构化选机失败原因（noSameModel/noCandidate）');
   });
   return Promise.all(pending);
 }).then(() => {

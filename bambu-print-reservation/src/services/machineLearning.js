@@ -43,7 +43,8 @@ function machineStats(records, printerName) {
  * @param {string} machineModel 内嵌机型串（Bambu Lab P2S 等）
  * @param {Array} candidates 候选打印机（已过品牌/空闲/回执闸过滤，元素含 name/model/status）
  * @param {Array} records 预约单全量（outcome 统计源）
- * @returns {{name:string, basis:string, lowConfidence:boolean}|null} null=无可选
+ * @returns {{name:string|null, basis:string, lowConfidence:boolean, noSameModel?:boolean,
+ *            machineModel?:string, brandCandidates?:string[]}|null} null=候选机队为空
  */
 function chooseMachineForSliced(machineModel, candidates, records) {
   if (!candidates || !candidates.length) return null;
@@ -59,18 +60,26 @@ function chooseMachineForSliced(machineModel, candidates, records) {
       : `同型号 ${ranked.length} 台中按历史成功率${top.st.successRate != null ? `（${Math.round(top.st.successRate * 100)}%）` : ''}择优`;
     return { name: top.p.name, basis, lowConfidence: false };
   }
-  // ② 无同型号：品牌族降级（v65 口径）——选历史成功率最高的同品牌机
+  // ② 无同型号：不做跨型号降级（2026-11-05 修复，H2D 失联实案）——返回原因给调用方播报。
+  //
+  // 原 v65 品牌族降级是**逻辑死路**：降级选出的机型必然过不了 approveReservation 的
+  // 机型相容硬校验（reservation.js「切片文件内嵌机型…不同型号——切片 profile 已锁死」），
+  // 于是每次同型号机掉线/忙碌，自动分发都是「选了→被自己拦下→静默转人工」，用户只看到
+  // 单子卡在待审批。切片件内嵌机型锁死 profile 是物理事实，选机绕不过去——所以这里改为
+  // 明确返回 noSameModel 原因（name=null），由提交链播报给申请人并给出可操作去路，
+  // 而不是先选中一台注定被拒的机器再在别处抛错。
+  // brandCandidates 保留：播报时告知「哪些同品牌机在候选里（但型号不符）」，便于判断是
+  // 「同型号机失联」还是「压根没登记这台型号」。
   const { modelBrand } = require('../utils/printerModelKey');
   const brand = modelBrand(machineModel);
   const brandMachines = candidates.filter((p) => modelBrand(p.model) === brand);
-  if (!brandMachines.length) return null;
-  const ranked = brandMachines.map((p) => ({ p, st: machineStats(records, p.name) }))
-    .sort((a, b) => (b.st.successRate ?? 0.5) - (a.st.successRate ?? 0.5) || b.st.lastAt - a.st.lastAt);
-  const top = ranked[0];
   return {
-    name: top.p.name,
-    basis: `机型「${machineModel}」不在机队——按同品牌兼容降级到 ${top.p.name}（历史成功率${top.st.successRate != null ? ` ${Math.round(top.st.successRate * 100)}%` : ' 无记录'}）`,
-    lowConfidence: true, // 跨机型 = 打印幅面/喷嘴可能有差，审批台标警示
+    name: null,
+    noSameModel: true,
+    machineModel,
+    brandCandidates: brandMachines.map((p) => p.name),
+    basis: `机型「${machineModel}」无可用的同型号机（当前候选 ${candidates.map((p) => p.name).join('、') || '无'}）——跨型号切片 profile 不兼容，不做降级`,
+    lowConfidence: true,
   };
 }
 

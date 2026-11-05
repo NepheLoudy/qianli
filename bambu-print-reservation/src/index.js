@@ -85,6 +85,54 @@ const upload = multer({
 //   file.originalname 按 latin1 解（需显式还原 UTF-8）；
 //   multipart 文本字段 busboy 已按 UTF-8 解好——勿二次转换（否则中文反而乱码）
 
+/**
+ * 自动分发失败兜底（2026-11-05 抽出，提交链/复刻链共用）：
+ *   ① 竞态判定——提交响应窗口内被用户取消属良性，不再通知
+ *   ② 通知审批人（人工兜底）
+ *   ③ 私信申请人回执（曼波令「出现个人预约没法打的情况给提交人飞书回执」）
+ *
+ * 为什么必须有 ③：自动分发失败此前只在 error log 留一行，申请人页面只看到单据卡在
+ * 「待审批」，不知道是自己的件没打、还是排队没轮到。H2D 失联实案（R20261105-003）：
+ * 09:27 提交 → 选机降级 → 被跨型号校验拒 → 静默转人工 → 11:18 才有人手动批。整整
+ * 两小时无人知晓。回执带上失败原因与可操作去路，把黑盒变成可感知。
+ *
+ * @param {object} reservation  单据对象（含 id/fileName/applicant/submittedBy）
+ * @param {Error}  err          自动审批抛出的错误（err.autoPickFail 携带结构化选机失败原因）
+ * @param {string} tag          日志前缀区分来源（''|'（复刻）'）
+ */
+function handleAutoDispatchFailure(reservation, err, tag = '') {
+  const cur = reservationStore.get(reservation.id);
+  if (cur && cur.status !== config.status.PENDING_REVIEW) {
+    console.log(`[自动分发] ${reservation.id}${tag} 已被取消/流转（${cur.status}）——竞态良性，不再通知`);
+    return;
+  }
+  console.error(`[自动分发] ${reservation.id}${tag} 自动通过失败（转人工审批）:`, err.message);
+  // ① 审批人兜底（人工接力）
+  try {
+    reservationService.notifyReviewers(reservation).catch(() => {});
+  } catch { /* 通知失败不影响主流程 */ }
+  // ② 申请人回执——说清「没打」+「为什么」+「怎么办」
+  const pick = err.autoPickFail || null;
+  let reason;
+  if (pick && pick.kind === 'noSameModel') {
+    const model = pick.machineModel || '未知';
+    const candNote = pick.candidates && pick.candidates.length
+      ? `当前可派单的机器是 ${pick.candidates.join('、')}，型号与文件不符。`
+      : '当前没有任何空闲且在线的机器。';
+    reason = `这件是「${model}」机型切片的，但该型号机现在用不了（掉线或正在打印）。${candNote}`
+      + '切片文件的内嵌机型锁死了切片参数，换别的型号打不了（会机端拒收或打废）。';
+  } else if (pick && pick.kind === 'noCandidate') {
+    reason = `当前没有空闲且在线的机器可接单（文件内嵌机型 ${pick.machineModel || '未知'}）。`;
+  } else {
+    reason = err.message;
+  }
+  reservationService.notifyApplicantDm(
+    reservation.id,
+    `你的打印申请暂时没能自动开打：${reason}\n`
+    + '已转人工处理，审批人会和机器协调后安排。你不用重新提交，等消息就行。',
+  );
+}
+
 /** 取消/删除权限：本人（按提交时账号 id，displayName 非唯一键）或 reviewer/admin */
 function assertCanManage(user, reservation) {
   if (!reservation) {
@@ -1517,17 +1565,7 @@ app.post('/api/reservations', requireUser(), upload.fields([
       setImmediate(() => {
         reservationService.approveReservation(reservation.id, config.dispatch.autoApproverName, '自动分发（审批复核制）', { auto: true })
           .then(() => console.log(`[自动分发] ${reservation.id} 已自动通过入队`))
-          .catch((err) => {
-            const cur = require('./services/reservationStore').get(reservation.id);
-            if (cur && cur.status !== '待审批') {
-              console.log(`[自动分发] ${reservation.id} 已被取消/流转（${cur.status}）——竞态良性，不再通知`);
-              return;
-            }
-            console.error(`[自动分发] ${reservation.id} 自动通过失败（转人工审批）:`, err.message);
-            try {
-              reservationService.notifyReviewers(reservation).catch(() => {});
-            } catch { /* 通知失败不影响主流程 */ }
-          });
+          .catch((err) => handleAutoDispatchFailure(reservation, err));
       });
     } else {
       reservationService.notifyReviewers(reservation).catch(() => {}); // fire-and-forget
@@ -1652,17 +1690,7 @@ app.post('/api/reservations/:id/reprint', requireUser(), async (req, res) => {
       setImmediate(() => {
         reservationService.approveReservation(reservation.id, config.dispatch.autoApproverName, '自动分发（审批复核制）·复刻', { auto: true })
           .then(() => console.log(`[自动分发] ${reservation.id}（复刻自 ${req.params.id}）已自动通过入队`))
-          .catch((err) => {
-            const cur = require('./services/reservationStore').get(reservation.id);
-            if (cur && cur.status !== '待审批') {
-              console.log(`[自动分发] ${reservation.id} 已被取消/流转（${cur.status}）——竞态良性，不再通知`);
-              return;
-            }
-            console.error(`[自动分发] ${reservation.id}（复刻）自动通过失败（转人工审批）:`, err.message);
-            try {
-              reservationService.notifyReviewers(reservation).catch(() => {});
-            } catch { /* 通知失败不影响主流程 */ }
-          });
+          .catch((err) => handleAutoDispatchFailure(reservation, err, '（复刻）'));
       });
     } else {
       reservationService.notifyReviewers(reservation).catch(() => {}); // 人工模式才通知审批人

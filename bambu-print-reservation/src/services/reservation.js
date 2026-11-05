@@ -142,7 +142,23 @@ class ReservationService {
         store.list(),
       );
       if (!choice) {
-        throw new Error(`「${reservation.fileName}」自动选机失败：无可用同品牌机（内嵌机型 ${embeddedModel || '未知'}）——转人工审批指定`);
+        // 候选机队为空（全部忙碌/失联/持闸）——带上内嵌机型方便人工判断
+        const err = new Error(`「${reservation.fileName}」自动选机失败：当前无任何可派单的机器（内嵌机型 ${embeddedModel || '未知'}）——转人工审批指定`);
+        err.autoPickFail = { kind: 'noCandidate', machineModel: embeddedModel || null, candidates: [] };
+        throw err;
+      }
+      // 2026-11-05（H2D 失联实案）：无同型号机时 choice.name 为 null——不再降级选中注定被
+      // 跨型号硬校验拒掉的机器，而是带结构化原因抛出，由提交链播报给申请人。原降级路径
+      // 「选 A1mini → 被自身硬校验拦下 → 静默转人工」让用户只看到单据卡在待审批。
+      if (choice.noSameModel) {
+        const err = new Error(`「${reservation.fileName}」自动选机失败：${choice.basis}——转人工审批指定同型号机，或等该型号机回线后重试`);
+        err.autoPickFail = {
+          kind: 'noSameModel',
+          machineModel: choice.machineModel,
+          brandCandidates: choice.brandCandidates || [],
+          candidates: cand.map((p) => p.name),
+        };
+        throw err;
       }
       dispatch.assignedPrinter = choice.name;
       dispatch.autoBasis = choice.basis;
