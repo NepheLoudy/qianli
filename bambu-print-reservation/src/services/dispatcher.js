@@ -199,6 +199,12 @@ function parseHexColor(s) {
  *    level: user-exact / user-downgrade / embedded / fallback */
 function autoMapEntry(f, trays, prefColorHex = null) {
   const want = String((f && f.type) || '').trim().toUpperCase();
+  if (!want) {
+    // v102 曼波令「同耗材降级，不能跨耗材」：材料未知时不许遍历任意槽按色瞎配
+    // （原 pick 对空 want 跳过材料过滤=跨耗材通道）——回落机端默认槽并告警人工核对
+    console.warn('[分发] 用料材料未知，回落 AMS0 槽 0（请人工核对供料槽，跨耗材会拒打/打废料）');
+    return { entry: { ams_id: 0, slot_id: 0 }, level: 'fallback', dist: null, tray: null };
+  }
   const target = prefColorHex || (f && f.colorHex ? String(f.colorHex).replace('#', '').toUpperCase() : null);
   const pick = (level) => {
     let best = null;
@@ -211,12 +217,10 @@ function autoMapEntry(f, trays, prefColorHex = null) {
     return best ? { tray: best, dist: bestD } : null;
   };
   let hit = pick('exact') || pick('family');
-  if (!hit && !want) {
-    const t0 = trays[0] || null;
-    hit = t0 ? { tray: t0, dist: 0 } : null;
-  }
   if (!hit) {
-    console.warn(`[分发] 用料「${(f && f.type) || '未知'}」在本机料位无匹配，回落 AMS0 槽 0`);
+    // v102 曼波令「同耗材降级，不能跨耗材」：材料不匹配时不按首槽瞎配——统一回落
+    // 机端默认槽 AMS0·0 并告警人工把关。材料内颜色降级（exact/family 命中超色差阈值）不受影响
+    console.warn(`[分发] 用料「${(f && f.type) || '未知'}」在本机料位无同材料匹配，回落 AMS0 槽 0（请人工核对供料槽）`);
     return { entry: { ams_id: 0, slot_id: 0 }, level: 'fallback', dist: null, tray: null };
   }
   const level = prefColorHex
@@ -260,6 +264,7 @@ function buildAmsMapping(task, printer, fileMeta) {
         trayType: r.tray && r.tray.type,
         trayColorHex: r.tray && r.tray.colorHex ? `#${String(r.tray.colorHex).replace('#', '').toUpperCase()}` : null,
         dist: r.dist,
+        material: (f && f.type) || '', // v102：材料上下文随 note（轨迹文案防「跨耗材」误读）
       });
     }
     return r.entry;
@@ -946,6 +951,28 @@ class Dispatcher {
     const actives = printerManager.getApiStates().filter((p) => printingStates.includes(p.status));
     if (actives.length === 0) return false;
     let healed = false;
+    // v102 阶段1：幽灵在册互换（R20261108-002/-003 双幽灵实案）——开打 ack 超时被判失败
+    // 回滚（002），机端实际受理开打；随后另一单（003）分发成功占住 printing 池且机端没打
+    // 它——「该机已有在册任务」守卫挡住 002 的自愈补记，双幽灵互相锁死。此阶段摘掉
+    // 「机端实况 subtask 与在册任务不符、却与队列任务匹配」的强信号幽灵（回排队重新分发），
+    // 给真正的在打任务让路。无强信号（机端本地任务/续打）不动。
+    for (const p of actives) {
+      const held = this.printing.get(p.id);
+      if (!held) continue;
+      const heldName = String(held.fileName || '').trim();
+      const sub = String(p.subtaskName || '').trim();
+      if (!sub || !heldName || heldName === sub || heldName.includes(sub) || sub.includes(heldName)) continue;
+      const matching = [...this.queue].find((t) => {
+        const n = String(t.fileName || '').trim();
+        return n && !t.cancelled && (sub === n || sub.includes(n) || n.includes(sub));
+      });
+      if (!matching) continue; // 无队列任务与机端实况匹配：不动（保守）
+      console.warn(`[分发] 幽灵在册互换：${held.applicationNo || held.recordId} 在册但机端实况在打「${sub}」（匹配队列单 ${matching.recordId}）——在册单回排队，机端任务补记`);
+      this.printing.delete(p.id);
+      storeSafe(() => reservationStore.updateStatus(held.recordId, config.status.QUEUED,
+        `幽灵在册摘除：机端实况在打「${sub}」非本单——回队列重新分发`), 'ghost-swap');
+      healed = true;
+    }
     for (const task of [...this.queue]) {
       const want = String(task.fileName || '').trim();
       if (!want || task.cancelled) continue;
@@ -1330,14 +1357,14 @@ class Dispatcher {
       // 日志逐条记，单据轨迹记首条一次（重试不重复刷轨迹）
       if (Array.isArray(amsFrame.colorNotes) && amsFrame.colorNotes.length) {
         for (const n of amsFrame.colorNotes) {
-          console.warn(`[分发] ${task.recordId} 颜色降级：请求 ${n.requested} → ${n.trayType || '?'}${n.trayColorHex || ''}（色差 ${Math.round(n.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）`);
+          console.warn(`[分发] ${task.recordId} 颜色降级（材料 ${n.material || '未知'} 内匹配）：请求 ${n.requested} → ${n.trayType || '?'}${n.trayColorHex || ''}（色差 ${Math.round(n.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）——材料维度未跨，颜色就近`);
         }
         if (!task._colorDowngradeNoted) {
           task._colorDowngradeNoted = true;
           const n0 = amsFrame.colorNotes[0];
           storeSafe(() => reservationStore.appendHistory(
             task.recordId,
-            `颜色降级：请求 ${n0.requested} → ${n0.trayType || '?'}${n0.trayColorHex || ''}（色差 ${Math.round(n0.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）`,
+            `颜色降级（材料 ${n0.material || '未知'} 内匹配，未跨耗材）：请求 ${n0.requested} → ${n0.trayType || '?'}${n0.trayColorHex || ''}（色差 ${Math.round(n0.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）`,
           ), 'color-downgrade');
         }
       }
