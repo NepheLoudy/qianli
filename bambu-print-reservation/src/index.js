@@ -336,6 +336,7 @@ app.get('/api/print/taxonomy', (req, res) => {
 app.get('/api/print/colors', (req, res) => {
   res.json({
     colorNames: Object.keys(config.colorReference),
+    colorMap: config.colorReference, // v97 色名↔RGB 表（切片色板最近色命名提示用）
     threshold: config.dispatch.colorDistanceThreshold,
   });
 });
@@ -368,6 +369,54 @@ app.post('/api/print/process-rules', requireApiToken, (req, res) => {
 app.post('/api/print/process-rules/preview', requireUser(), (req, res) => {
   const { selection, material } = req.body || {};
   res.json(processRules.applyRules(selection || {}, { material }));
+});
+
+// 预约台切片件机型探测（2026-11-06 曼波令「交切片文件锁死机型选择」）：选文件即知内嵌
+// 机型与允许的登记机名单（同型号 + config.machineCompatGroups 互打组）——兼容组逻辑
+// 只活在后端，前端零机型判断。切片件=3mf 单口径（extractFrom3mf，50MB 闸）。
+// 探测文件用完即删，不进 uploads。
+app.post('/api/print/probe-model', requireUser(), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: '缺少文件（multipart 字段名 file）' });
+  const name = req.file.originalname || '';
+  const is3mf = /\.3mf$/i.test(name);
+  try {
+    if (/\.(gcode|gx|g)$/i.test(name)) {
+      return res.status(400).json({ error: '不再接受纯 .gcode——请在切片软件「导出切片文件」(.gcode.3mf) 后再提交（拓竹/闪铸皆同此口径）' });
+    }
+    if (!is3mf) {
+      return res.json({ ok: true, fileName: name, machineModel: null, estMinutes: null, allowedPrinters: [], note: '模型直投（STEP/STL）分发时现场切片，机型不锁定' });
+    }
+    if (req.file.size > 50 * 1024 * 1024) {
+      return res.status(400).json({ error: `文件 ${Math.round(req.file.size / 1048576)}MB 超过探测上限 50MB` });
+    }
+    let machineModel = null;
+    let estMinutes = null;
+    let source = null;
+    const ext = require('./services/slicerExtract').extractFrom3mf(fs.readFileSync(req.file.path));
+    machineModel = ext.machineModel || null;
+    estMinutes = ext.estMinutes || null;
+    source = ext.source;
+    const { modelCompatible } = require('./utils/printerModelKey');
+    const groups = config.machineCompatGroups || {};
+    const allowedPrinters = machineModel
+      ? config.printers
+        .filter((p) => modelCompatible(machineModel, p.model, groups))
+        .map((p) => ({ name: p.name, model: p.model }))
+      : [];
+    // v97：切片喷嘴口径 + 切片器告警 + 用料清单随探测结果透出（前端红标展示；硬拦在提交口初审；
+    // 用料清单供「切片栏锁死」——材料随文件展示，表单只留颜色可指定）
+    res.json({
+      ok: true, fileName: name, machineModel, estMinutes, source, allowedPrinters,
+      nozzleDiameters: ext.nozzleDiameters || [],
+      sliceWarnings: ext.sliceWarnings || [],
+      filaments: ext.filaments || [],
+    });
+  } catch (err) {
+    console.warn(`[机型探测] ${name} 失败: ${err.message}`);
+    res.status(400).json({ error: `机型探测失败：${err.message}` });
+  } finally {
+    try { fs.unlinkSync(req.file.path); } catch { /* 已不存在 */ }
+  }
 });
 
 // 专家 3mf 作品导入（reviewer+）：提取参数 diff 生成候选草稿——不入库，前端确认后走建议池
@@ -1287,7 +1336,16 @@ app.post('/api/reservations', requireUser(), upload.fields([
     }
     // 已切片产物=审批直通（2026-10-14 扩：闪铸 gcode 系与 3mf 同语义——参数已定，
     // 引擎不定档不越俎代庖；分发引擎按品牌分流：3mf→拓竹 / gcode→闪铸）
-    const isSliced = /\.(3mf|gcode|gx|g)$/i.test(fileName);
+    // **2026-11-06 曼波令终裁：纯 .gcode/.gx/.g 一律封死**——纯刀轨无网格/参数配对进不了
+    // 训练回路；拓竹机 project_file 对裸 gcode 秒 FAILED 84033581（两种 param 形态实拒）。
+    // 两品牌切片产物统一走 .gcode.3mf（闪铸分发链从 3mf 提取内嵌 gcode 照旧直发）
+    if (/\.(gcode|gx|g)$/i.test(fileName)) {
+      removeUploads(file, ...srcFiles);
+      return res.status(400).json({
+        error: '不再接受纯 .gcode 文件——请在切片软件完成切片后「导出切片文件」（.gcode.3mf）再提交（拓竹/闪铸皆同此口径）',
+      });
+    }
+    const isSliced = /\.3mf$/i.test(fileName);
     const is3mf = /\.3mf$/i.test(fileName);
 
     // 工况勾选与 3D 标注：**切片直通单同样收集**（2026-10-16 曼波定：切片参数由工况×几何
@@ -1374,6 +1432,8 @@ app.post('/api/reservations', requireUser(), upload.fields([
             source: 'engineering', params: ext.params || {}, estMinutes: null,
             bedType: ext.bedType || null, filaments: ext.filaments || [],
             machineModel: ext.machineModel || null,
+            nozzleDiameters: ext.nozzleDiameters || [], // v97 同口径（工程件通常无 slice_info，缺省空）
+            sliceWarnings: ext.sliceWarnings || [],
           };
         } catch (err) {
           console.warn('[提交] 工程 3mf 内嵌参数提取失败（闸门照过，参数走规则基线）:', err.message);
@@ -1456,7 +1516,8 @@ app.post('/api/reservations', requireUser(), upload.fields([
     // 3mf 审批透明化（2026-10-06）：提取文件内嵌切片参数摘要随单存档——审批人
     // 不用下载文件开 Bambu Studio 就能看参数。提取失败不阻塞提交（摘要置空）；
     // 大于 50MB 跳过提取（adm-zip 需整文件进内存，大文件会拖垮提交请求）。
-    // v64：仅**切片产物**走本段（工程件已改道需求链，isSlicedFinal=false）
+    // v64：仅**切片产物**走本段（工程件已改道需求链，isSlicedFinal=false）。
+    // 2026-11-06 曼波令：纯 .gcode 提交口已拒收（指纹段随之退役）——切片件=3mf 单口径
     if (isSlicedFinal && is3mf) {
       if (file.size > 50 * 1024 * 1024) {
         console.log(`[提交] 3mf 过大（${Math.round(file.size / 1048576)}MB），跳过参数提取`);
@@ -1476,6 +1537,8 @@ app.post('/api/reservations', requireUser(), upload.fields([
             source: extracted.source, params: extracted.params, estMinutes: extracted.estMinutes,
             bedType: extracted.bedType || null, filaments: extracted.filaments || [],
             machineModel: extracted.machineModel || null, // 内嵌目标机型（2026-10-16：直通单品牌路由权威）
+            nozzleDiameters: extracted.nozzleDiameters || [], // 切片喷嘴口径（v97 喷嘴硬校验数据源）
+            sliceWarnings: extracted.sliceWarnings || [], // 切片器告警（建议级，随单红标展示）
           };
           estMinutes = extracted.estMinutes; // 预计时长随单入档（队列 ETA 用）
         } catch (err) {
@@ -1493,6 +1556,8 @@ app.post('/api/reservations', requireUser(), upload.fields([
       const verdict = reservationService.precheckSlicedSubmission({
         machineModel: embeddedParams.machineModel,
         filaments: embeddedParams.filaments,
+        nozzleDiameters: embeddedParams.nozzleDiameters, // v97 喷嘴口径初审
+        sliceWarnings: embeddedParams.sliceWarnings, // v97 切片器告警随单透出（建议级）
         printers: config.printers,
         apiStates: printerManager.getApiStates(),
         queueInfo: {
@@ -1506,6 +1571,9 @@ app.post('/api/reservations', requireUser(), upload.fields([
         return res.status(400).json({ error: verdict.errors[0], details: verdict.errors, precheck: true });
       }
       precheckWarnings = verdict.warnings;
+      if (isSlicedFinal) {
+        precheckWarnings.push('切片件：材料随文件锁定、份数固定 1 份（多份请回切片器排盘，或打完用「复刻」）——表单仅颜色可指定（机端实时装料色板点选）');
+      }
     }
 
     // 指定打印机校验（2026-10-08）：自由文本填错名字此前会静默走自动匹配或永远排队——
@@ -1528,7 +1596,29 @@ app.post('/api/reservations', requireUser(), upload.fields([
           error: `「${wanted}」是${prBrand === 'flashforge' ? '闪铸' : '拓竹'}机型，打不了${fileBrand === 'flashforge' ? '闪铸 gcode 系' : '拓竹 3mf'}格式——两品牌切片格式互不兼容，请改选对应品牌机型或留空自动匹配`,
         });
       }
+      // 机型相容前移（2026-11-06 曼波令「交切片文件锁死机型选择」）：提交时就按内嵌机型
+      // 锁死（同型号+互打白名单组）——此前机型校验在审批链才拦，交了再打回体验差；
+      // 有指纹才校验（模型直投/无指纹切片件交给审批链 fail-closed）
+      const probeModel = embeddedParams && embeddedParams.machineModel;
+      // v98 修复（verifier P0）：此处 v96 起引用了一个全仓未声明的变量（笔误），非严格模块
+      // 下恒 undefined → 取反恒真——工程件（可换机重切，内嵌作者机型不该锁）也被误锁。
+      // 正确语义=只锁切片直通件（工程件/模型直投交审批链 fail-closed）
+      if (probeModel && isSlicedFinal) {
+        const { modelCompatible } = require('./utils/printerModelKey');
+        if (!modelCompatible(probeModel, pr.model, config.machineCompatGroups)) {
+          try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
+          return res.status(400).json({
+            error: `文件内嵌机型「${probeModel}」，与指定的「${wanted}」（${pr.model}）不同型号——切片 profile 已锁死，不允许跨机型提交。请指定${probeModel}对应的登记机，或用「${pr.model}」重新切片`,
+          });
+        }
+      }
     }
+
+    // v97 曼波令「切片栏锁死」：材料随文件内嵌（表单输入忽略）、份数固定 1（多份=切片器
+    // 排盘或打完「复刻」）——表单只留颜色可指定
+    const slicedMaterial = isSlicedFinal && embeddedParams && Array.isArray(embeddedParams.filaments)
+      ? [...new Set(embeddedParams.filaments.map((f) => String(f.type || '').trim()).filter(Boolean))].join('+')
+      : null;
 
     const reservation = await reservationService.createReservation({
       applicant: req.user.displayName, // 发起人 = 登录身份（防冒名），body.applicant 忽略
@@ -1537,12 +1627,12 @@ app.post('/api/reservations', requireUser(), upload.fields([
       fileName,
       filePath: file.path,
       fileSize: file.size,
-      materialType: body.materialType,
+      materialType: slicedMaterial || body.materialType, // 切片件材料随文件（锁死展示）
       color: body.color,
       assignedPrinter: body.assignedPrinter,
       // 高速打印标签联动加急排队（仅需求链路；3mf 加急走表单 isUrgent）
       isUrgent: body.isUrgent === 'true' || body.isUrgent === '1' || selection.fast_mode === true,
-      quantity: body.quantity,
+      quantity: isSlicedFinal ? 1 : body.quantity, // 切片件份数固定 1
       selection,
       spatial,        // 3D 标注随单存档（v56：载荷工况由标注驱动，底料与训练样本同构）
       placement,      // 放置平面四元数（2026-10-16：Place on Face 累计旋转；未放置为 null）
@@ -2368,11 +2458,12 @@ app.get('/api/dispatch/queue', requireUser(), (req, res) => {
   });
 });
 
-// 取件回执（2026-10-28 曼波令）：本人或 reviewer+ 确认已取走打完的件——清回执闸，
-// 该机队列下一件才开打；预约单落回执记录
+// 取件回执（2026-10-28 曼波令；v99 权限放宽）：任何登录用户可确认已取走打完的件——
+// 实验室公共空间，谁看到件被拿走都可以帮点（原本人/reviewer 限制解除）。清回执闸，
+// 该机队列下一件才开打；预约单落回执记录（回执人如实记录）。DM 取件码回复链路仍走
+// 申请人本人（码只有本人手机上有）
 app.post('/api/reservations/:id/receipt', requireUser(), async (req, res) => {
   try {
-    assertCanManage(req.user, reservationStore.get(req.params.id));
     const rec = reservationStore.acknowledgeReceipt(req.params.id, req.user);
     const ack = dispatcher.acknowledgeReceipt(req.params.id);
     res.json({ success: true, receipt: rec.receipt, queueResumed: ack.held });

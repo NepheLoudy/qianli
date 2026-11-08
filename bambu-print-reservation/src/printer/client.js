@@ -392,6 +392,17 @@ class PrinterClient {
           };
         });
       })(),
+      // 机端实装喷嘴口径（v97 喷嘴硬校验数据源，去重升序）：双喷头（H2D）取 device.nozzle.info
+      // 规格（与上方 nozzles 同源）；单喷头（X1/P1/A1）取 print.nozzle_diameter（"0.4" 形态，
+      // 兼容逗号分隔多值）。缺报文/字段 → 空数组（校验侧对未知实装不拦）
+      nozzleDiameters: (() => {
+        const dev = this.lastDevice || (state.raw?.print?.device) || {};
+        const specs = Array.isArray(dev.nozzle?.info) ? dev.nozzle.info : [];
+        const dual = specs.map((s) => Number(s.diameter)).filter((d) => Number.isFinite(d) && d > 0);
+        const src = dual.length ? dual
+          : String(state.raw?.print?.nozzle_diameter || '').split(',').map((s) => Number(String(s).trim()));
+        return [...new Set(src.filter((d) => Number.isFinite(d) && d > 0))].sort((a, b) => a - b);
+      })(),
       printError: Number(state.raw?.print?.print_error) || 0,
       failReason: Number(state.raw?.print?.fail_reason) || 0,
       // ---- 数据面全量排查批（2026-10-16 曼波令：打印机与 AMS 全部数据接入）----
@@ -505,6 +516,9 @@ class PrinterClient {
     if (!this.client || !this.connected) {
       throw new Error('打印机未连接');
     }
+    // 2026-11-06 曼波令：纯 .gcode 提交口已拒收（拓竹机 project_file 对裸 gcode 秒
+    // FAILED 84033581——Metadata 与 file:/// 两种 param 形态实发皆拒，gcode_file 通道
+    // 未及验证即废弃）——到达本函数的 fileName 恒为 3mf 或系统切片产物，param 固定
     const isNewGen = capabilitiesFor(this.config.model).generation === 'new'; // 能力矩阵唯一口径（2026-10-18 P0）
     // 审批分发指定槽位（2026-10-16 曼波令）：ams_mapping2 指向指定 AMS/槽位——
     // 未指定时维持默认 [{ams_id:0, slot_id:0}]（打印机按切片/自动映射）
@@ -529,7 +543,7 @@ class PrinterClient {
           print: {
             sequence_id: sequenceId,
             command: 'project_file',
-            param: 'Metadata/plate_1.gcode',
+            param: 'Metadata/plate_1.gcode', // 3mf 包内任务数据路径（裸 gcode 无此结构，提交口已拒收）
             url: `ftp:///${fileName}`,
             file: fileName,
             md5: '',

@@ -68,6 +68,9 @@ function submit(overrides = {}, selection = { load_magnitude: 'medium' }) {
     fileSize: 1024,
     materialType: material,
     color: '黑色',
+    // 机型指纹默认与联调机同型号（2026-11-06 fail-closed：无指纹切片件审批指定被拦——
+    // 无指纹场景有独立用例显式断言，fixture 不再走「跳过不拦」旧口径）
+    embeddedParams: { source: '3mf', params: {}, machineModel: 'TEST-BAMBU-COMPAT', filaments: [] },
     ...overrides,
     selection,
     processParams: applied.params,
@@ -182,6 +185,22 @@ check('集成：重复审批被拒（仅待审批单可批，防重复入队）'
   );
 });
 
+check('集成：无指纹切片件审批指定被拦（2026-11-06 fail-closed，R20261106-001 误派实案收口）', async () => {
+  const r = submit({ fileName: 'legacy.3mf', embeddedParams: null }); // 老文件无指纹
+  await assert.rejects(
+    () => reservationService.approveReservation(r.id, '测试审批人', 'OK', { assignedPrinter: '联调拓竹机' }),
+    /无法识别内嵌机型指纹/
+  );
+});
+
+check('集成：跨型号指定被拦（机型锁定口径，兼容组默认空）', async () => {
+  const r = submit({ embeddedParams: { source: 'gcode', params: {}, machineModel: 'Bambu Lab H2D', filaments: [] } });
+  await assert.rejects(
+    () => reservationService.approveReservation(r.id, '测试审批人', 'OK', { assignedPrinter: '联调拓竹机' }),
+    /不同型号|机型兼容/
+  );
+});
+
 check('集成：取消 → dequeue 出队 + store 已取消', async () => {
   const r = submit();
   await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调拓竹机' });
@@ -289,6 +308,7 @@ check('份数续打:quantity=3 完成后 remaining 递减重入队,末件才终�
   const applied = processRules.applyRules({ load_magnitude: 'medium' }, { material });
   const rec = store.create({
     applicant: '批量测试', fileName: 'x3.3mf', filePath: 'x', materialType: material,
+    embeddedParams: { source: '3mf', params: {}, machineModel: 'TEST-BAMBU-COMPAT', filaments: [] }, // 2026-11-06 fail-closed:审批指定须带机型指纹
     quantity: 3, selection: { load_magnitude: 'medium' }, processParams: applied.params, appliedRules: [],
   });
   await reservationService.approveReservation(rec.id, 'A', '', { assignedPrinter: '联调拓竹机' });
@@ -389,7 +409,9 @@ check('复刻:已完成单复制文件重提新单(新单号/新审批流/overri
   assert.notEqual(copy.filePath, srcFile, '复刻单持有独立文件副本');
   assert.ok(fs.existsSync(copy.filePath), '文件副本应存在');
   assert.equal(copy.processParams, null, '3mf 直通复刻不定档');
-  assert.equal(copy.embeddedParams, null);
+  // 2026-11-06：指纹随复刻继承/补提（源单带 TEST-BAMBU-COMPAT → 复刻单同款；假 zip 补提
+  // 失败时保持源单语义——machineModel 不应回 null）
+  assert.equal(copy.embeddedParams && copy.embeddedParams.machineModel, 'TEST-BAMBU-COMPAT');
   try { fs.unlinkSync(copy.filePath); } catch { /* 收尾 */ }
   // 源文件已清理 → 拒绝并带重新上传指引
   fs.unlinkSync(srcFile);

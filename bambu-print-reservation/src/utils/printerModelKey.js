@@ -49,6 +49,23 @@ function modelMatch(machineModel, registeredModel) {
   return a === b || a.startsWith(b) || b.startsWith(a);
 }
 
+/**
+ * 切片件机型相容判定（2026-11-06 曼波令「锁死机型选择」唯一口径）：
+ * 同型号（modelMatch）或 config.machineCompatGroups 组内互认——组表默认空=严格同型号，
+ * 仅真机实证互打兼容后才登记。前后端两份同逻辑（浏览器无 require，挂 window），
+ * **改一处必须同步另一处**（本文件头部注释的既有约定）。
+ * @param {string} machineModel 切片内嵌机型串
+ * @param {string} registeredModel 登记打印机型号串
+ * @param {Record<string,string[]>} [compatGroups] 互打白名单（config.machineCompatGroups）
+ */
+function modelCompatible(machineModel, registeredModel, compatGroups) {
+  if (modelMatch(machineModel, registeredModel)) return true;
+  const a = modelKey(machineModel);
+  const extra = (compatGroups && compatGroups[a]) || [];
+  const b = modelKey(registeredModel);
+  return extra.includes(b);
+}
+
 /** 机型串 → 品牌族（bambu/flashforge/unknown）：查表优先，未知 key 再按原始串前缀猜 */
 function modelBrand(model) {
   const key = modelKey(model);
@@ -59,4 +76,4 @@ function modelBrand(model) {
   return 'unknown';
 }
 
-module.exports = { modelKey, modelMatch, CANON, BRAND_OF_KEY, modelBrand };
+module.exports = { modelKey, modelMatch, modelCompatible, CANON, BRAND_OF_KEY, modelBrand };

@@ -164,12 +164,12 @@
         <div><label>材料类型（可空——留空则按需求标签自动反推可用材料）</label><input type="text" id="materialType" list="materialList" placeholder="如 PLA / PETG / PLA-CF，不知道就留空" oninput="preflight()"><datalist id="materialList">
           <option>PLA</option><option>PLA-CF</option><option>PLA-Aero</option><option>PETG</option><option>PETG-CF</option><option>ABS</option><option>ASA</option><option>PA</option><option>PA-CF</option><option>PC</option><option>TPU</option><option>PVA</option>
         </datalist></div>
-        <div><label>颜色（多色件用 + 列全，如 白色+黑色，需勾选「多色打印」）</label><input type="text" id="color" list="colorList" placeholder="点选或输入，如 黑色 或 白色+黑色" oninput="colorHintCheck()"><datalist id="colorList"></datalist><div class="hint" id="colorHint"></div></div>
-        <div><label>份数</label><input type="number" id="quantity" value="1" min="1" max="99"></div>
+        <div><label>颜色（多色件用 + 列全，如 白色+黑色，需勾选「多色打印」）</label><input type="text" id="color" list="colorList" placeholder="点选或输入，如 黑色 或 白色+黑色" oninput="colorHintCheck()"><datalist id="colorList"></datalist><div id="colorSwatchBox" style="display:none;margin-top:6px"></div><div class="hint" id="colorHint"></div></div>
+        <div><label>份数</label><input type="number" id="quantity" value="1" min="1" max="99"><div class="hint" id="quantityHint"></div></div>
         <div id="assignedPrinterBox"><label>指定打印机（STEP/STL 模型直投可留空自动匹配；<b>切片文件锁定内嵌机型</b>，审批时须指定同型号机）</label><input type="text" id="assignedPrinter" list="printerNameList" placeholder="如 X1C-01，模型直投可留空"><datalist id="printerNameList"></datalist></div>
       </div>
       <div class="row">
-        <div><label>模型 / 切片文件 *（.stl/.step/.stp 走需求链路+<b>3D 工况标注</b>：载荷/支撑/受弯在 3D 视图点选，自动定档；.obj 手勾工况；.3mf=拓竹直通 / .gcode=闪铸直通）</label><input type="file" id="file" accept=".stl,.step,.stp,.3mf,.obj,.gcode,.gx,.g"></div>
+        <div><label>模型 / 切片文件 *（.stl/.step/.stp 走需求链路+<b>3D 工况标注</b>：载荷/支撑/受弯在 3D 视图点选，自动定档；.obj 手勾工况；<b>切片直通=.3mf（拓竹/闪铸皆可）</b>——机型按文件内嵌指纹锁定；2026-11-06 起不再接受纯 .gcode，请导出 .gcode.3mf）</label><input type="file" id="file" accept=".stl,.step,.stp,.3mf,.obj"></div>
       </div>
       <div class="preview" id="slicedNotice" style="display:none">📦 <b>切片产物审批直通模式</b>——3mf（拓竹）/ gcode（闪铸）的切片参数已内嵌文件，无需工况定档；<b>下方工况勾选与 3D 标注为选填</b>（填了用于入库训练样本/后续拟合，不改变直通切片参数）。注意：3mf 只能去拓竹机、gcode 只能去闪铸机，选错品牌会被自动匹配忽略</div>
       <div class="preview" id="modelPanel" style="display:none"></div>
@@ -335,6 +335,7 @@ let TAXONOMY = null;
 let ME = null;
 let authMode = 'login';
 let COLORS = [];         // 颜色字典（/api/print/colors，datalist + 未识别提示）
+let COLOR_MAP = {};      // 色名↔RGB 表（v97 切片色板最近色命名提示）
 let PRINTER_NAMES = []; // 已登记打印机名（/api/printers，指定打印机 datalist 与 givenUp 恢复下拉）
 let GIVEN_UP_IDS = new Set(); // 放弃池单号集合（列表行显形用，loadGivenUp 刷新）
 const $ = (id) => document.getElementById(id);
@@ -925,23 +926,84 @@ function clearSelection() {
  *  无标注的纯 3mf 入库训练无意义；直通单的勾选不作定档、仅作样本底料，冲突免检） */
 function isSlicedFile() {
   const f = $('file').files[0];
-  return !!f && /\.(3mf|gcode|gx|g)$/i.test(f.name);
+  return !!f && /\.3mf$/i.test(f.name); // 2026-11-06 曼波令终裁:纯 gcode 封死,切片件=3mf 单口径
 }
 function updateSlicedMode() {
+  const f = $('file') && $('file').files[0];
+  if (f && /\.(gcode|gx|g)$/i.test(f.name)) {
+    toast('不再接受纯 .gcode 文件——请在切片软件完成切片后「导出切片文件」（.gcode.3mf）再提交');
+    $('file').value = '';
+  }
   const sliced = isSlicedFile();
   $('taxonomy').style.display = 'block';
   $('slicedNotice').style.display = sliced ? 'block' : 'none';
-  // 指定打印机栏仅模型直投（STEP/STL）显示（2026-10-28 曼波令）：切片件按内嵌机型锁定，
-  // 用户选了也无意义（自动分发收窄后留空同样派不出去）——审批台会按内嵌机型指定
-  $('assignedPrinterBox').style.display = sliced ? 'none' : '';
-  if (sliced) { $('conflictHint').textContent = ''; $('assignedPrinter').value = ''; }
-  else preflight();
+  // 指定打印机栏常显（2026-11-06 曼波令「交切片文件锁死机型选择」）：切片件按服务端
+  // 探测名单锁定（同型号+互打白名单），模型直投给拓竹机（分发时现场切片）。旧版整栏
+  // 隐藏（2026-10-28）被探测锁定替代——用户在锁死范围内明确选机，比「交了等审批」直观
+  $('assignedPrinterBox').style.display = '';
+  if (sliced) { $('conflictHint').textContent = ''; probeSlicedModel(); }
+  else { releaseSlicedLocks(); SLICED_PROBE = null; $('assignedPrinter').value = ''; preflight(); refreshPrinterDatalist(); updateAssignedPrinterHint(); }
   updateLoadGroupMode();
-  refreshPrinterDatalist(); // 指定打印机候选随文件品牌过滤（2026-10-16）
 }
 
-/** 指定打印机候选按文件品牌过滤（2026-10-16 曼波反馈批）：跨品牌切片格式不兼容，
- *  datalist 只给同品牌机型（3mf→拓竹 / gcode 系→闪铸；无文件时给全量） */
+// ---------- 切片件机型探测与锁定（2026-11-06 曼波令） ----------
+// 选切片文件即调 probe-model：服务端从 gcode 头部/3mf 内嵌提取机型 + 互打白名单组，
+// 回「允许的登记机名单」——兼容组逻辑只活在后端，前端零机型判断。探测失败/无指纹
+// 时前端不猜品牌（给全量+提示转人工），锁死由提交/审批链 fail-closed 兜底。
+
+let SLICED_PROBE = null; // {machineModel, allowedPrinters:[{name,model}], estMinutes}
+
+async function probeSlicedModel() {
+  const file = $('file') && $('file').files[0];
+  SLICED_PROBE = null;
+  if (!file || !isSlicedFile()) { releaseSlicedLocks(); refreshPrinterDatalist(); updateAssignedPrinterHint(); return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/print/probe-model', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (r.ok && j.ok) { SLICED_PROBE = j; applySlicedLocks(); }
+    else { releaseSlicedLocks(); console.warn('[机型探测]', j.error || ('HTTP ' + r.status)); }
+  } catch (err) { releaseSlicedLocks(); console.warn('[机型探测] 失败:', err.message); }
+  refreshPrinterDatalist();
+  updateAssignedPrinterHint();
+}
+
+function updateAssignedPrinterHint() {
+  const label = document.querySelector('#assignedPrinterBox label');
+  if (!label) return;
+  if (isSlicedFile() && SLICED_PROBE && SLICED_PROBE.machineModel) {
+    const names = (SLICED_PROBE.allowedPrinters || []).map((p) => p.name).join('、') || '（机队暂无此机型——提交后将排队等待该型号机或人工安排）';
+    // v97 喷嘴口径对照 + 切片器告警红标（机端实装来自 /api/printers 实时状态；硬拦在提交口初审）
+    let extra = '';
+    const noz = Array.isArray(SLICED_PROBE.nozzleDiameters) ? SLICED_PROBE.nozzleDiameters : [];
+    if (noz.length) {
+      const fleet = (window.__printers || []).filter((p) => (SLICED_PROBE.allowedPrinters || []).some((a) => a.name === p.name));
+      const known = fleet.filter((p) => Array.isArray(p.nozzleDiameters) && p.nozzleDiameters.length);
+      const cover = known.length && known.some((p) => noz.every((d) => p.nozzleDiameters.includes(d)));
+      if (known.length && !cover) {
+        extra += `<div style="color:#e5484d;font-weight:600">⛔ 喷嘴口径不匹配：切片 ${esc(noz.join('/'))}，机端实装 ${esc(known.map((p) => `${p.name}(${p.nozzleDiameters.join('/')})`).join('、'))}——机端会拒打，请回切片软件切换到 ${esc(known[0].nozzleDiameters.join('/'))} 工艺档重新导出</div>`;
+      } else if (known.length) {
+        extra += `<div style="color:var(--accent)">切片喷嘴口径：${esc(noz.join('/'))}（机端实装 ${esc(known.map((p) => p.nozzleDiameters.join('/')).join('、'))} ✓）</div>`;
+      } else {
+        extra += `<div style="color:var(--accent)">切片喷嘴口径：${esc(noz.join('/'))}（机端实装未知，提交时校验）</div>`;
+      }
+    }
+    const warns = Array.isArray(SLICED_PROBE.sliceWarnings) ? SLICED_PROBE.sliceWarnings : [];
+    if (warns.length) {
+      extra += `<div style="color:#e5484d">⚠ 切片器告警：${warns.map((w) => esc(w.msg) + (w.errorCode ? `（${esc(w.errorCode)}）` : '')).join('；')}</div>`;
+    }
+    label.innerHTML = `已识别切片机型：<b>${esc(SLICED_PROBE.modelDisplay || SLICED_PROBE.machineModel)}</b>——可选：${esc(names)}。机型已锁定，跨机型提交会被拒${extra}`;
+  } else if (isSlicedFile()) {
+    label.innerHTML = '切片文件无法识别内嵌机型（老切片器产物/外来件）——<b>请勿随意选机</b>，选错将被拒；无法确认时留空转人工审批';
+  } else {
+    label.innerHTML = '指定打印机（STEP/STL 模型直投可留空自动匹配；<b>切片文件锁定内嵌机型</b>，审批时须指定同型号机）';
+  }
+}
+
+/** 指定打印机候选过滤（2026-10-16 品牌过滤 → 2026-11-06 机型锁定改版）：切片件只给
+ *  服务端探测名单（内嵌机型+互打组）；模型直投给拓竹机（闪铸需预先切好 gcode，
+ *  分发链不接受模型直投——2026-10-28 口径）。探测失败/无指纹给全量（不按扩展名猜品牌） */
 function refreshPrinterDatalist() {
   const el = $('printerNameList');
   if (!el) return;
@@ -949,9 +1011,15 @@ function refreshPrinterDatalist() {
   const file = $('file') && $('file').files[0];
   let list = printers;
   if (file && printers.length) {
-    const ff = /\.(gcode|gx|g)$/i.test(file.name);
-    const filtered = printers.filter((p) => Boolean(p.brand === 'flashforge') === ff);
-    if (filtered.length) list = filtered;
+    if (isSlicedFile()) {
+      if (SLICED_PROBE && SLICED_PROBE.allowedPrinters && SLICED_PROBE.machineModel) {
+        const allowed = new Set(SLICED_PROBE.allowedPrinters.map((p) => p.name));
+        list = printers.filter((p) => allowed.has(p.name));
+      } // 无探测结果：全量 + 提示（不猜）
+    } else {
+      const filtered = printers.filter((p) => p.brand !== 'flashforge');
+      if (filtered.length) list = filtered;
+    }
   }
   el.innerHTML = list.map((p) => `<option value="${esc(p.name)}">`).join('');
 }
@@ -1035,7 +1103,7 @@ function collectSelection() {
  *  当场提示避免「明明选了色却匹配到别的颜色的机器」的静默降级 */
 function colorHintCheck() {
   const hint = $('colorHint');
-  if (isSlicedFile()) { hint.textContent = ''; return; }
+  if (isSlicedFile() && $('color').readOnly) { hint.textContent = ''; return; } // 色板接管时提示由色板区管
   const raw = $('color').value.trim();
   if (!raw) { hint.textContent = ''; return; }
   const bad = raw.split(/[+＋/、,，]/).map(s => s.trim())
@@ -1050,9 +1118,105 @@ async function loadColors() {
     if (!res.ok) return;
     const data = await res.json();
     COLORS = data.colorNames || [];
+    COLOR_MAP = data.colorMap || {};
     $('colorList').innerHTML = COLORS.map(c => `<option value="${esc(c)}">`).join('');
     colorHintCheck();
   } catch { /* 字典拉不到则不做前置提示，后端警告兜底 */ }
+}
+
+// ---------- v97 切片栏锁死（曼波令：材料/份数随文件锁定，表单只留颜色可指定） ----------
+
+function slicedFilaments() {
+  return (SLICED_PROBE && Array.isArray(SLICED_PROBE.filaments)) ? SLICED_PROBE.filaments : [];
+}
+
+/** hex 色距（前端近似，与后端 redmean 同量级——只用于色板命名提示，不参与分发判定） */
+function colorDistHex(a, b) {
+  const n = (h, i) => parseInt(h.slice(i, i + 2), 16);
+  return Math.sqrt(2 * (n(a, 0) - n(b, 0)) ** 2 + 4 * (n(a, 2) - n(b, 2)) ** 2 + 3 * (n(a, 4) - n(b, 4)) ** 2);
+}
+
+function nearestColorName(hex) {
+  let best = null;
+  let bestD = Infinity;
+  for (const [name, rgb] of Object.entries(COLOR_MAP || {})) {
+    if (!Array.isArray(rgb) || rgb.length < 3) continue;
+    const h = ((rgb[0] << 16) | (rgb[1] << 8) | rgb[2]).toString(16).padStart(6, '0').toUpperCase();
+    const d = colorDistHex(h, hex);
+    if (d < bestD) { bestD = d; best = name; }
+  }
+  return bestD <= 120 ? best : null;
+}
+
+/** 切片件锁死材料/份数（probe 成功即调用；file 换掉/探测失败在 releaseSlicedLocks 解锁） */
+function applySlicedLocks() {
+  const mats = [...new Set(slicedFilaments().map(f => String(f.type || '').trim()).filter(Boolean))];
+  const mt = $('materialType');
+  mt.value = mats.join('+');
+  mt.readOnly = true;
+  const q = $('quantity');
+  q.value = 1;
+  q.readOnly = true;
+  $('quantityHint').textContent = '切片件固定 1 份——多份请回切片器排盘，或打完用「复刻」';
+  renderColorSwatches();
+}
+
+function releaseSlicedLocks() {
+  $('materialType').readOnly = false;
+  const q = $('quantity');
+  q.readOnly = false;
+  $('quantityHint').textContent = '';
+  $('colorSwatchBox').style.display = 'none';
+  $('color').readOnly = false;
+}
+
+/** 机端实时色板（只显示锁定机型机队当前 AMS/外挂装料；料位不可得回退自由输入 fail-open） */
+function renderColorSwatches() {
+  const box = $('colorSwatchBox');
+  const input = $('color');
+  const allowed = new Set(((SLICED_PROBE && SLICED_PROBE.allowedPrinters) || []).map(p => p.name));
+  const seen = new Set();
+  const opts = [];
+  for (const p of (window.__printers || [])) {
+    if (!allowed.has(p.name) || !Array.isArray(p.ams)) continue;
+    for (const t of p.ams) {
+      const hex = String(t.colorHex || '').replace('#', '').slice(0, 6).toUpperCase();
+      if (!hex || !t.type || !/^[0-9A-F]{6}$/.test(hex)) continue;
+      const key = hex + '|' + String(t.type).toUpperCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      opts.push({ hex, type: t.type, printer: p.name });
+    }
+  }
+  if (!opts.length) {
+    box.style.display = 'none';
+    input.readOnly = false;
+    $('colorHint').textContent = '机端料位暂不可得——可手输色名或 #RRGGBB，或留空按文件内嵌色分发';
+    return;
+  }
+  input.readOnly = true;
+  box.style.display = 'block';
+  const multi = slicedFilaments().length > 1;
+  const cur = String(input.value || '').replace('#', '').toUpperCase();
+  box.innerHTML = `<div class="hint">点选打印颜色（机队 ${esc([...allowed].join('、'))} 当前装料${multi ? '；多用料件对第一条用料生效，其余随切片文件' : ''}——色差超阈值自动降级为最近色并在单据轨迹注明）：</div>`
+    + `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:4px">`
+    + opts.map(o => `<span title="${esc(o.type)}｜${esc(o.printer)}" onclick="pickSlicedColor('${o.hex}')" style="cursor:pointer;width:32px;height:22px;border-radius:5px;display:inline-block;background:#${o.hex};border:2px solid ${cur === o.hex ? 'var(--accent)' : 'rgba(255,255,255,.15)'}"></span>`).join('')
+    + `</div><div class="hint" id="slicedColorName"></div>`;
+  updateSlicedColorName();
+}
+
+function pickSlicedColor(hex) {
+  $('color').value = '#' + hex;
+  renderColorSwatches();
+}
+
+function updateSlicedColorName() {
+  const el = $('slicedColorName');
+  if (!el) return;
+  const hex = String($('color').value || '').replace('#', '').toUpperCase();
+  if (!/^[0-9A-F]{6}$/.test(hex)) { el.textContent = ''; return; }
+  const name = nearestColorName(hex);
+  el.textContent = `已选：${name ? name + '（#' + hex + '）' : '#' + hex}——分发按此色匹配机端料槽`;
 }
 
 function preflight() {
@@ -1158,6 +1322,14 @@ function submitReservation() {
   if (!file) return toast('请选择模型/切片文件');
   const gate = preflight();
   if (gate.length) return toast(gate.join('；'));
+  // 切片件机型锁定（2026-11-06 曼波令）：探测名单有指纹时，手打的机名也必须在名单内
+  // ——datalist 只是建议，文本框可自由输入，锁死在这里兜住（后端提交/审批链再拦一次）
+  if (isSlicedFile() && SLICED_PROBE && SLICED_PROBE.machineModel && (SLICED_PROBE.allowedPrinters || []).length) {
+    const chosen = $('assignedPrinter').value.trim();
+    if (chosen && !SLICED_PROBE.allowedPrinters.some((p) => p.name === chosen)) {
+      return toast(`「${chosen}」与切片机型 ${SLICED_PROBE.machineModel} 不兼容——只能选：${SLICED_PROBE.allowedPrinters.map((p) => p.name).join('、')}`);
+    }
+  }
   // 显式配对提醒（2026-10-28 曼波令）：切片直通件提交前拦一次问源文件
   if (isSlicedFile() && !SOURCE_FILE) return askSourceFileThenSubmit(file);
   doSubmit();
@@ -1242,7 +1414,11 @@ async function loadList() {
       + (expandedParams.has(r.id) && paramEntries.length > 8 ? ` <span class="paramToggle" onclick="toggleParam('${r.id}')">收起</span>` : '');
     const srcTag = r.processParams ? '' : (r.embeddedParams
       ? `<b>3mf 直通</b>（内嵌: ${Object.entries(r.embeddedParams.params || {}).slice(0, 6).map(([k, v]) => esc((PARAM_LABELS[k] || k) + '=' + v)).join(' · ')}${Object.keys(r.embeddedParams.params || {}).length > 6 ? ' …' : ''}${r.estMinutes ? '｜预计 ' + fmtMins(r.estMinutes) : ''}）<br>`
-      : '<b>3mf 直通</b>（切片参数内嵌）<br>');
+      : '<b>3mf 直通</b>（切片参数内嵌）<br>')
+      // v97 切片器告警红标 + 喷嘴口径（建议级随单展示，审批人心里有数）
+      + ((r.embeddedParams && Array.isArray(r.embeddedParams.sliceWarnings) && r.embeddedParams.sliceWarnings.length)
+        ? `<span style="color:#e5484d">⚠ 切片告警×${r.embeddedParams.sliceWarnings.length}${Array.isArray(r.embeddedParams.nozzleDiameters) && r.embeddedParams.nozzleDiameters.length ? `｜喷嘴 ${esc(r.embeddedParams.nozzleDiameters.join('/'))}` : ''}</span><br>`
+        : '');
     const rules = (r.appliedRules || []).map(x => esc(x.reason)).join('；');
     // 状态轨迹折叠（2026-10-08 展示优化）：默认最近 2 条，展开全部（跨 15s 刷新保留）
     const histAll = (r.history || []);
@@ -1261,9 +1437,9 @@ async function loadList() {
     // 分发异常被取消后可免重传一键重开；服务端 reprint 本就不限状态，只查文件保留期）
     const reprintBtn = ['已完成', '已取消'].includes(r.status)
       ? `<button class="mini" onclick="reprint('${r.id}')">复刻</button>` : '';
-    // 取件回执（2026-10-28 曼波令「打完要回执才行」）：已完成单确认已取走——
-    // 清该机回执闸，队列下一件才开打；本人或 reviewer 可点
-    const receiptBtn = r.status === '已完成' && !r.receipt && (mine || isReviewer())
+    // 取件回执（2026-10-28 曼波令「打完要回执才行」；v99 放宽「所有人可确认」）：已完成单
+    // 确认已取走——清该机回执闸队列继续；任何登录用户可点（实验室公共空间互相搭把手）
+    const receiptBtn = r.status === '已完成' && !r.receipt
       ? `<button class="mini" onclick="ackReceipt('${r.id}')">确认取件</button>` : '';
     const receiptTag = r.status === '已完成'
       ? (r.receipt ? `<br><span class="detail">📦 已回执（${esc(r.receipt.by)}）</span>` : '<br><span class="detail" style="color:var(--warn)">📦 待取件回执</span>')
@@ -1498,6 +1674,7 @@ async function loadPrinters() {
   window.__printers = printers; // 列表行内实时进度 join 用
   PRINTER_NAMES = printers.map(p => p.name); // 指定打印机 datalist + givenUp 恢复下拉共用
   refreshPrinterDatalist();
+  if (SLICED_PROBE) renderColorSwatches(); // v97 机端料位刷新 → 色板随实况重渲染
   const box = $('printerList');
   if (!Array.isArray(printers) || !printers.length) { box.innerHTML = '<div class="empty">暂无登记的打印机（.env PRINTER_HOSTS）</div>'; return; }
   const ST = { '空闲': 'var(--ok)', '打印中': '#d95f2b', '暂停': '#d9b32b', '已完成': 'var(--ok)', '故障': 'var(--bad)', '未连接': '#98a4b0', '准备中': 'var(--warn)', '切片中': 'var(--warn)' };

@@ -221,6 +221,7 @@ class PrinterManager {
       lights: status.lights,
       hms: status.hms || [],
       nozzles: status.nozzles || null,
+      nozzleDiameters: status.nozzleDiameters || null, // 机端实装喷嘴口径（v97 喷嘴硬校验）
       amsUnits: typeof client.getAmsUnits === 'function' ? client.getAmsUnits() : [],
       layerNum: status.layerNum || 0,
       totalLayers: status.totalLayers || 0,

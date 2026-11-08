@@ -292,7 +292,11 @@ function renderPending(list) {
     const params = paramEntries.slice(0, 10).map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ');
     const srcTag = r.processParams ? '' : (r.embeddedParams
       ? `<span class="detail">📦 3mf 直通（内嵌: ${Object.entries(r.embeddedParams.params || {}).slice(0, 5).map(([k, v]) => esc((PARAM_LABELS[k] || k) + '=' + v)).join(' · ')}${Object.keys(r.embeddedParams.params || {}).length > 5 ? ' …' : ''}${r.estMinutes ? '｜预计 ' + fmtMins(r.estMinutes) : ''}）</span>`
-      : '<span class="detail">📦 3mf 直通（切片参数内嵌）</span>');
+      : '<span class="detail">📦 3mf 直通（切片参数内嵌）</span>')
+      // v97 切片器告警红标 + 喷嘴口径（建议级随单展示）
+      + ((r.embeddedParams && Array.isArray(r.embeddedParams.sliceWarnings) && r.embeddedParams.sliceWarnings.length)
+        ? ` <span style="color:#e5484d">⚠ 切片告警×${r.embeddedParams.sliceWarnings.length}${Array.isArray(r.embeddedParams.nozzleDiameters) && r.embeddedParams.nozzleDiameters.length ? `｜喷嘴 ${esc(r.embeddedParams.nozzleDiameters.join('/'))}` : ''}</span>`
+        : '');
     const rules = (r.appliedRules || []).map((x) => esc(x.reason)).join('；');
     const pmLine = modelProvenanceSummary(r.modelProvenance);
     const hist = (r.history || []).slice(-2).map((h) => `${esc((h.at || '').replace('T', ' ').slice(5, 16))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).join(' ｜ ');
@@ -475,6 +479,8 @@ async function openOverviewDetail(id) {
     <div class="qline"><span class="lbl">需求</span>${ovNeedCell(rec)}${rec.assignedPrinter || rec.printer ? `<span class="lbl" style="margin-left:12px">机位</span>${esc(rec.assignedPrinter || rec.printer)}` : ''}${rec.estMinutes ? `<span class="lbl" style="margin-left:12px">预计</span>${fmtMins(rec.estMinutes)}` : ''}</div>
     ${params ? `<div class="qline"><span class="lbl">参数</span>${params}${paramEntries.length > 12 ? ` <span class="detail">…共 ${paramEntries.length} 项</span>` : ''}</div>` : ''}
     ${rec.embeddedParams ? `<div class="qline"><span class="lbl">3mf 内嵌</span><span class="detail">${esc(Object.entries(rec.embeddedParams.params || {}).slice(0, 6).map(([k, v]) => (PARAM_LABELS[k] || k) + '=' + v).join(' · '))}${Object.keys(rec.embeddedParams.params || {}).length > 6 ? ' …' : ''}</span></div>` : ''}
+    ${rec.embeddedParams && Array.isArray(rec.embeddedParams.nozzleDiameters) && rec.embeddedParams.nozzleDiameters.length ? `<div class="qline"><span class="lbl">切片喷嘴</span><span class="detail">${esc(rec.embeddedParams.nozzleDiameters.join('/'))}</span></div>` : ''}
+    ${rec.embeddedParams && Array.isArray(rec.embeddedParams.sliceWarnings) && rec.embeddedParams.sliceWarnings.length ? `<div class="qline"><span class="lbl" style="color:#e5484d">切片告警</span><span class="detail" style="color:#e5484d">${esc(rec.embeddedParams.sliceWarnings.map((w) => w.msg + (w.errorCode ? `（${w.errorCode}）` : '')).join('；'))}（建议级）</span></div>` : ''}
     <div style="margin-top:10px"><b class="detail">📜 完整轨迹（${(rec.history || []).length} 条）</b>
       ${histRows ? '<table><thead><tr><th>时间</th><th>流转</th><th>备注</th></tr></thead><tbody>' + histRows + '</tbody></table>' : '<div class="detail">无轨迹记录</div>'}</div>
     <div class="actions" style="justify-content:flex-end"><button class="mini" id="ovDetailClose">关闭</button></div>`;

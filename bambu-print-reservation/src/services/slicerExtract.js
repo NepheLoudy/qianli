@@ -177,6 +177,37 @@ function parseFilaments(zip) {
 }
 
 /**
+ * slice_info.config 附加指纹（2026-11-06 v97 曼波令「喷嘴/打印板错误拒绝预约」）：
+ *  - nozzle_diameters：切片喷嘴口径（逗号分隔，多喷头 H2D 形如 "0.4,0.4"）——硬约束，
+ *    文件 0.2 落 0.4 实装机=机端秒 FAILED 83902535（R20261106-008/-009 实案）；
+ *  - sliceWarnings：<warning> 告警清单（热床/喷嘴硬度等）——**建议级**（1000C001/
+ *    1000C002 昨晚成功件同样携带并照打成功），不拦提交，只随单红标展示。
+ * 解析失败按无附加处理（不推翻既有闸门结论）。
+ */
+function parseSliceInfoExtras(zip) {
+  const out = { nozzleDiameters: [], sliceWarnings: [] };
+  try {
+    const e = zip.getEntry('Metadata/slice_info.config');
+    if (!e || entrySize(e) > MAX_CONFIG_BYTES) return out;
+    const xml = e.getData().toString('utf8');
+    const nm = /key="nozzle_diameters"\s+value="([^"]+)"/.exec(xml);
+    if (nm) {
+      out.nozzleDiameters = nm[1]
+        .split(',')
+        .map((s) => Number(String(s).trim()))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    }
+    for (const m of xml.matchAll(/<warning\s([^>]*?)\/?>/g)) {
+      const attrs = {};
+      for (const a of m[1].matchAll(/([\w-]+)\s*=\s*"([^"]*)"/g)) attrs[a[1]] = a[2];
+      if (!attrs.msg) continue;
+      out.sliceWarnings.push({ msg: attrs.msg, level: Number(attrs.level) || 0, errorCode: attrs.error_code || '' });
+    }
+  } catch { /* 解析失败按无附加处理 */ }
+  return out;
+}
+
+/**
  * 是否真切片产物（v64）：工程 3mf（Bambu Studio 保存的工程）没有任何 plate gcode
  * 条目——此前被当直通单收下后，下发帧指向不存在的 Metadata/plate_1.gcode，机端
  * 找不到任务数据秒 FAILED（R20261031-002 实案）。提交链闸门用它打回并引导。
@@ -190,7 +221,8 @@ function hasSlicedGcode(zipOrBuffer) {
 /**
  * 提取 3mf（Buffer）→ 可映射参数 + 与 baseline 的 diff（候选规则 set 草稿）+ 预计时长
  * @returns {{ source, params: Object, raw: Object, diff: Object, estMinutes: number|null,
- *             filaments: Array<{type,colorHex,trayIdx}>, bedType: string|null }}
+ *             filaments: Array<{type,colorHex,trayIdx}>, bedType: string|null,
+ *             nozzleDiameters: number[], sliceWarnings: Array<{msg,level,errorCode}> }}
  */
 function extractFrom3mf(buffer) {
   const zip = new AdmZip(buffer);
@@ -233,7 +265,35 @@ function extractFrom3mf(buffer) {
     } catch { /* 解析失败按无内嵌处理 */ }
   }
 
-  return { source, params, raw, diff, estMinutes, filaments, bedType, machineModel, sliced: hasSlicedGcode(zip) };
+  return {
+    source, params, raw, diff, estMinutes, filaments, bedType, machineModel,
+    sliced: hasSlicedGcode(zip),
+    ...parseSliceInfoExtras(zip),
+  };
 }
 
-module.exports = { extractFrom3mf, BAMBU_PARAM_MAP, parseEstimatedMinutes, parseFilaments, hasSlicedGcode };
+/**
+ * 纯 .gcode 头部指纹提取（2026-11-06 跨品牌误派 P0 修复）：拓竹系切片器（Orca/Bambu
+ * Studio）导出的 .gcode 头部自带 `; printer_model = <机型>`——与 3mf 内嵌机型同源。
+ * 此前 .gcode 没有任何提取，提交链 embeddedParams 为 null → 学习选机按扩展名兜底
+ * 「.gcode=闪铸」瞎猜，把拓竹 H2D 的切片派给闪铸 A5P 打出废件（R20261106-001 实案）。
+ * 头部 256KB 窗口：CONFIG_BLOCK 按字母序排参（R20261106-001 实单 printer_model 在偏移
+ * 37017——4KB 窗口会漏），Orca 完整头一般 <100KB。读取失败按无指纹处理（调用方 fail-closed）。
+ * @param {Buffer|string} buffer 文件内容（或其头部 ≥256KB）
+ * @returns {{machineModel: string|null, estMinutes: number|null}}
+ */
+function extractGcodeMeta(buffer) {
+  const head = Buffer.from(buffer).subarray(0, 256 * 1024).toString('utf8');
+  let machineModel = null;
+  const pm = /^;\s*printer_model\s*=\s*(.+)$/m.exec(head);
+  if (pm && String(pm[1]).trim()) machineModel = pm[1].trim();
+  // 预估时长与 3mf 同款注释（"; model printing time: ...; total estimated time: 17m 23s"），
+  // 复用 parseEstimatedMinutes（mBbl 分支咬得住 Orca/Bambu 风味）
+  let estMinutes = null;
+  try {
+    estMinutes = parseEstimatedMinutes(head, {});
+  } catch { /* 解析失败按无预估降级 */ }
+  return { machineModel, estMinutes };
+}
+
+module.exports = { extractFrom3mf, extractGcodeMeta, BAMBU_PARAM_MAP, parseEstimatedMinutes, parseFilaments, hasSlicedGcode };

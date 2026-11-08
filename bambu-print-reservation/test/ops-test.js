@@ -113,7 +113,7 @@ check('approveReservation:多耗材逐条槽位名服务端解析(留空=自动)
     { slot: '外挂料盘·左', type: 'PLA', colorHex: '161616', amsId: 254, trayId: 0, external: true },
   ] }];
   try {
-    const r = submitFile('multi-color.3mf', { embeddedParams: { filaments: [{ type: 'PETG' }, { type: 'PLA' }] } });
+    const r = submitFile('multi-color.3mf', { embeddedParams: { machineModel: 'H2D', filaments: [{ type: 'PETG' }, { type: 'PLA' }] } });
     await reservationService.approveReservation(r.id, '测试审批人', '', {
       assignedPrinter: '联调测试机',
       trays: [null, { slot: '外挂料盘·左' }],
@@ -123,7 +123,7 @@ check('approveReservation:多耗材逐条槽位名服务端解析(留空=自动)
     assert.deepEqual(rec.review.dispatch.trays[1], { amsId: 254, trayId: 0, slot: '外挂料盘·左' }, '槽位名解析为实时料位 id');
     assert.ok(/用料 1→自动 2→外挂料盘·左/.test(rec.history.map((s) => s.note).join('|')), '状态注记带逐条用料摘要');
     // 坏槽位名：审批硬校验当场打回（不落「已通过」）
-    const r2 = submitFile('multi-color2.3mf');
+    const r2 = submitFile('multi-color2.3mf', { embeddedParams: { machineModel: 'H2D', filaments: [{ type: 'PETG' }, { type: 'PLA' }] } });
     await assert.rejects(() => reservationService.approveReservation(r2.id, 'A', '', {
       assignedPrinter: '联调测试机', trays: [{ slot: '不存在的槽' }],
     }), /不存在或未实装/);
@@ -154,14 +154,14 @@ check('审批通过：stl/step 放行（分发链自动切片）；指定闪铸�
     );
     assert.equal(store.get(stl2.id).status, '待审批', '拦截后状态不变');
   }
-  const mf = submitFile('done.3mf');
+  const mf = submitFile('done.3mf', { embeddedParams: { machineModel: 'TEST-BAMBU-COMPAT', filaments: [] } }); // 2026-11-06 fail-closed:无指纹切片件审批被拦
   const after = await reservationService.approveReservation(mf.id, 'A', '', { assignedPrinter: '联调拓竹机' }); // 切片件须指定（2026-10-28 曼波令）
   assert.equal(after.status, '排队中', '3mf 正常通过');
 });
 
 check('审批通过 gcode 系放行(v53 双品牌:闪铸直通链)', async () => {
   for (const name of ['bracket.gcode', 'bracelet.gx', 'gear.g']) {
-    const r = submitFile(name);
+    const r = submitFile(name, { embeddedParams: { machineModel: 'AD5M Pro', filaments: [] } }); // 同上:带指纹
     const after = await reservationService.approveReservation(r.id, 'A', '', { assignedPrinter: '联调闪铸机' }); // 切片件须指定（2026-10-28 曼波令）
     assert.equal(after.status, '排队中', `${name} 应放行入队`);
   }

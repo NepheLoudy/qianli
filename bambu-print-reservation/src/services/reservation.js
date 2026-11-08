@@ -130,21 +130,36 @@ class ReservationService {
       const apiStates = printerManager.getApiStates();
       const cand = apiStates.filter((p) => p.autoDispatch
         && (['空闲', '已完成'].includes(p.status) || printerManager.canDispatchResidueFailed(p))
-        && !p.stateStale // v88：状态过期（失联）的机器不进学习选机——防幽灵空闲写死指定
-        && !require('./dispatcher')._receiptHoldHas(p.id));
-      // v88 审查修复（P2）：品牌兜底按文件扩展名推导——gcode 系（闪铸）兜 'Bambu Lab'
-      // 会在品牌硬校验必败；无内嵌机型 + gcode 系 → 按 flashforge 兜底
-      const fileIsGcode = /\.(gcode|gx|g)$/i.test(reservation.fileName || '');
-      const fallbackModel = fileIsGcode ? 'Flashforge Adventurer 5M Pro' : 'Bambu Lab';
+        && !p.stateStale); // v88：状态过期（失联）的机器不进学习选机——防幽灵空闲写死指定
+      // v99 排队池修复（曼波令）：持闸机不再隐身——选机时「有空闲机优先空机，全是持闸机
+      // 则选持闸机入队排队」（闸摘后现有滞留匹配自动开打）。原实现把持闸机踢出候选，
+      // R-011 取件闸挂 H2D 时同型号单提交即「无可用机」转人工散伙（R20261107-001/002 实案）
+      const holdHas = (id) => require('./dispatcher')._receiptHoldHas(id);
+      const candFree = cand.filter((p) => !holdHas(p.id));
+      const pool = candFree.length ? candFree : cand;
+      // v88 审查修复（P2）修订（2026-11-06 P0）：「无内嵌机型按扩展名兜底」的兜法是错的
+      // ——拓竹系切片（Orca/Bambu Studio）导出的也是 .gcode，兜 'Flashforge' 把 H2D 切片
+      // 派给闪铸 A5P 打出废件（R20261106-001 实案）。切片件的自动选机资格 = 知道真机型：
+      // 无指纹一律 fail-closed 转人工，绝不按扩展名猜品牌。
+      if (!embeddedModel) {
+        const err = new Error(
+          `「${reservation.fileName}」无机型指纹（gcode 头部无 printer_model / 3mf 无内嵌机型）——` +
+          `无法自动判定兼容机，转人工审批指定`
+        );
+        err.autoPickFail = { kind: 'noMachineModel', machineModel: null, candidates: cand.map((p) => p.name) };
+        throw err;
+      }
       const choice = require('./machineLearning').chooseMachineForSliced(
-        embeddedModel || fallbackModel,
-        cand.map((p) => ({ name: p.name, model: p.model })),
+        embeddedModel,
+        // v97：候选机带机端实装喷嘴口径（选机喷嘴硬过滤的数据源）；v99：pool=持闸机排队语义
+        pool.map((p) => ({ name: p.name, model: p.model, nozzleDiameters: p.nozzleDiameters || null })),
         store.list(),
+        (embeddedParams && embeddedParams.nozzleDiameters) || null,
       );
       if (!choice) {
-        // 候选机队为空（全部忙碌/失联/持闸）——带上内嵌机型方便人工判断
+        // 候选机队为空（全部忙碌/失联）——带上内嵌机型方便人工判断
         const err = new Error(`「${reservation.fileName}」自动选机失败：当前无任何可派单的机器（内嵌机型 ${embeddedModel || '未知'}）——转人工审批指定`);
-        err.autoPickFail = { kind: 'noCandidate', machineModel: embeddedModel || null, candidates: [] };
+        err.autoPickFail = { kind: 'noCandidate', machineModel: embeddedModel || null, candidates: cand.map((p) => p.name) };
         throw err;
       }
       // 2026-11-05（H2D 失联实案）：无同型号机时 choice.name 为 null——不再降级选中注定被
@@ -162,8 +177,13 @@ class ReservationService {
       }
       dispatch.assignedPrinter = choice.name;
       dispatch.autoBasis = choice.basis;
+      // v99：选中持闸机=排队语义——选机依据里注明，审批人知道单子会等闸放行
+      const chosenState = cand.find((p) => p.name === choice.name);
+      if (chosenState && holdHas(chosenState.id)) {
+        dispatch.autoBasis += '｜该机在等取件回执，本单排队待放行后自动开打';
+      }
       dispatch.autoLowConfidence = choice.lowConfidence;
-      console.log(`[自动分发] ${reservation.id} 机型学习选机 → ${choice.name}（${choice.basis}）`);
+      console.log(`[自动分发] ${reservation.id} 机型学习选机 → ${choice.name}（${dispatch.autoBasis}）`);
     }
     const pref = {};
     if (dispatch.assignedPrinter) {
@@ -177,15 +197,38 @@ class ReservationService {
       if (prBrand !== fileBrand) {
         throw new Error(`「${pr.name}」是${prBrand === 'flashforge' ? '闪铸' : '拓竹'}机型，打不了${fileBrand === 'flashforge' ? '闪铸 gcode 系' : '拓竹 3mf'}格式的文件——两品牌切片格式互不兼容。请改选对应品牌机型、留空自动匹配，或用目标机型的切片软件重新导出`);
       }
-      // 机型相容硬校验（2026-10-28 曼波令「自动分发只对纯 step 有效」）：切片文件内嵌机型
-      // 锁定切片 profile——指定同品牌但错型号（A1 mini 的件指到 X1C）同样机端 preset 不匹配。
-      // 归一用公共模块 printerModelKey（X1 Carbon↔X1C 全称缩写等别名收敛）——与初审/审批台
-      // 前端三处同源；无内嵌机型（老文件/提取失败）跳过不拦
+      // 机型相容硬校验（2026-10-28 曼波令「自动分发只对纯 step 有效」；2026-11-06 收口）：
+      // 切片文件内嵌机型锁定切片 profile——指定同品牌但错型号（A1 mini 的件指到 X1C）同样
+      // 机端 preset 不匹配。归一用公共模块 printerModelKey（X1 Carbon↔X1C 全称缩写等别名收敛）
+      // ——与初审/审批台前端三处同源。**无内嵌机型的切片件也拦（fail-closed）**：老文件/
+      // 提取失败时扩展名兜底猜品牌已被证伪（R20261106-001 H2D 切片被兜成闪铸实案）——
+      // 无法确认机型就转人工/让申请人重新导出，绝不放行猜。
       const embeddedModel = reservation.embeddedParams && reservation.embeddedParams.machineModel;
-      if (!isUnslicedFile(reservation) && embeddedModel) {
-        const { modelMatch: modelCompatible } = require('../utils/printerModelKey');
-        if (!modelCompatible(embeddedModel, pr.model)) {
+      if (!isUnslicedFile(reservation)) {
+        const { modelCompatible } = require('../utils/printerModelKey');
+        if (!embeddedModel) {
+          throw new Error(`「${reservation.fileName}」无法识别内嵌机型指纹（老切片器产物或提取失败）——不能确认与「${pr.name}」机型兼容，请用切片软件重新导出后再提交`);
+        }
+        if (!modelCompatible(embeddedModel, pr.model, config.machineCompatGroups)) {
           throw new Error(`切片文件内嵌机型「${embeddedModel}」，与指定的「${pr.name}」（${pr.model}）不同型号——切片 profile 已锁死，跨型号打印会机端拒收/参数错配。请指定${embeddedModel}对应的登记机，或用「${pr.model}」重新切片后提交`);
+        }
+        // 喷嘴口径硬校验（v97）：同型号也可能口径不符——文件 0.2 落 0.4 实装机端秒 FAILED
+        // （R20261106-008/-009 实案）。已知实装且不覆盖文件口径 → 审批当场拦（机端未知实装
+        // 不拦，分发时刻实况为准）
+        const fileNozzles = reservation.embeddedParams && Array.isArray(reservation.embeddedParams.nozzleDiameters)
+          ? reservation.embeddedParams.nozzleDiameters.filter((n) => Number.isFinite(n) && n > 0)
+          : [];
+        if (fileNozzles.length) {
+          const apiState = printerManager.getApiStates().find((p) => p.id === pr.id);
+          const installed = apiState && Array.isArray(apiState.nozzleDiameters) && apiState.nozzleDiameters.length
+            ? apiState.nozzleDiameters
+            : null;
+          if (installed) {
+            const { nozzlesCover } = require('./machineLearning');
+            if (!nozzlesCover(fileNozzles, installed)) {
+              throw new Error(`切片喷嘴口径（${fileNozzles.join('/')}）与「${pr.name}」实装喷嘴（${installed.join('/')}）不匹配——机端会拒打（R20261106-008/-009 实案）。请回切片软件切换到 ${installed.join('/')} 喷嘴工艺档后重新导出，或改指其他同口径机`);
+            }
+          }
         }
       }
       pref.assignedPrinter = dispatch.assignedPrinter;
@@ -368,6 +411,12 @@ class ReservationService {
     const pick = (key, fallback) => (overrides[key] !== undefined && overrides[key] !== null && overrides[key] !== ''
       ? overrides[key] : fallback);
     const materialType = pick('materialType', src.materialType);
+    // 纯 gcode 存量单一律拒复刻（2026-11-06 曼波令终裁「gcode 封死」）：纯刀轨无网格/
+    // 参数配对进不了训练回路，拓竹机也不支持裸 gcode 直发（84033581）——两品牌统一
+    // 走 .gcode.3mf，请申请人重新导出后重新提交
+    if (/\.(gcode|gx|g)$/i.test(String(src.fileName || ''))) {
+      throw new Error(`「${src.fileName}」是纯 gcode 存量单——系统已不再支持该格式，请在切片软件重新导出切片文件（.gcode.3mf）后重新提交`);
+    }
     const isSliced = /\.3mf$/i.test(String(src.fileName || ''));
 
     let applied = null;
@@ -378,6 +427,31 @@ class ReservationService {
         const err = new Error('需求勾选存在硬冲突（规则库可能已更新）');
         err.details = { errors: applied.errors, warnings: applied.warnings };
         throw err;
+      }
+    }
+
+    // 机型指纹随复刻补提（2026-11-06 P0 修复）：源单若无 embeddedParams（老 gcode 单/
+    // 指纹提取时代的早期单），复刻时对刚复制的文件现场提取——否则复刻单同样无指纹，
+    // 学习选机 fail-closed 转人工之外，人工指定拓竹机还会被 brandForFile 扩展名兜底
+    // （.gcode→flashforge）误拒。提取失败保持源单语义（不阻塞复刻）。
+    let embeddedParams = src.embeddedParams || null;
+    if (isSliced && (!embeddedParams || !embeddedParams.machineModel)) {
+      // 切片件=3mf 单口径（纯 gcode 已在上方拒）：补提走 extractFrom3mf
+      try {
+        const buf = fs.readFileSync(newPath);
+        const ext = require('./slicerExtract').extractFrom3mf(buf);
+        embeddedParams = {
+          source: embeddedParams && embeddedParams.source ? embeddedParams.source : ext.source,
+          params: (embeddedParams && embeddedParams.params) || ext.params || {},
+          estMinutes: (embeddedParams && embeddedParams.estMinutes) || ext.estMinutes || null,
+          bedType: ext.bedType || null,
+          filaments: ext.filaments || [],
+          machineModel: ext.machineModel || null,
+          nozzleDiameters: ext.nozzleDiameters || [], // v97 复刻补提同口径（老单复刻后也能过喷嘴校验）
+          sliceWarnings: ext.sliceWarnings || [],
+        };
+      } catch (err) {
+        console.warn(`[复刻] 机型指纹提取失败（保持源单语义）: ${err.message}`);
       }
     }
 
@@ -399,7 +473,7 @@ class ReservationService {
         spatial: src.spatial || null, // 3D 标注随复刻单携带（同几何同工况）
         processParams: applied ? applied.params : null,
         appliedRules: applied ? applied.applied : [],
-        embeddedParams: src.embeddedParams, // 3mf 直通单参数摘要随单携带
+        embeddedParams, // 直通单参数摘要随单携带（源单无指纹时上面现场补提）
         sourceRecordId: src.id, // 复刻血缘：新单指向源单（关联视图数据源）
       });
     } catch (err) {
@@ -712,6 +786,38 @@ function precheckSlicedSubmission(input = {}) {
       return { blocked: true, errors, warnings, targets: targetNames };
     }
     if (!anyTrusted) warnings.push(`同型号机（${targetNames}）状态失联，耗材初审跳过——以审批与分发时刻实况为准`);
+  }
+  // 切片器告警随单红标（v97：建议级不拦提交——1000C001 热床/1000C002 喷嘴硬度昨晚
+  // 成功件同样携带照打成功；这里只透出给前端 toast 与单据徽标，审批人心里有数。
+  // 放在喷嘴硬拦之前——blocked 路径的响应也要带上告警）
+  if (Array.isArray(input.sliceWarnings)) {
+    for (const w of input.sliceWarnings.slice(0, 5)) {
+      warnings.push(`切片器告警（建议级）：${w.msg}${w.errorCode ? `（${w.errorCode}）` : ''}`);
+    }
+  }
+  // 喷嘴口径初审（v97 曼波令「喷嘴错误拒绝预约」）：切片喷嘴 vs 机端实装——同型号机中
+  // 有已知实装的且没有一台能覆盖文件口径 → 硬拦（机端会秒 FAILED，R20261106-008/-009
+  // 实案：0.2 件落 0.4 实装 H2D）。机端未知实装（失联/缺报文）不参与判定（不误杀）。
+  const fileNozzles = Array.isArray(input.nozzleDiameters)
+    ? input.nozzleDiameters.filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+  if (fileNozzles.length) {
+    const { nozzlesCover } = require('./machineLearning');
+    const states = input.apiStates || [];
+    const nozVerdicts = targets.map((p) => {
+      const st = states.find((s) => String(s.id) === String(p.id));
+      const installed = st && Array.isArray(st.nozzleDiameters) && st.nozzleDiameters.length ? st.nozzleDiameters : null;
+      return { p, installed, ok: installed ? nozzlesCover(fileNozzles, installed) : null };
+    });
+    const nozTrusted = nozVerdicts.filter((v) => v.ok !== null);
+    if (nozTrusted.length && !nozVerdicts.some((v) => v.ok === true)) {
+      const shown = nozTrusted.map((v) => `${v.p.name}实装${v.installed.join('/')}`).join('、');
+      errors.push(
+        `切片喷嘴口径（${fileNozzles.join('/')}）与机队实装不匹配（${shown}）——机端会拒打` +
+        `（R20261106-008/-009 实案）。请回切片软件切换到 ${nozTrusted[0].installed.join('/')} 喷嘴工艺档后重新导出提交`
+      );
+      return { blocked: true, errors, warnings, targets: targetNames };
+    }
   }
   // 占用告知（放行）：目标机打印中/持闸 → 提示将排队
   const qi = input.queueInfo || {};

@@ -99,6 +99,12 @@ module.exports = {
   // 绕过终态门槛会复刻非终态单）。前端 canReprint（approve.html）显隐同口径
   reprintAllowedStatuses: ['已完成', '已取消'],
 
+  // 切片件机型互打白名单（2026-11-06 曼波令「锁死预约台机型选择，除非真的支持跨机型
+  // 互相打的」）：canon key（printerModelKey.CANON 归一）分组，组内机型互相可派——
+  // 默认空 = 严格同型号锁死。仅在真机实证互打兼容后登记（如 { p1p: ['p1'] } 形态：
+  // 键=切片机型，值=额外可打的登记机型 key）。判定源 modelCompatible 前后端同逻辑
+  machineCompatGroups: {},
+
   // ---------- 分发引擎 ----------
   dispatch: {
     // v85 自动分发（曼波令「审批功能停了，收到文件自动分发」）：提交后跳过人工审批
@@ -113,6 +119,10 @@ module.exports = {
     colorDistanceThreshold: Number(process.env.DISPATCH_COLOR_THRESHOLD || 120),
     // 兜底对账间隔（分钟）：扫描审批表补漏入队
     reconcileMinutes: Number(process.env.DISPATCH_RECONCILE_MINUTES || 2),
+    // v99 排队池修复（曼波令）：取件回执闸 TTL（小时）——打完 N 小时无人确认取件则
+    // 自动放行（人工置闸 manual-* 不受 TTL 约束），防单闸堵死整条机型队列
+    // （R20261107-001/002 实案：R-011 取件闸挂 H2D → 同型号单提交即转人工）
+    receiptTtlHours: Number(process.env.DISPATCH_RECEIPT_TTL_HOURS || 24),
     // 缺料提醒重发间隔（分钟）
     materialRemindMinutes: Number(process.env.DISPATCH_MATERIAL_REMIND_MINUTES || 30),
     // 打印下发是否使用 AMS（多色/单色均由 AMS 供料）

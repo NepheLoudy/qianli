@@ -39,17 +39,54 @@ function machineStats(records, printerName) {
 }
 
 /**
+ * 机端实装喷嘴能否覆盖切片需求（v97 曼波令「喷嘴错误拒绝预约」选机口径）：
+ * 文件要求的每档口径在机端实装里都得有。机端未知实装（空/缺报文）不拦——
+ * 提交口已对已知值硬拦，选机兜底只对已知值生效，别把状态缺失变成全机队不可用。
+ * @param {number[]} fileNozzles 切片 nozzle_diameters（[0.4] / [0.4,0.4]）
+ * @param {number[]} machineNozzles 机端实装（去重后的口径集合）
+ */
+function nozzlesCover(fileNozzles, machineNozzles) {
+  if (!Array.isArray(fileNozzles) || !fileNozzles.length) return true;
+  const m = Array.isArray(machineNozzles) ? machineNozzles.filter((n) => Number.isFinite(n) && n > 0) : [];
+  if (!m.length) return true;
+  return fileNozzles.every((d) => m.includes(d));
+}
+
+/**
  * 切片直通件机型选择（v85）。
  * @param {string} machineModel 内嵌机型串（Bambu Lab P2S 等）
  * @param {Array} candidates 候选打印机（已过品牌/空闲/回执闸过滤，元素含 name/model/status）
  * @param {Array} records 预约单全量（outcome 统计源）
+ * @param {number[]} [fileNozzles] 切片喷嘴口径（v97；空/缺省跳过喷嘴过滤）
  * @returns {{name:string|null, basis:string, lowConfidence:boolean, noSameModel?:boolean,
  *            machineModel?:string, brandCandidates?:string[]}|null} null=候选机队为空
  */
-function chooseMachineForSliced(machineModel, candidates, records) {
+function chooseMachineForSliced(machineModel, candidates, records, fileNozzles) {
   if (!candidates || !candidates.length) return null;
   // ① 同型号优先（热修63 归一口径）
-  const same = candidates.filter((p) => modelMatch(machineModel, p.model));
+  let same = candidates.filter((p) => modelMatch(machineModel, p.model));
+  // ①′ 喷嘴口径硬过滤（v97）：同型号但口径不匹配的机器不可选——文件 0.2 落 0.4 实装
+  // 机=机端秒 FAILED（R20261106-008/-009 实案）。全不匹配时带原因 fail-closed 转人工，
+  // 语义同「无同型号」：绝不静默改派注定被机端拒掉的机器。
+  if (same.length && Array.isArray(fileNozzles) && fileNozzles.length) {
+    const known = same.filter((p) => nozzlesCover(fileNozzles, p.nozzleDiameters));
+    if (!known.length) {
+      const withNoz = same.filter((p) => Array.isArray(p.nozzleDiameters) && p.nozzleDiameters.length);
+      if (withNoz.length) {
+        return {
+          name: null,
+          noSameModel: true,
+          machineModel,
+          brandCandidates: withNoz.map((p) => p.name),
+          basis: `机型「${machineModel}」同型号机喷嘴口径不匹配——切片按 ${fileNozzles.join('/')} 切，机端实装 ` +
+            `${withNoz.map((p) => `${p.name}(${p.nozzleDiameters.join('/')})`).join('、')}，机端会拒打` +
+            `（R20261106-008/-009 实案）——请回切片软件切换 ${withNoz[0].nozzleDiameters.join('/')} 喷嘴工艺档重新导出`,
+          lowConfidence: true,
+        };
+      }
+    }
+    same = known;
+  }
   if (same.length) {
     // 同型号多台：按历史成功率 + 最近使用排序
     const ranked = same.map((p) => ({ p, st: machineStats(records, p.name) }))
@@ -163,4 +200,4 @@ function slotStatsFromRecords(records, printerName) {
   return stats;
 }
 
-module.exports = { chooseMachineForSliced, chooseTrayForTask, machineStats, slotStatsFromRecords, colorDist };
+module.exports = { chooseMachineForSliced, chooseTrayForTask, machineStats, slotStatsFromRecords, colorDist, nozzlesCover };

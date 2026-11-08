@@ -185,27 +185,51 @@ function trayPreferred(tray, preferSrc) {
   });
 }
 
-/** 单条用料 → 料位映射（材料精确/家族 + 颜色 redmean 最近；无匹配回落 AMS0 槽 0 并告警） */
-function autoMapEntry(f, trays) {
+/** hex 色解析：#RRGGBB / RRGGBB → 大写 hex（其他形态返回 null——色名不走此通道） */
+function parseHexColor(s) {
+  const m = /^#?([0-9a-fA-F]{6})$/.exec(String(s || '').trim());
+  return m ? m[1].toUpperCase() : null;
+}
+
+/** 单条用料 → 料位映射（材料精确/家族 + 颜色 redmean 最近；无匹配回落 AMS0 槽 0 并告警）。
+ *  v97 曼波令「颜色分发+降级」：prefColorHex（提交口用户指定色，仅 hex 通道）优先作为
+ *  匹配目标——色差≤阈值=用户色命中；超阈值=颜色降级（材料匹配里取最近色槽，由调用方
+ *  播报并记单据轨迹）；未指定用户色维持内嵌色最近（原口径）。
+ *  @returns {{entry:{ams_id,slot_id}, level:string, dist:number|null, tray:object|null}}
+ *    level: user-exact / user-downgrade / embedded / fallback */
+function autoMapEntry(f, trays, prefColorHex = null) {
   const want = String((f && f.type) || '').trim().toUpperCase();
+  const target = prefColorHex || (f && f.colorHex ? String(f.colorHex).replace('#', '').toUpperCase() : null);
   const pick = (level) => {
     let best = null;
     let bestD = Infinity;
     for (const t of trays) {
       if (want && materialMatch(want, t.type) !== level) continue;
-      const d = f.colorHex && t.colorHex ? colorDistance(t.colorHex, f.colorHex) : 0;
+      const d = target && t.colorHex ? colorDistance(t.colorHex, target) : 0;
       if (d < bestD) { bestD = d; best = t; }
     }
-    return best;
+    return best ? { tray: best, dist: bestD } : null;
   };
-  const hit = pick('exact') || pick('family') || (!want ? trays[0] : null);
+  let hit = pick('exact') || pick('family');
+  if (!hit && !want) {
+    const t0 = trays[0] || null;
+    hit = t0 ? { tray: t0, dist: 0 } : null;
+  }
   if (!hit) {
     console.warn(`[分发] 用料「${(f && f.type) || '未知'}」在本机料位无匹配，回落 AMS0 槽 0`);
-    return { ams_id: 0, slot_id: 0 };
+    return { entry: { ams_id: 0, slot_id: 0 }, level: 'fallback', dist: null, tray: null };
   }
+  const level = prefColorHex
+    ? (hit.dist <= config.dispatch.colorDistanceThreshold ? 'user-exact' : 'user-downgrade')
+    : 'embedded';
   return {
-    ams_id: Number.isInteger(hit.amsId) ? hit.amsId : 0,
-    slot_id: Number.isInteger(hit.trayId) ? hit.trayId : 0,
+    entry: {
+      ams_id: Number.isInteger(hit.tray.amsId) ? hit.tray.amsId : 0,
+      slot_id: Number.isInteger(hit.tray.trayId) ? hit.tray.trayId : 0,
+    },
+    level,
+    dist: hit.dist,
+    tray: hit.tray,
   };
 }
 
@@ -224,6 +248,22 @@ function buildAmsMapping(task, printer, fileMeta) {
     ? fileMeta.filaments
     : null;
   const trays = (printer.ams || []).filter((t) => t.type && trayAllowed(t, task.materialExclude));
+  // v97 用户指定色（仅 hex 通道；色名不参与直通映射）——对首条用料生效，多色件其余随文件
+  const userHex = parseHexColor(task && task.color);
+  const colorNotes = [];
+  const mapFilament = (f, i) => {
+    const r = autoMapEntry(f, trays, i === 0 ? userHex : null);
+    if (r.level === 'user-downgrade') {
+      colorNotes.push({
+        index: i,
+        requested: `#${userHex}`,
+        trayType: r.tray && r.tray.type,
+        trayColorHex: r.tray && r.tray.colorHex ? `#${String(r.tray.colorHex).replace('#', '').toUpperCase()}` : null,
+        dist: r.dist,
+      });
+    }
+    return r.entry;
+  };
   const entries = [];
   const prefTrays = Array.isArray(task.prefTrays) ? task.prefTrays : null;
   if (prefTrays && prefTrays.some((t) => t && Number.isInteger(t.amsId) && Number.isInteger(t.trayId))) {
@@ -232,9 +272,9 @@ function buildAmsMapping(task, printer, fileMeta) {
     for (let i = 0; i < n; i++) {
       const pt = prefTrays[i];
       if (pt && Number.isInteger(pt.amsId) && Number.isInteger(pt.trayId)) {
-        entries.push({ ams_id: pt.amsId, slot_id: pt.trayId });
+        entries.push({ ams_id: pt.amsId, slot_id: pt.trayId }); // 指定即权威——不做颜色降级播报
       } else if (filaments && filaments[i]) {
-        entries.push(autoMapEntry(filaments[i], trays));
+        entries.push(mapFilament(filaments[i], i));
       } else if (i === 0) {
         entries.push({ ams_id: 0, slot_id: 0 });
       }
@@ -244,18 +284,18 @@ function buildAmsMapping(task, printer, fileMeta) {
     entries.push({ ams_id: pref.amsId, slot_id: pref.trayId });
     if (filaments && filaments.length > 1) {
       for (let i = 1; i < filaments.length; i++) {
-        entries.push(autoMapEntry(filaments[i], trays));
+        entries.push(mapFilament(filaments[i], i));
       }
     }
   } else if (filaments) {
-    for (const f of filaments) {
-      entries.push(autoMapEntry(f, trays));
+    for (let i = 0; i < filaments.length; i++) {
+      entries.push(mapFilament(filaments[i], i));
     }
   } else {
     entries.push({ ams_id: 0, slot_id: 0 });
   }
   const amsMapping = entries.map((e) => (e.ams_id >= 254 ? e.ams_id : e.ams_id * 4 + e.slot_id));
-  return { amsMapping2: entries, amsMapping };
+  return { amsMapping2: entries, amsMapping, colorNotes };
 }
 
 /** 按任务来源取切片/模型文件 buffer */
@@ -354,6 +394,9 @@ class Dispatcher {
     // 下一件（板上件没取走就开新件会撞板/挤料，且装配件要先试装）。回执接口清闸并
     // 触发匹配；状态落盘防重启丢闸
     this.receiptHold = new Map();
+    // v99 排队池修复：闸挂置时刻（printerId → ts）——TTL 自动放行的计时源。
+    // 与 receiptHold 同步增删、同落盘；旧档无此键时恢复按「现在」起算（不误摘）
+    this.receiptHoldAt = new Map();
     this.pickupCodes = new Map(); // 取件码 → {recordId, printerId, expiresAt}（内存态）
     this.humanStops = new Map();  // printerId → {at, reason}：系统发起的停止意图（failed/idle 事件消费）
     this.inFlight = [];           // 分发进行中的任务（已出队未入 printing；落盘携带，重启重回队列）
@@ -363,6 +406,7 @@ class Dispatcher {
     this.saveTimer = null;        // 落盘防抖
     this.exitHooked = false;      // 进程退出冲刷只挂一次
     this.queueSweepTimer = null;  // 队列兜底推进定时器（事件缺失时防卡死）
+    this.receiptTtlTimer = null;  // v99：取件闸 TTL 巡检定时器
   }
 
   start() {
@@ -378,6 +422,12 @@ class Dispatcher {
     if (!this.staleTimer) {
       this.staleTimer = setInterval(() => {
         this.sweepStalePrinting().catch((err) => console.error('[分发] printing 巡检失败:', err.message));
+      }, 10 * 60 * 1000);
+    }
+    // v99 取件闸 TTL 巡检（排队池修复）：闸挂置超时自动放行，防单闸堵死机型队列
+    if (!this.receiptTtlTimer) {
+      this.receiptTtlTimer = setInterval(() => {
+        try { this.sweepReceiptHoldTtl(); } catch (err) { console.error('[分发] 取件闸 TTL 巡检失败:', err.message); }
       }, 10 * 60 * 1000);
     }
     // 队列兜底推进（2026-10-16 曼波真单卡滞修复）：事件驱动的匹配在「状态恢复但事件缺失」
@@ -534,6 +584,7 @@ class Dispatcher {
       // 通道静默失效（known 已拦重入队、审批源单不在镜像表）——B4 承诺在重启场景不成立
       givenUp: [...this.givenUp.entries()].slice(-GIVEN_UP_CAP),
       receiptHold: [...this.receiptHold.entries()],
+      receiptHoldAt: [...this.receiptHoldAt.entries()], // v99：TTL 计时源随档
     };
   }
 
@@ -573,6 +624,11 @@ class Dispatcher {
       // 置盲——恢复时统一 Number 归一键型
       this.receiptHold = new Map(
         (Array.isArray(data.receiptHold) ? data.receiptHold : []).map(([k, v]) => [Number(k), v])
+      );
+      // v99：闸挂置时刻恢复——旧档无此键的条目按「现在」起算（旧闸重新计时，不误摘）
+      const atData = Array.isArray(data.receiptHoldAt) ? new Map(data.receiptHoldAt.map(([k, v]) => [Number(k), Number(v)])) : new Map();
+      this.receiptHoldAt = new Map(
+        [...this.receiptHold.keys()].map((pid) => [pid, atData.get(pid) || Date.now()])
       );
       for (const t of this.queue) this.known.add(t.recordId);
       for (const [, t] of this.printing) this.known.add(t.recordId);
@@ -696,7 +752,10 @@ class Dispatcher {
     // 原实现不摘闸：闸无 TTL 且只等取件确认/手工 release，该机对自动匹配永久不可见，
     // 队列对该机停摆
     for (const [pid, rid] of this.receiptHold.entries()) {
-      if (rid === recordId) this.receiptHold.delete(pid);
+      if (rid === recordId) {
+        this.receiptHold.delete(pid);
+        this.receiptHoldAt.delete(pid); // v99：TTL 计时源同步清
+      }
     }
     for (const [c, v] of this.pickupCodes) {
       if (v.recordId === recordId) this.pickupCodes.delete(c);
@@ -967,6 +1026,16 @@ class Dispatcher {
     //    此前 fallthrough 到自动匹配，把人的明确指定当空气
     if (task.assignedPrinter) {
       const named = candidates.find((p) => p.name === task.assignedPrinter);
+      if (!named && this.receiptHold.has((printerManager.getAllPrinterStates().find((p) => p.name === task.assignedPrinter) || {}).id)) {
+        // v99 排队池语义：指定机在「等取件回执」态 = 本单排队等待（非故障滞留）——
+        // 闸摘（确认取件/TTL 自动放行）后下一轮匹配自动开打。日志节流同滞留口径
+        const now = Date.now();
+        if (!task._holdWaitLoggedAt || now - task._holdWaitLoggedAt > 10 * 60 * 1000) {
+          task._holdWaitLoggedAt = now;
+          console.log(`[分发] ${task.applicationNo || task.recordId} 指定机「${task.assignedPrinter}」等待取件回执放行——本单排队中，闸摘后自动开打`);
+        }
+        return null;
+      }
       if (!named) {
         // 日志节流（2026-10-16）：滞留单每 60s 兜底扫描都会走到这里，逐轮刷屏淹没真错误——
         // 同一任务 10 分钟内只记一次
@@ -1234,8 +1303,23 @@ class Dispatcher {
       // 开打帧 AMS 映射仅拓竹消费（startProjectOnPrinter 闪铸分支只 startFile）——
       // A5P 这类无料站机型不再空跑映射，避免误报「回落 AMS0 槽 0」（2026-10-22 曼波反馈）
       const amsFrame = printer.brand === 'flashforge'
-        ? { amsMapping2: [], amsMapping: [] }
+        ? { amsMapping2: [], amsMapping: [], colorNotes: [] }
         : buildAmsMapping(task, printer, fileMeta);
+      // 颜色降级播报（v97 曼波令）：用户指定色超阈值 → 材料匹配里取最近色槽——
+      // 日志逐条记，单据轨迹记首条一次（重试不重复刷轨迹）
+      if (Array.isArray(amsFrame.colorNotes) && amsFrame.colorNotes.length) {
+        for (const n of amsFrame.colorNotes) {
+          console.warn(`[分发] ${task.recordId} 颜色降级：请求 ${n.requested} → ${n.trayType || '?'}${n.trayColorHex || ''}（色差 ${Math.round(n.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）`);
+        }
+        if (!task._colorDowngradeNoted) {
+          task._colorDowngradeNoted = true;
+          const n0 = amsFrame.colorNotes[0];
+          storeSafe(() => reservationStore.appendHistory(
+            task.recordId,
+            `颜色降级：请求 ${n0.requested} → ${n0.trayType || '?'}${n0.trayColorHex || ''}（色差 ${Math.round(n0.dist)}，阈值 ${config.dispatch.colorDistanceThreshold}）`,
+          ), 'color-downgrade');
+        }
+      }
       // 无 AMS 机型（P1S/A1mini 仅外挂槽，2026-10-18 P1S 首单排障）：use_ams 置 false——
       // 否则固件按 AMS 供料解析找不到槽位；有 AMS（非外挂槽）的机型维持全局配置
       const hasAms = (printer.ams || []).some((t) => !t.external);
@@ -1345,8 +1429,9 @@ class Dispatcher {
     this.completedCount.set(printer.id, (this.completedCount.get(printer.id) || 0) + 1);
     printerManager.updateState(printer.id, { activeTask: null });
     // 打完等回执闸（2026-10-28 曼波令）：板上件被确认取走前，本机不开打下一件。
-    // 续打单（hasMore）同样置闸——取件后再打下一盘
+    // 续打单（hasMore）同样置闸——取件后再打下一盘。v99：挂置时刻随闸记录（TTL 计时源）
     this.receiptHold.set(printer.id, task.recordId);
+    this.receiptHoldAt.set(printer.id, Date.now());
     // 取件码（2026-10-29 曼波令「私信提醒完成时问是否取件」）：DM 里带 6 位码，
     // 申请人回 /print-pickup 码 即完成回执——顺带清机端残留（完成弹窗/故障位）
     const pickup = this.issuePickupCode(printer.id, task.recordId);
@@ -1622,6 +1707,7 @@ class Dispatcher {
           this.known.add(task.recordId);
           this.queue.push(task);
           this.receiptHold.set(printerId, task.recordId); // 续打单同样等取件回执（同 completeTask）
+          this.receiptHoldAt.set(printerId, Date.now()); // v99：TTL 计时源同步
           const pickup = this.issuePickupCode(printerId, task.recordId);
           storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `巡检补记：完成 1 件（还剩 ${task.remaining} 件），自动续打下一件`), 'sweep-continue');
           require('./reservation').notifyApplicantDm(task.recordId,
@@ -1635,6 +1721,7 @@ class Dispatcher {
         this.completedCount.set(printerId, (this.completedCount.get(printerId) || 0) + 1);
         printerManager.updateState(printerId, { activeTask: null });
         this.receiptHold.set(printerId, task.recordId); // 打完等回执闸（与 completeTask 同口径）
+        this.receiptHoldAt.set(printerId, Date.now()); // v99：TTL 计时源同步
         // 审批源不写镜像表（同 completeTask 守卫）：写 instance_code 必然失败，白刷错误日志
         if (isLocalTask(task)) {
           storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.COMPLETED, `巡检补完成 @ ${state.name || printerId}`), 'sweep-complete');
@@ -1694,6 +1781,7 @@ class Dispatcher {
     }
     if (!printerId) return { held: false };
     this.receiptHold.delete(printerId);
+    this.receiptHoldAt.delete(printerId); // v99：TTL 计时源同步清
     this.persistState();
     this.trigger('receipt-ack');
     console.log(`[分发] 回执取件：${recordId}（printer=${printerId}）——闸清，队列继续`);
@@ -1707,6 +1795,8 @@ class Dispatcher {
   holdQueue(printerId, recordId) {
     const pid = Number(printerId);
     this.receiptHold.set(pid, recordId || ('manual-' + Date.now().toString(36)));
+    // 人工置闸不记 TTL 计时（运维主动意图不被自动放行清掉，见 sweepReceiptHoldTtl）
+    this.receiptHoldAt.delete(pid);
     this.persistState();
     console.log(`[分发] 人工置闸：printer=${pid}（${this.receiptHold.get(pid)}）——队列对该机暂停`);
     return { held: true, printerId: pid, recordId: this.receiptHold.get(pid) };
@@ -1718,10 +1808,39 @@ class Dispatcher {
     const rid = this.receiptHold.get(pid);
     if (!rid) return { held: false };
     this.receiptHold.delete(pid);
+    this.receiptHoldAt.delete(pid); // v99：TTL 计时源同步清
     this.persistState();
     this.trigger('receipt-ack');
     console.log(`[分发] 人工清闸：printer=${pid}（原 ${rid}）——队列恢复`);
     return { held: true, printerId: pid, recordId: rid };
+  }
+
+  /**
+   * 取件回执闸 TTL 巡检（v99 排队池修复，曼波令「根据今天这情况把排队池机制修好」）：
+   * 打完挂闸 N 小时（dispatch.receiptTtlHours，默认 24）无人确认取件 → 自动放行该机——
+   * 防单闸堵死整条机型队列（R20261107-001/002 实案：R-011 闸挂 H2D，同型号单提交即
+   * 转人工散伙）。放行时单据轨迹提醒确认台板（自动放行≠件已取走，开新件前人要看一眼
+   * 台板防撞板）。人工置闸（manual-* recordId）是运维主动意图，不受 TTL 约束。
+   * 由 receiptTtlTimer 周期（10 分钟）驱动。
+   */
+  sweepReceiptHoldTtl() {
+    const ttlMs = (config.dispatch.receiptTtlHours || 0) * 3600 * 1000;
+    if (!ttlMs || ttlMs <= 0) return;
+    const now = Date.now();
+    for (const [pid, rid] of [...this.receiptHold.entries()]) {
+      if (String(rid).startsWith('manual-')) continue; // 人工置闸不放行
+      const at = this.receiptHoldAt.get(pid) || now; // 无计时源（异常兜底）→ 从现在起算
+      const ageHours = (now - at) / 3600000;
+      if (now - at < ttlMs) continue;
+      this.receiptHold.delete(pid);
+      this.receiptHoldAt.delete(pid);
+      this.persistState();
+      this.trigger('receipt-ack'); // 触发一轮匹配——排队中被闸挡住的下一件随即开打
+      console.warn(`[分发] 取件闸超时自动放行：printer=${pid}（${rid}，挂置 ${ageHours.toFixed(1)}h ≥ TTL ${config.dispatch.receiptTtlHours}h）——队列恢复，请人工确认台板件已取走`);
+      // rid 是 recordId（manual- 前缀已在上方 continue 掉），单据轨迹落档提醒
+      storeSafe(() => reservationStore.appendHistory(rid,
+        `取件确认超时自动放行（挂置 ${ageHours.toFixed(1)} 小时）——机器已对队列开放，请确认台板件已取走后再开新件`), 'receipt-ttl');
+    }
   }
 
   /** 回执闸清单（queue 快照消费：页面显示哪台机卡在「等待取件回执」） */
