@@ -203,6 +203,7 @@ module.exports = {
             { key: 'weekOffset', type: 'number', d: '周偏移(0=本周)' },
           ] },
         { m: 'GET', p: '/api/attendance/preview', d: '打卡周报干跑预览（含云文档块数）' },
+        { m: 'GET', p: '/api/attendance/stats', d: '打卡时长统计视图（打开即自动统计：本周至今/统计周切换，逐人合计+逐日/班段明细）', kind: 'attendance-stats' },
         { m: 'POST', p: '/api/attendance/import', d: '打卡明细导入（POST {dataBase64, filename?}，X-API-Token；兼容「打卡时间」单列与「日期+时间」分列；运维台窗口不实现 base64 上传，走 SSH/curl）', kind: 'note' },
       ],
       permissions: [
@@ -216,7 +217,7 @@ module.exports = {
       localRun: { script: 'src/index.js', cwd: '', env: {} },
       quickActions: [
         { id: 'install', label: 'npm install', cmd: 'npm install', cwd: '' },
-        { id: 'test', label: '全量 stub 测试（20 套）', cmd: 'npm run test', cwd: '' },
+        { id: 'test', label: '全量 stub 测试（22 套）', cmd: 'npm run test', cwd: '' },
         { id: 'table-check', label: '表格字段校验', cmd: 'npm run table:check', cwd: '' },
         { id: 'plaza-tables', label: '动态广场建表（幂等）', cmd: 'node scripts/create-plaza-tables.js', cwd: '' },
       ],

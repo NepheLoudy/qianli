@@ -384,6 +384,21 @@ app.get('/api/team-load', async (req, res) => {
   }
 });
 
+// ---------- 打卡时长统计（2026-11-09 v70）：duty-bot :3006 现算——打开即统计语义，
+// 不设缓存：每次都 live 拉飞书考勤+聚合（冷调用数秒，curl 给 55s；range/offset 白名单化防注入） ----------
+app.get('/api/attendance/stats', async (req, res) => {
+  const range = req.query.range === 'current' ? 'current' : 'week';
+  const offset = Number(req.query.weekOffset || 0) || 0;
+  try {
+    const out = await sshExec(`curl -s -m 55 'http://127.0.0.1:3006/api/attendance/stats?range=${range}&weekOffset=${offset}'`, 60000);
+    const data = JSON.parse(out.trim());
+    if (!data || data.ok !== true) throw new Error((data && data.error) || '统计响应异常（缺少 ok=true）');
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: `打卡统计拉取失败: ${err.message}` });
+  }
+});
+
 const actionStats = { total: 0, last: null }; // 本次运维台开机以来的一次性动作执行计数
 
 app.get('/api/overview', async (req, res) => {

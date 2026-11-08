@@ -188,6 +188,27 @@ button:disabled { opacity: .4; cursor: not-allowed; }
 }
 #winFloat .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 
+/* ---------- 打卡时长统计视图（duty 🧰 → 抽屉富 UI，2026-11-09 v70） ---------- */
+#drawerBody { flex: 1; overflow: auto; padding: 10px 14px; font-size: 12.5px; }
+.att-bar { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; flex-wrap: wrap; }
+.att-bar select { background: var(--bg); color: var(--txt); border: 1px solid var(--line); padding: 4px 8px; font-size: 12.5px; font-family: var(--font-serif); }
+.att-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 8px; margin-bottom: 10px; }
+.att-kpi { background: var(--surface); border: 1px solid var(--line); border-top: 3px solid var(--acc); padding: 6px 10px; }
+.att-kpi .v { font-size: 17px; font-weight: 500; }
+.att-kpi .l { font-size: 11px; color: var(--txt); opacity: .62; }
+.att-kpi.bad { border-top-color: var(--err); }
+.att-table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.att-table th, .att-table td { border: 1px solid var(--line); padding: 3px 8px; text-align: left; font-size: 12px; }
+.att-table th { background: var(--surface); font-weight: 500; }
+.att-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.att-table tr.user-row { cursor: pointer; }
+.att-table tr.user-row:hover { background: var(--surface); }
+.att-detail td { background: var(--bg); }
+.att-badge { display: inline-block; border: 1px solid var(--line); padding: 0 6px; font-size: 11px; margin-left: 5px; }
+.att-badge.miss { border-color: var(--err); color: var(--err); }
+.att-badge.ongoing { border-color: var(--acc); color: var(--acc); }
+.att-badge.cross { border-color: var(--warn); color: var(--warn); }
+
 /* ---------- 总览仪表台 ---------- */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-bottom: 14px; }
 .kpi { background: var(--card); border: 1px solid var(--line); border-top: 3px solid var(--line); padding: 10px 14px; }
@@ -352,6 +373,7 @@ button:disabled { opacity: .4; cursor: not-allowed; }
     <button onclick="closeDrawer()">关闭</button>
   </div>
   <pre id="drawerLog">加载中…</pre>
+  <div id="drawerBody" style="display:none;"></div>
 </div>
 <div class="toast" id="toast"></div>
 
@@ -681,6 +703,9 @@ function openDrawer(title) {
   document.getElementById('drawerTitle').textContent = title;
   document.getElementById('drawer').classList.add('open');
   document.getElementById('mask').classList.add('open');
+  // 默认复位为日志形态（pre 显示/富 UI 隐藏）；打卡统计视图打开后再自行翻转
+  document.getElementById('drawerLog').style.display = '';
+  document.getElementById('drawerBody').style.display = 'none';
 }
 
 function closeDrawer() {
@@ -794,6 +819,10 @@ function renderWinPanel(p) {
       return `<div class="win-row">✏️ ${w.d}
         <button class="primary" onclick="openRulesEditor('${w.table}')">打开编辑器</button>
         <button onclick="winView(${p.port}, '${w.p}', '${w.d}')">查看</button></div>`;
+    }
+    if (w.kind === 'attendance-stats') {
+      return `<div class="win-row">📊 ${w.d} <span class="badge method">${w.m}</span>
+        <button class="primary" onclick="openAttendanceStats()">打开统计视图</button></div>`;
     }
     if (w.p === '/api/duty/policy') {
       return `<div class="win-row">✏️ ${w.d} <span class="badge method">${w.m}</span>
@@ -916,6 +945,130 @@ async function saveDutyGroups(port) {
   const data = await deployApi(port, 'POST', '/api/duty/policy', { groupChatIds: raw });
   if (data.ok) { toast(`管辖策略已保存（${raw.length} 群，即时生效）✓`); loadDutyGroups(port); }
   else toast(data.error || '失败');
+}
+
+// —— 打卡时长统计视图（duty 🧰 → 打开即自动统计一次：duty-bot 现场拉飞书考勤+聚合，约 3~15 秒） ——
+let attStats = { expanded: null, data: null };
+
+function openAttendanceStats() {
+  openDrawer('📊 打卡时长统计 · duty-bot');
+  document.getElementById('drawerLog').style.display = 'none';
+  const body = document.getElementById('drawerBody');
+  body.style.display = 'block';
+  body.innerHTML = `
+    <div class="att-bar">
+      <select id="attRange" onchange="attLoad()">
+        <option value="current">本周至今（进行中）</option>
+        <option value="w0">最近完整统计周</option>
+        <option value="w1">前 1 周</option>
+        <option value="w2">前 2 周</option>
+        <option value="w3">前 3 周</option>
+      </select>
+      <button class="primary" onclick="attLoad()">重新统计</button>
+      <span class="deploy" id="attMeta"></span>
+    </div>
+    <div class="att-kpis" id="attKpis"></div>
+    <div id="attTableWrap"><div class="empty">加载中…</div></div>`;
+  attStats.expanded = null;
+  attLoad();
+}
+
+async function attLoad() {
+  const sel = document.getElementById('attRange');
+  const range = sel && sel.value === 'current' ? 'current' : 'week';
+  const offset = sel && /^w[0-9]$/.test(sel.value) ? Number(sel.value.slice(1)) : 0;
+  const qs = range === 'current' ? 'range=current' : 'range=week&weekOffset=' + offset;
+  const meta = document.getElementById('attMeta');
+  const wrap = document.getElementById('attTableWrap');
+  attStats.expanded = null;
+  if (meta) meta.textContent = '';
+  if (wrap) wrap.innerHTML = '<div class="empty">统计中…（现场拉飞书考勤+聚合，约 3~15 秒）</div>';
+  try {
+    const res = await fetch('/api/attendance/stats?' + qs);
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || ('HTTP ' + res.status));
+    attStats.data = data;
+    attRender();
+  } catch (err) {
+    if (wrap) wrap.innerHTML = `<div class="empty">统计失败：${esc(err.message)}<br><span class="deploy">duty-bot（:3006）不在线或数据源不可用时会这样，可稍后重试</span></div>`;
+  }
+}
+
+function attFmtDur(ms) {
+  const mins = Math.max(0, Math.floor((Number(ms) || 0) / 60000));
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h <= 0) return mins + '分钟';
+  return m ? h + '小时' + m + '分钟' : h + '小时';
+}
+
+function attBadges(u, mode) {
+  let out = '';
+  if (mode === 'sessions') {
+    if (u.missingSessions > 0) out += `<span class="att-badge miss">缺卡 ${u.missingSessions}</span>`;
+    if (u.ongoingSessions > 0) out += `<span class="att-badge ongoing">进行中 ${u.ongoingSessions}</span>`;
+  } else {
+    if (u.lonelyDays > 0) out += `<span class="att-badge miss">孤条 ${u.lonelyDays} 天</span>`;
+    if (u.leftoverCards > 0) out += `<span class="att-badge cross">落单 ${u.leftoverCards} 卡</span>`;
+  }
+  return out;
+}
+
+function attToggle(i) {
+  attStats.expanded = attStats.expanded === i ? null : i;
+  attRender();
+}
+
+function attDetailRow(u, mode) {
+  const dayRows = (u.days || []).map((d) => `<tr>
+      <td>${esc(d.day)}</td>
+      <td class="num">${d.firstClock || '—'}${d.lastClock ? ' ~ ' + d.lastClock : ''}</td>
+      <td class="num">${d.count}</td>
+      <td class="num">${attFmtDur(d.durationMin * 60000)}</td>
+      <td class="num">${mode === 'sessions' ? (d.ongoing ? '进行中' : (d.missingSessions || 0)) : (d.lonely ? '孤条' : (d.leftover ? '落单' : '—'))}</td>
+    </tr>`).join('');
+  let seg = '';
+  if (mode === 'sessions' && u.sessionDetails && u.sessionDetails.length) {
+    const segRows = u.sessionDetails.map((s) => `<div>${esc(s.day)}　${s.inClock || '—'} → ${s.outClock || '—'}　${s.complete ? attFmtDur(s.durationMin * 60000) : '（不计时长）'}${s.ongoing ? '<span class="att-badge ongoing">进行中</span>' : ''}${s.missing ? '<span class="att-badge miss">缺卡</span>' : ''}${s.crossDay ? '<span class="att-badge cross">跨天</span>' : ''}</div>`).join('');
+    seg = `<div style="margin-top:8px;"><b>班段明细</b><div class="win-list">${segRows}</div></div>`;
+  } else if (mode !== 'sessions') {
+    seg = '<div class="deploy" style="margin-top:6px;">当前数据源无平台班段（import/http 档），仅逐日合计</div>';
+  }
+  return `<tr class="att-detail"><td colspan="6">
+    <b>逐日合计</b>
+    <table class="att-table"><thead><tr><th>日期</th><th class="num">首卡 ~ 末卡</th><th class="num">卡数</th><th class="num">当日时长</th><th class="num">缺卡</th></tr></thead>
+    <tbody>${dayRows || '<tr><td colspan="5">（窗口内无打卡记录）</td></tr>'}</tbody></table>${seg}</td></tr>`;
+}
+
+function attRender() {
+  const d = attStats.data;
+  const meta = document.getElementById('attMeta');
+  const kpis = document.getElementById('attKpis');
+  const wrap = document.getElementById('attTableWrap');
+  if (!d || !kpis || !wrap) return;
+  if (meta) meta.textContent = `窗口 ${d.window.label} · 数据源 ${d.dataSource} · 统计于 ${new Date(d.generatedAt).toLocaleTimeString('zh-CN')}`;
+  const t = d.totals;
+  kpis.innerHTML = `
+    <div class="att-kpi"><div class="v">${attFmtDur(t.totalMs)}</div><div class="l">合计时长</div></div>
+    <div class="att-kpi"><div class="v">${t.users}</div><div class="l">名单人数</div></div>
+    <div class="att-kpi"><div class="v">${t.punchUsers}</div><div class="l">有打卡</div></div>
+    ${d.mode === 'sessions' ? `<div class="att-kpi"><div class="v">${t.completeSessions || 0}</div><div class="l">有效班段</div></div>
+    <div class="att-kpi ${t.missingSessions ? 'bad' : ''}"><div class="v">${t.missingSessions || 0}</div><div class="l">缺卡</div></div>
+    ${t.ongoingSessions ? `<div class="att-kpi"><div class="v">${t.ongoingSessions}</div><div class="l">进行中</div></div>` : ''}` : ''}
+    <div class="att-kpi"><div class="v">${t.punches}</div><div class="l">打卡次数</div></div>`;
+  const users = [...d.users].sort((a, b) => (b.totalMs - a.totalMs) || (a.name > b.name ? 1 : a.name < b.name ? -1 : 0));
+  const rows = users.map((u, i) => `<tr class="user-row" onclick="attToggle(${i})">
+      <td>${esc(u.name)}${attBadges(u, d.mode)}</td>
+      <td class="num">${u.punchDays}</td>
+      <td class="num">${d.mode === 'sessions' ? u.completeSessions + '/' + u.sessions : u.punches}</td>
+      <td class="num"><b>${attFmtDur(u.totalMs)}</b></td>
+      <td class="num">${d.mode === 'sessions' ? (u.missingSessions || 0) : (u.lonelyDays || 0)}</td>
+      <td class="num">${attStats.expanded === i ? '▼' : '▶'}</td>
+    </tr>${attStats.expanded === i ? attDetailRow(u, d.mode) : ''}`).join('');
+  wrap.innerHTML = `<table class="att-table">
+      <thead><tr><th>姓名</th><th class="num">天数</th><th class="num">${d.mode === 'sessions' ? '班段（有效/总）' : '打卡数'}</th><th class="num">时长</th><th class="num">${d.mode === 'sessions' ? '缺卡' : '孤条'}</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6">（名单为空）</td></tr>'}</tbody></table>
+    <div class="deploy" style="margin-top:4px;">点行展开明细 · 口径：${d.mode === 'sessions' ? '平台上下班配对班段（06:00 切天，单边卡计缺卡不计时长）' : '打卡流水当日两两配对（落单不计）'}</div>`;
 }
 
 // —— hub 关键词回答表 / 抽奖配置编辑器 ——
