@@ -96,10 +96,10 @@
     td:last-child::before { content: none; }
   }
 
-  /* ---------- 浮动提交按钮（v71 曼波令：不论滚到哪里一键回提交） ---------- */
+  /* ---------- 浮动提交按钮（v71 曼波令；v104 改常驻：预约页内永远显示，不再「滚出视口才出现」） ---------- */
   #fabSubmit {
     position: fixed; right: 22px; bottom: 22px; z-index: 50;
-    display: none; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 8px;
     background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink);
     font: 600 14px var(--font-serif, Georgia, serif); letter-spacing: .06em;
     padding: 13px 20px; cursor: pointer;
@@ -256,21 +256,12 @@
   </div>
 </div>
 <div id="toast"></div>
-<button id="fabSubmit" onclick="jumpToSubmit()" title="回到提交表单" aria-label="回到提交表单"><span class="fab-plus">＋</span>提交预约</button>
+<button id="fabSubmit" onclick="jumpToSubmit()" title="提交预约" aria-label="提交预约"><span class="fab-plus">＋</span>提交预约</button>
 <script>
-  // 浮动提交按钮（v71 曼波令）：提交表单滚出视口后出现，点击平滑回表单 + 描边脉冲引导
+  // 浮动提交按钮（v71 曼波令；v104 改常驻：预约页内永远显示——不再「表单滚出视口才出现」，
+  // 曼波令 2026-11-09）。点击仍走 jumpToSubmit 完整校验链（缺文件/场景先定位，全绿直接提交）
   (function () {
-    const fab = document.getElementById('fabSubmit');
     const card = document.getElementById('submitCard');
-    function check() {
-      if (!card || !fab) return;
-      const r = card.getBoundingClientRect();
-      const below = r.bottom < 120 || r.top < -r.height * 0.6; // 表单大半离开视口（顶部 120px 留给 sticky 头）
-      fab.style.display = below ? 'flex' : 'none';
-    }
-    window.addEventListener('scroll', check, { passive: true });
-    window.addEventListener('resize', check);
-    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', check); else check();
 
     /** 定位缺失控件：滚动到它 + 高亮脉冲 + 聚焦 */
     function focusControl(el) {
