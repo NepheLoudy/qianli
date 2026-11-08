@@ -1247,8 +1247,15 @@ class Dispatcher {
       // 模型单自动切片（2026-10-18 曼波令）：需求链路单（stl/step）按勾选参数与审批份数
       // 在分发时刻自动切片——份数 = 盘内多件（Orca 原生排布、一次成型），此后按已切片单走
       // 上传；盘已含全部份数 → 关闭续件（remaining=0）
+      // v100 修复（曼波令「为什么阻拦没有触发」实案 R20261107-001/-002）：工程 3mf 单提交口
+      // 按 v64 闸放行进需求链路（承诺「分发时现场切片」，prepareModelPath 的 3mf 分支 v64 就
+      // 写好了），但本触发条件只认 stl/step 后缀——工程 3mf 落进「不切片又直通」灰区，
+      // 34KB 无刀轨原件直传机端秒 FAILED（H2D）/553 重试耗尽（X1C）。触发条件补工程 3mf
       let autoSliced = null;
-      if (isUnslicedFileName(task.fileName || '') && isLocalTask(task)) {
+      const isEngineering3mf = /\.3mf$/i.test(task.fileName || '')
+        && ((task.modelFeatures && task.modelFeatures.engineering === true)
+          || (task.embeddedParams && task.embeddedParams.source === 'engineering'));
+      if ((isUnslicedFileName(task.fileName || '') || isEngineering3mf) && isLocalTask(task)) {
         autoSliced = await autoSlice.ensureSliced(task, printer);
         buffer = autoSliced.buffer;
         // 实际生效摆向（2026-10-27 特征标签批）：打印成功后按此回填自举标签——
@@ -1296,6 +1303,20 @@ class Dispatcher {
         } catch (err) {
           throw new Error(`闪铸直通 3mf 提取内嵌 gcode 失败：${err.message}`);
         }
+      }
+      // v100 fail-closed 双保险（曼波令实案二踩 R20261107-001）：即便工程件判定丢失
+      // （老单/路径异常），无刀轨数据的 3mf 也绝不直通上机——机端必拒（v64 R20261031-002、
+      // v99+ A面.3mf 二踩）。判定口径与提交口 v83 一致：确定无刀轨（false）才拦，
+      // 读不出（null——桩测试假 buffer/极端损坏件）保持旧直通行为。noRetry=确定性失败
+      let looksSlicedGate = null;
+      try { looksSlicedGate = slicerExtract.hasSlicedGcode(buffer); } catch { looksSlicedGate = null; }
+      if (/\.3mf$/i.test(task.fileName || '') && !autoSliced && looksSlicedGate === false) {
+        const gateErr = new Error(
+          `「${task.fileName}」是未切片的工程 3mf（无 plate 刀轨数据）——已拦截不上机。` +
+          `请申请人在 Bambu Studio 完成切片后「导出切片文件」（.gcode.3mf）重新提交`
+        );
+        gateErr.noRetry = true;
+        throw gateErr;
       }
       await printerManager.uploadFileToPrinter(printer.id, buffer, uploadName);
 
@@ -1369,7 +1390,8 @@ class Dispatcher {
           .catch(() => {});
       }
       // 重试上限 + 冷却：缺附件/上传失败等确定性失败若不设限，match 循环会原地死循环并刷屏
-      task.dispatchRetries = (task.dispatchRetries || 0) + 1;
+      // v100：noRetry 标记（工程 3mf 闸等确定性拦截）跳过重试直接终局——重试也不可能成功
+      task.dispatchRetries = err.noRetry ? config.dispatch.maxRetries : (task.dispatchRetries || 0) + 1;
       if (task.dispatchRetries >= config.dispatch.maxRetries) {
         console.error(
           `[分发] 任务 ${task.recordId} 已重试 ${task.dispatchRetries} 次仍失败，退出队列，请人工处理`
