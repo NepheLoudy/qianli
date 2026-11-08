@@ -154,7 +154,11 @@ class ReservationService {
         // v97：候选机带机端实装喷嘴口径（选机喷嘴硬过滤的数据源）；v99：pool=持闸机排队语义
         pool.map((p) => ({ name: p.name, model: p.model, nozzleDiameters: p.nozzleDiameters || null })),
         store.list(),
-        (embeddedParams && embeddedParams.nozzleDiameters) || null,
+        // v101 修复（P0，R20261108-001 实案）：此处裸写 embeddedParams 引用未定义变量——
+        // v97 加喷嘴参数时笔误，ReferenceError 让 v97 起所有「切片件自动选机」的单全部
+        // 打回转人工（A面×2/R20261108-001），v99 持闸机排队优化也从未生效。正名：
+        // reservation.embeddedParams（本作用域无裸变量）
+        (reservation.embeddedParams && reservation.embeddedParams.nozzleDiameters) || null,
       );
       if (!choice) {
         // 候选机队为空（全部忙碌/失联）——带上内嵌机型方便人工判断

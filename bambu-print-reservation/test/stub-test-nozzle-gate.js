@@ -203,4 +203,12 @@ check('真件回归（可选）：曼波实单 45m52s 若在本地则提取 0.4/
   assert.ok(ext.sliceWarnings.some((w) => w.errorCode === '1000C001'), '正确件同样携带热床告警（建议级口径的实证）');
 });
 
+check('v101 回归锚：选机调用不得引用未定义变量（R20261108-001 实案——非严格模块裸变量=静默 ReferenceError）', () => {
+  const resv = fs.readFileSync(path.join(__dirname, '../src/services/reservation.js'), 'utf8');
+  const at = resv.indexOf('chooseMachineForSliced(');
+  const seg = resv.slice(at, at + 700);
+  assert.ok(!/\(embeddedParams &&/.test(seg), '选机参数不得裸写 embeddedParams（必须 reservation.embeddedParams）');
+  assert.ok(seg.includes('reservation.embeddedParams && reservation.embeddedParams.nozzleDiameters'), 'v101 修复必须就位');
+});
+
 process.exit(failures > 0 ? 1 : 0);
