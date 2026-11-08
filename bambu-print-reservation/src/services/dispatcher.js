@@ -969,6 +969,13 @@ class Dispatcher {
       if (!matching) continue; // 无队列任务与机端实况匹配：不动（保守）
       console.warn(`[分发] 幽灵在册互换：${held.applicationNo || held.recordId} 在册但机端实况在打「${sub}」（匹配队列单 ${matching.recordId}）——在册单回排队，机端任务补记`);
       this.printing.delete(p.id);
+      // v103（verifier P1 收口）：只写 DB=QUEUED 不回内存队列=引擎失踪（match 只扫
+      // this.queue，known 守卫还拦 reconcile 重入队）——必须推回队列「回队列重新分发」
+      // 才名副其实。enqueuedAt 重置=排队尾（幽灵重排不插队）；known 保留（防其他来源
+      // 重复 enqueue，match 循环不查 known）。同文件名多单边界：阶段 2 按队列序补记可能
+      // 短暂错配，下一轮本阶段互换收敛（极罕见场景）
+      held.enqueuedAt = Date.now();
+      this.queue.push(held);
       storeSafe(() => reservationStore.updateStatus(held.recordId, config.status.QUEUED,
         `幽灵在册摘除：机端实况在打「${sub}」非本单——回队列重新分发`), 'ghost-swap');
       healed = true;
