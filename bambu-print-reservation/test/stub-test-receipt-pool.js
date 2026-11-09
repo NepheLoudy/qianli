@@ -15,6 +15,7 @@ process.env.DISPATCH_STATE_FILE = path.join(require('os').tmpdir(), `bambu-test-
 
 const dispatcher = require('../src/services/dispatcher');
 const config = require('../src/config');
+const { chooseMachineForSliced } = require('../src/services/machineLearning');
 
 let pass = 0;
 let failures = 0;
@@ -94,8 +95,9 @@ check('acknowledgeReceipt 幂等 + 摘闸清计时源', () => {
 
 check('静态锚：选机排队语义 + TTL 接线 + 回执全民化', () => {
   const resv = fs.readFileSync(path.join(__dirname, '../src/services/reservation.js'), 'utf8');
-  assert.ok(resv.includes('candFree.length ? candFree : cand'), '选机必须接「持闸机排队」pool 语义');
-  assert.ok(!resv.includes("!require('./dispatcher')._receiptHoldHas(p.id)"), '选机候选不得再把持闸机隐身');
+  assert.ok(resv.includes('cand.map((p) => ({'), '选机候选必须全量传递（不再全局取舍挤掉持闸机）');
+  assert.ok(resv.includes('held: holdHas(p.id)'), '候选必须带持闸标记（选机内部同型号内排序）');
+  assert.ok(!resv.includes('candFree'), 'v105：全局「有空闲优先」取舍必须移除（异型号空机不得挤掉持闸同型号机）');
   assert.ok(resv.includes('本单排队待放行后自动开打'), '选中持闸机的选机依据必须注明排队');
   const disp = fs.readFileSync(path.join(__dirname, '../src/services/dispatcher.js'), 'utf8');
   assert.ok(disp.includes('sweepReceiptHoldTtl'), 'TTL 巡检方法必须存在');
@@ -106,6 +108,33 @@ check('静态锚：选机排队语义 + TTL 接线 + 回执全民化', () => {
   assert.ok(!receiptSeg.includes('assertCanManage'), '取件回执端点必须解除本人/reviewer 限制（v99 全民化）');
   const front = fs.readFileSync(path.join(__dirname, '../public/index.html'), 'utf8');
   assert.ok(/r\.status === '已完成' && !r\.receipt\s*\n?\s*\? `<button class="mini" onclick="ackReceipt/.test(front), '前端确认取件按钮必须对所有人可见');
+});
+
+check('v105 回归（陈同学实案）：持闸同型号机不被异型号空机挤出局——选中并注明排队', () => {
+  // 场景还原 09:07 R20261109-002：H2D 持闸（R-001 等取件），四台异型号空闲
+  const choice = chooseMachineForSliced(
+    'Bambu Lab H2D',
+    [
+      { name: '闪铸A5P', model: 'AD5M Pro', held: false },
+      { name: 'A1mini', model: 'A1 mini', held: false },
+      { name: '闪铸C5P', model: 'Creator 5 Pro', held: false },
+      { name: 'P1S', model: 'P1S', held: false },
+      { name: 'H2D', model: 'H2D', held: true }, // 持闸：R-001 打完等取件
+    ],
+    [],
+  );
+  assert.strictEqual(choice.name, 'H2D', '同型号持闸机必须入选（排队语义），不得误报无同型号');
+  assert.ok(/排队/.test(choice.basis), `basis 必须注明排队：${choice.basis}`);
+  // 同型号有空闲兄弟机时持闸机让位
+  const dual = chooseMachineForSliced(
+    'Bambu Lab H2D',
+    [
+      { name: 'H2D-A', model: 'H2D', held: false },
+      { name: 'H2D-B', model: 'H2D', held: true },
+    ],
+    [],
+  );
+  assert.strictEqual(dual.name, 'H2D-A', '同型号内无闸机优先');
 });
 
 process.exit(failures > 0 ? 1 : 0);

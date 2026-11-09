@@ -131,12 +131,12 @@ class ReservationService {
       const cand = apiStates.filter((p) => p.autoDispatch
         && (['空闲', '已完成'].includes(p.status) || printerManager.canDispatchResidueFailed(p))
         && !p.stateStale); // v88：状态过期（失联）的机器不进学习选机——防幽灵空闲写死指定
-      // v99 排队池修复（曼波令）：持闸机不再隐身——选机时「有空闲机优先空机，全是持闸机
-      // 则选持闸机入队排队」（闸摘后现有滞留匹配自动开打）。原实现把持闸机踢出候选，
-      // R-011 取件闸挂 H2D 时同型号单提交即「无可用机」转人工散伙（R20261107-001/002 实案）
+      // v99 排队池修复（曼波令）：持闸机不再隐身。v105 修正（陈同学实案）：v99 的
+      // 「有空闲机优先空机」做成了全局取舍——同型号机持闸 + 异型号有空机时，持闸的
+      // 同型号机被挤出局（R20261109-002 实案：H2D 持闸、四台异型号空闲 →「无同型号机」
+      // 误报转人工，白等 4h45m）。正确语义=全候选交选机器，**同型号内**优先无闸机，
+      // 同型号只有持闸机时选它入队排队（闸摘自动开打）。held 标记随候选传递
       const holdHas = (id) => require('./dispatcher')._receiptHoldHas(id);
-      const candFree = cand.filter((p) => !holdHas(p.id));
-      const pool = candFree.length ? candFree : cand;
       // v88 审查修复（P2）修订（2026-11-06 P0）：「无内嵌机型按扩展名兜底」的兜法是错的
       // ——拓竹系切片（Orca/Bambu Studio）导出的也是 .gcode，兜 'Flashforge' 把 H2D 切片
       // 派给闪铸 A5P 打出废件（R20261106-001 实案）。切片件的自动选机资格 = 知道真机型：
@@ -151,8 +151,13 @@ class ReservationService {
       }
       const choice = require('./machineLearning').chooseMachineForSliced(
         embeddedModel,
-        // v97：候选机带机端实装喷嘴口径（选机喷嘴硬过滤的数据源）；v99：pool=持闸机排队语义
-        pool.map((p) => ({ name: p.name, model: p.model, nozzleDiameters: p.nozzleDiameters || null })),
+        // v97：候选机带机端实装喷嘴口径（选机喷嘴硬过滤的数据源）；v105：带 held 持闸标记
+        // （选机内部同型号优先无闸机），全候选不预筛
+        cand.map((p) => ({
+          name: p.name, model: p.model,
+          nozzleDiameters: p.nozzleDiameters || null,
+          held: holdHas(p.id), // v105：取件闸持闸标记（同型号内排序用）
+        })),
         store.list(),
         // v101 修复（P0，R20261108-001 实案）：此处裸写 embeddedParams 引用未定义变量——
         // v97 加喷嘴参数时笔误，ReferenceError 让 v97 起所有「切片件自动选机」的单全部
