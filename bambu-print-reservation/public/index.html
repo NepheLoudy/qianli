@@ -429,7 +429,7 @@ async function loadUsers() {
         ${['member','reviewer','admin'].map(r => `<option ${u.role === r ? 'selected' : ''}>${r}</option>`).join('')}
       </select></td>
       <td class="detail">${u.feishuOpenId ? `✅ 已绑定 <button class="mini" onclick="setFeishuOpenId('${u.id}', '')">解除</button>` : `<button class="mini" onclick="setFeishuOpenId('${u.id}')">绑定</button>`}</td>
-      <td class="detail">${esc((u.lastLoginAt || '').replace('T', ' ').slice(0, 16)) || '从未登录'}</td>
+      <td class="detail">${esc(fmtLocalTime(u.lastLoginAt, true)) || '从未登录'}</td>
       <td><button class="mini" onclick="resetPwd('${u.id}')">重置密码</button> <button class="mini" onclick="deleteUser('${u.id}', '${esc(u.username)}')">删除</button></td></tr>`).join('') + '</table>';
 }
 
@@ -1414,7 +1414,7 @@ async function loadList() {
     // 状态轨迹折叠（2026-10-08 展示优化）：默认最近 2 条，展开全部（跨 15s 刷新保留）
     const histAll = (r.history || []);
     const histShown = expandedHist.has(r.id) ? histAll : histAll.slice(-2);
-    const hist = histShown.map(h => `${esc((h.at || '').replace('T', ' ').slice(5, 16))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).reverse().join('<br>')
+    const hist = histShown.map(h => `${esc(fmtLocalTime(h.at))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).reverse().join('<br>')
       + (histAll.length > 2 ? `<br><span class="histToggle" onclick="toggleHist('${r.id}')">${expandedHist.has(r.id) ? '▲ 收起轨迹' : `▼ 展开全部 ${histAll.length} 条轨迹`}</span>` : '');
     // 打印中行内实时进度（从打印机状态 join——不用等下一轮整卡刷新）
     const livePrinter = ['打印中', '暂停'].includes(r.status) ? printers.find(p => p.name === r.printer) : null;
@@ -1446,7 +1446,7 @@ async function loadList() {
     const reassignBtn = r.status === '排队中' && isReviewer() && /\.(step|stp|stl|obj)$/i.test(r.fileName || '')
       ? `<button class="mini" onclick="recoverGivenUp('${r.id}')" title="指定打印机立即分发（同品牌机）">改派</button>` : '';
     return `<tr>
-      <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span></td>
+      <td data-label="单号"><b>${esc(r.id)}</b><br><span class="detail">${esc(fmtLocalTime(r.createdAt, true))}</span></td>
       <td data-label="状态"><span class="badge s-${esc(r.status)}">${esc(r.status)}</span>${r.printer ? '<br><span class="detail">' + esc(r.printer) + '</span>' : ''}${receiptTag}${deadTag}${liveProg}</td>
       <td data-label="发起人">${esc(r.applicant || '?')}${mine ? '<br><span class="detail">(我)</span>' : ''}<br><span class="detail">${esc(r.fileName || '')}</span></td>
       <td data-label="需求">${esc(r.materialType || '?')}${r.color ? '×' + esc(r.color) : ''}${r.isUrgent ? ' ⚡' : ''}${r.quantity > 1 ? ' ×' + r.quantity + '件' : ''}</td>
@@ -1498,6 +1498,17 @@ async function cancelReservation(id) {
 }
 
 /** 分钟 → 「Xh Ym」（ETA 展示） */
+// v106 时区修复（曼波令「时间完全对不上」）：数据库时间戳是 UTC ISO，此前 slice 裸串
+// 直显慢 8 小时——统一转本地时区。withYear=true 输出 "2026-11-09 21:52"，默认 "11-09 21:52"
+function fmtLocalTime(iso, withYear) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return withYear ? `${d.getFullYear()}-${md}` : md;
+}
+
 function fmtMins(mins) {
   const m = Number(mins);
   if (!Number.isFinite(m) || m <= 0) return '';

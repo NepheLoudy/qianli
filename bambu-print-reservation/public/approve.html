@@ -108,6 +108,16 @@ const $ = (id) => document.getElementById(id);
 function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
 function fmtMins(mins) { const m = Number(mins); if (!Number.isFinite(m) || m <= 0) return ''; return m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? (m % 60) + 'm' : '') : m + 'm'; }
+// v106 时区修复（曼波令「时间完全对不上」）：数据库时间戳是 UTC ISO，此前 slice 裸串
+// 直显慢 8 小时——统一转本地时区。withYear=true 输出 "2026-11-09 21:52"，默认 "11-09 21:52"
+function fmtLocalTime(iso, withYear) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return String(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return withYear ? `${d.getFullYear()}-${md}` : md;
+}
 const PARAM_LABELS = { layerHeight: '层高', wallLoops: '墙数', topShellLayers: '顶面层', bottomShellLayers: '底面层', infillDensity: '填充%', infillPattern: '填充图案', speedProfile: '速度档', supportType: '支撑', supportThresholdAngle: '支撑阈值°', supportDensity: '支撑密度%', seamPosition: '接缝', directionStrategy: '朝向策略', ironing: '熨烫', brim: '裙边', brimWidth: '裙边mm', xyHoleComp: '孔补偿', xyContourComp: '轮廓补偿', temperatureDelta: '热床Δ°', nozzleTempDelta: '喷嘴Δ°' };
 
 let ME = null;
@@ -204,7 +214,7 @@ function renderActive(list) {
     if (reassign) ops.push(`<button class="mini" onclick="recoverGivenUp('${esc(r.id)}')" title="指定打印机立即分发">改派</button>`);
     if (canCancel) ops.push(`<button class="mini ghost" onclick="cancelActive('${esc(r.id)}')">取消</button>`);
     return `<div class="qitem"><div class="qhead">
-      <b>${esc(r.id)}</b><span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span>
+      <b>${esc(r.id)}</b><span class="detail">${esc(fmtLocalTime(r.createdAt, true))}</span>
       ${r.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡</span>' : ''}
     </div>
     <div class="qline"><span class="lbl">状态</span>${esc(r.status)}${prog}<span class="lbl" style="margin-left:12px">发起人</span>${esc(r.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc(r.fileName || '')}</div>
@@ -299,13 +309,13 @@ function renderPending(list) {
         : '');
     const rules = (r.appliedRules || []).map((x) => esc(x.reason)).join('；');
     const pmLine = modelProvenanceSummary(r.modelProvenance);
-    const hist = (r.history || []).slice(-2).map((h) => `${esc((h.at || '').replace('T', ' ').slice(5, 16))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).join(' ｜ ');
+    const hist = (r.history || []).slice(-2).map((h) => `${esc(fmtLocalTime(h.at))} ${esc(h.to)}${h.note ? '（' + esc(h.note) + '）' : ''}`).join(' ｜ ');
     const unsliced = !/\.(3mf|gcode|gx|g)$/i.test(r.fileName || '');
     return `<div class="qitem" data-rid="${esc(r.id)}">
       <div class="qhead">
         <span class="badge s-待审批">待审批</span>
         <b>${esc(r.id)}</b>
-        <span class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</span>
+        <span class="detail">${esc(fmtLocalTime(r.createdAt, true))}</span>
         ${r.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡ 加急</span>' : ''}
       </div>
       <div class="qline"><span class="lbl">发起人</span>${esc(r.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc(r.fileName || '')}</div>
@@ -416,7 +426,7 @@ function renderOverview(pg) {
           <td>${esc(r.applicant || '?')}<br><span class="detail">${esc(r.fileName || '')}</span></td>
           <td class="detail">${ovNeedCell(r)}</td>
           <td class="detail">${esc(r.assignedPrinter || r.printer || '—')}</td>
-          <td class="detail">${esc((r.createdAt || '').replace('T', ' ').slice(0, 16))}</td>
+          <td class="detail">${esc(fmtLocalTime(r.createdAt, true))}</td>
           <td style="white-space:nowrap">${ops}</td>
         </tr>`;
       }).join('')}</tbody></table>`;
@@ -469,7 +479,7 @@ async function openOverviewDetail(id) {
     .filter(([k, v]) => !['materialExclude', 'materialPrefer'].includes(k) && v !== '' && v !== null && !(Array.isArray(v) && !v.length)) : [];
   const params = paramEntries.map(([k, v]) => `${esc(PARAM_LABELS[k] || k)}=${esc(Array.isArray(v) ? v.join('|') : v)}`).join(' · ');
   const histRows = (rec.history || []).map((h) => `<tr>
-    <td class="detail">${esc((h.at || '').replace('T', ' ').slice(0, 16))}</td>
+    <td class="detail">${esc(fmtLocalTime(h.at, true))}</td>
     <td>${esc(h.from || '')} → <b>${esc(h.to)}</b></td>
     <td class="detail">${esc(h.note || '—')}</td>
   </tr>`).join('');
