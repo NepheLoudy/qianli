@@ -93,6 +93,9 @@ const CONFIG = {
   accountPool: process.env.NETLOG_ACCOUNT_POOL || path.join(os.homedir(), 'qianli-data', 'netlog', 'campus-accounts.local.json'),
   apiToken: process.env.NETLOG_API_TOKEN || '', // 手动复活端点鉴权（管理端点必须鉴权；未配置=端点锁定）
   reviveEnabled: process.env.NETLOG_REVIVE_ENABLED !== 'false', // 默认开；false 退化回纯日志探针
+  // ---- 播报总开关（v21，曼波 2026-11-11 拍板「断网播报全关」）：false=即时私聊/积压补发
+  // 全静默，事件流 jsonl 照记可回放；恢复=改 true 重启 ----
+  notifyEnabled: process.env.NETLOG_NOTIFY_ENABLED !== 'false',
   // ---- 路由器无线状态观测（v14）：主路由半死（射频信标不发/DHCP 僵死）有线侧感知不到，
   // 低频登录 miwifi 拉射频状态补上这块盲区；密码未配置=观测停用 ----
   routerWatchHost: process.env.NETLOG_ROUTER_HOST || '192.168.31.1',
@@ -129,6 +132,7 @@ function createEngine(deps) {
     mismatchNotifyMs = CONFIG.mismatchNotifyMs,
     flushCooldownMs = CONFIG.flushCooldownMs,
     flushBatch = CONFIG.flushBatch,
+    notifyEnabled = CONFIG.notifyEnabled,
     onTick = null, // 钩子：每轮探测完成后调用 (wanOk, lanOk, trafficOk)；wanGuard 复活引擎挂这里
   } = deps;
 
@@ -176,6 +180,7 @@ function createEngine(deps) {
   const lastImmediateOkAt = {}; // event → 上次私聊成功时刻（只成功才占用冷却）
 
   async function notify(event, detail) {
+    if (!notifyEnabled) return; // 播报全关（v21）：不外发不积压；emit 已先 record，jsonl 照记可回放
     const text = `[netlog] ${event}${detail ? `\n${detail}` : ''}`;
     if (!NOTIFY_IMMEDIATE.has(event)) {
       // 过程事件：直接进积压（断网恢复后由汇总卡带上，平时不打扰通知群）
@@ -306,6 +311,7 @@ function createEngine(deps) {
   let lastFlushOkAt = 0; // 上次成功补发时刻（内存：重启后允许立即补发一次，方向安全）
 
   async function flushBacklog() {
+    if (!notifyEnabled) return; // 播报全关（v21）：积压保持原样——不补发也不丢弃
     const backlog = readBacklog();
     if (!backlog.length) return;
     const t = now();
@@ -532,6 +538,7 @@ function writeBacklog(list) {
  *  仅走对话型机器人（共用应用）私聊 NETLOG_NOTIFY_OPEN_IDS；
  *  任一目标成功即视为送达；全部失败抛错（调用方积压）。 */
 async function sendNotify(text) {
+  if (!CONFIG.notifyEnabled) throw new Error('通知已全关（NETLOG_NOTIFY_ENABLED=false）');
   const tasks = [];
   for (const oid of feishu.NOTIFY_OPEN_IDS) {
     tasks.push({ name: `dm:${oid.slice(0, 12)}`, run: () => feishu.sendTextToOpenId(oid, text) });
@@ -775,7 +782,7 @@ function startServer() {
 
 function main() {
   console.log(`[netlog] 启动：lan=${CONFIG.lanHost}:${CONFIG.lanPort} wan=${CONFIG.wanTargets.map((t) => `${t.host}:${t.port}`).join('/')} traffic=${CONFIG.trafficUrls.length}个204源 interval=${CONFIG.intervalMs}ms threshold=${CONFIG.failThreshold}`);
-  console.log(`[netlog] 数据目录 ${CONFIG.dataDir}（net-log.jsonl + backlog.json）；通知=机器人私聊 ${feishu.NOTIFY_OPEN_IDS.length ? feishu.NOTIFY_OPEN_IDS.length + ' 个目标' : '（未配置 NETLOG_NOTIFY_OPEN_IDS，只落盘）'}`);
+  console.log(`[netlog] 数据目录 ${CONFIG.dataDir}（net-log.jsonl + backlog.json）；通知=${CONFIG.notifyEnabled ? '机器人私聊 ' + (feishu.NOTIFY_OPEN_IDS.length ? feishu.NOTIFY_OPEN_IDS.length + ' 个目标' : '（未配置 NETLOG_NOTIFY_OPEN_IDS，只落盘）') : '已全关（NETLOG_NOTIFY_ENABLED=false，事件照落盘可回放）'}`);
   console.log(`[netlog] 复活引擎 ${CONFIG.reviveEnabled ? '启用' : '停用'}：账号池 ${CONFIG.accountPool}${guard ? `（候选 ${(guard.summary().queueRemaining.length + (guard.summary().currentUser ? 1 : 0)) || '按池文件'}，首选项见 preferred）` : '（未初始化）'}`);
   startServer();
   // 断电感知（v11）：与上一进程最后心跳间隔超阈值 → 「离线后重新上线」卡

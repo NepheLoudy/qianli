@@ -11,12 +11,14 @@
  *   ⑰（2026-11-05 fmtTs 提升批）：main() 装配层（子进程整体拉起）：过期 jsonl
  *     （心跳间隔>OFFLINE_NOTIFY_MS）启动不再 ReferenceError crash loop、
  *     boot_after_offline 落盘+通知路径走通、常规重启不误报
+ *   ⑱（v21 播报全关批）：notifyEnabled=false → 即时私聊/积压/补发全静默、jsonl 照记可回放
  * 全部外部依赖走桩；用法：node scripts/stub-test-netlog.js
  */
 const path = require('path');
 // 钉死环境（必须在 require src/index.js 之前）：本地 .env 的真实 webhook 配置会经
 // loadDotEnv 渗入模块常量 CONFIG，把「未配置→积压」「推送失败→积压」两条桩路径变成真外发
 process.env.NETLOG_WEBHOOK_URL = '';
+process.env.NETLOG_NOTIFY_ENABLED = ''; // v21：钉死播报开启（防本地 .env 的 false 经 loadDotEnv 渗入 CONFIG——本套件主测开启路径）
 // feishu 模块桩：机器人本体私聊走这里（dmSent 记录送达）
 const ROOT2 = path.join(__dirname, '..');
 const feishuPath = require.resolve(path.join(ROOT2, 'src', 'feishu.js'));
@@ -354,6 +356,7 @@ process.env.NETLOG_EGRESS_URLS = '';
 process.env.NETLOG_FEISHU_APP_ID = '';
 process.env.NETLOG_FEISHU_APP_SECRET = '';
 process.env.NETLOG_NOTIFY_OPEN_IDS = '';             // 通知必失败 → 积压（离线语义）
+process.env.NETLOG_NOTIFY_ENABLED = '';              // 播报默认开（防本地 .env 的 false 渗入——本节测「通知失败→积压」语义）
 process.env.NETLOG_ROUTER_PASSWORD = '';             // routerWatch 停用
 process.env.NETLOG_ACCOUNT_POOL = ${JSON.stringify(path.join(dataDir, 'campus-accounts.local.json'))};
 process.env.NETLOG_DEMOTE_FILE = ${JSON.stringify(path.join(dataDir, 'account-demotions.json'))};
@@ -438,6 +441,40 @@ global.setInterval = function (fn, ms, ...rest) {
       `status=${rC.status} events=${JSON.stringify(evC.map((e) => e.event))}`);
 
     for (const d of [dirA, dirB, dirC]) { try { fs.rmSync(d, { recursive: true, force: true }); } catch { /* tmp 清理尽力而为 */ } }
+  }
+
+  console.log('\n== 18. 播报全关（v21）：notifyEnabled=false → 不外发不积压、补发跳过 ==');
+  {
+    const d18 = makeDeps({});
+    d18.notifyEnabled = false;
+    const e18 = createEngine(d18);
+    await e18.tick(); // 首轮 up
+    const before18 = dmSent.length;
+    // 即时事件：持续断开报警（13 节同款驱动）
+    d18.wan = false; d18.clock += 60_000;
+    await e18.tick(); await e18.tick(); // wan_down（静默落盘）
+    d18.clock += 10 * 60_000 + 30_000; // 越过 downAlertMs(10min)
+    await e18.tick(); // wan_down_sustained → notify
+    check('播报全关：持续断开报警不外发', dmSent.length === before18, `增量=${dmSent.length - before18}`);
+    check('播报全关：报警事件也不积压', d18.backlogFile.length === 0, `backlog=${d18.backlogFile.length}`);
+    // 过程事件：emit 直发路径（wanGuard 同款调用面）
+    await e18.emit('revive_start', '模拟过程事件');
+    check('播报全关：过程事件只落盘不积压', d18.backlogFile.length === 0, `backlog=${d18.backlogFile.length}`);
+    // flushBacklog 跳过：预置一条积压，断言不被补发也不被清
+    d18.backlogFile.push({ id: 'seed-1', ts: d18.clock, event: 'legacy', detail: '旧积压', error: 'seed' });
+    await e18.flushBacklog();
+    check('播报全关：积压保持原样（不补发不丢弃）', d18.backlogFile.length === 1 && dmSent.length === before18,
+      `backlog=${d18.backlogFile.length} 增量=${dmSent.length - before18}`);
+    // 对照组：开关未配置=默认开，同驱动即时报警照发
+    const dOn = makeDeps({});
+    const eOn = createEngine(dOn);
+    await eOn.tick();
+    const beforeOn = dmSent.length;
+    dOn.wan = false; dOn.clock += 60_000;
+    await eOn.tick(); await eOn.tick();
+    dOn.clock += 10 * 60_000 + 30_000;
+    await eOn.tick();
+    check('对照：开关未配置默认开启，即时报警照发', dmSent.length > beforeOn, `增量=${dmSent.length - beforeOn}`);
   }
 
   console.log(`\n结果: ${pass} 通过, ${fail} 失败`);
