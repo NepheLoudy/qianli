@@ -214,4 +214,4 @@
 - **开关语义**：`NETLOG_NOTIFY_ENABLED`（默认开，`!== 'false'` 模式同 reviveEnabled、deps 可注入）——`false` 时 ①notify() 直接返回：不外发不积压（emit 先 record，jsonl 事件流照记可回放）②flushBacklog() 跳过：积压文件保持原样（不补发不丢弃）③sendNotify() 抛错兜底（全部调用方带 catch）④启动日志显形「通知=已全关」。
 - **桩测试**：第 18 组 +5 断言（即时报警不外发/不积压、过程事件只落盘、积压原样、对照默认开）。踩坑实录：本地 .env 置 false 后 loadDotEnv 渗入测试进程，把 21 条通知路径断言打哑（51/21）——顶部与 17 节子进程 preload 各补一处 NETLOG_NOTIFY_ENABLED 环境钉死（''≠'false'→开启）后 72/0。三套 162 断言全绿（netlog 72/wanguard 57/routerwatch 33）。
 - **文档**：README 事件与通知节补开关条目 + 顺手清理 :26 预存游离 `+`；`.env.example` 补 `NETLOG_NOTIFY_ENABLED` 行；.env 注释修正僵尸 webhook 表述；lab-network skill §八同款过时句（「webhook 与 approval-bot 播报同群」→机器人本体私聊+播报已全关）同步修正。
-- **线上**：部署目标 .env 置 NETLOG_NOTIFY_ENABLED=false，push 后 pm2 delete+start 生效。恢复方式：改 true 重启。
+- **线上**：部署目标 .env 置 NETLOG_NOTIFY_ENABLED=false，push 后 pm2 delete+start 生效。恢复方式：改 true 重启。⚠ 事故记录：首推时编辑 .env 的 new_string 漏带回三行（NETLOG_API_TOKEN/FEISHU_APP_ID/FEISHU_APP_SECRET）并随部署上线——启动日志「revive 端点未配置已锁定」暴露，同批补回重推复验（revive 已鉴权启用、通知=已全关维持）。教训：.env 这类不进 git 的关键文件编辑后必须逐行 diff 自检，Edit 的新串漏行不会有任何工具兜底。

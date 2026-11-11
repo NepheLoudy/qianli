@@ -89,7 +89,7 @@ description: qianli 实验室/家庭网络拓扑、设备接入与断网排查�
 - 拓扑探测端点：`dashboard/server.js` `GET /api/network`（NET_TARGETS 定义处即拓扑清单，改拓扑先改它）+ 前端 `public/index.html` 渲染；
 - 旧 NAS 关停/验收脚本模板：曾用 `shutdown-old-nas.js`（已删，模式：SSH→pm2 ls→kill→systemctl disable→复核）；
 - 部署链路：见 qianli-deploy skill（本 skill 不覆盖部署步骤）。
-- **网络事件日志探针（2026-09-27 起）**：`netlog/`（生产机 pm2 `qianli-netlog`，:3016）持续探测主路由 superqianli 与公网出口并落盘——断网期间内网手段全部失联时的「事后现场」就在它的 `net-log.jsonl`（部署目标 `C:/qianli/data/netlog/`）；wan 恢复瞬间积压事件自动汇总成飞书卡补发（webhook 与 approval-bot 播报同群）。断网排查先看它：`curl localhost:3016/api/netlog/summary`（或读 JSONL）即可回答「什么时候断的/断了几段/各多久/出口 IP 变没变」，不用再翻 pm2 日志猜。注意：探针跑在生产机上，生产机自身断电时它同死（物理限制）。
+- **网络事件日志探针（2026-09-27 起）**：`netlog/`（生产机 pm2 `qianli-netlog`，:3016）持续探测主路由 superqianli 与公网出口并落盘——断网期间内网手段全部失联时的「事后现场」就在它的 `net-log.jsonl`（部署目标 `C:/qianli/data/netlog/`）；wan 恢复瞬间积压事件自动汇总成飞书卡补发（**v6 起走机器人本体私聊，无群卡通道**）。**2026-11-11 曼波拍板播报全关（v21）**：`NETLOG_NOTIFY_ENABLED=false`——私聊/积压补发全静默，jsonl 照记可回放，现场问询一律走 summary API。断网排查先看它：`curl localhost:3016/api/netlog/summary`（或读 JSONL）即可回答「什么时候断的/断了几段/各多久/出口 IP 变没变」，不用再翻 pm2 日志猜。注意：探针跑在生产机上，生产机自身断电时它同死（物理限制）。
 
 ## 九、4A 打印机隔离区路由器（OpenWrt，2026-09-20 改造完成）
 
