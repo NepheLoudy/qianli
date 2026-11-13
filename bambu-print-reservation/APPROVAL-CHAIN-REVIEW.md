@@ -73,5 +73,6 @@ notifyReviewers/notifyReviewResult 虽内部 try/catch，但 webhook 本身超�
 | 项 | 状态 |
 |---|---|
 | #1 竞态 / #2 停机静默 / #3 enqueue 滞留 / #21 正则合一 | ✅ v56 修复 |
-| #4 chat 鉴权 | ⏸ 待办（需与 hub 同批） |
+| #4 chat 鉴权 | ✅ 已修（2026-10-18：`chatCommandGuard` 本机回环默认门 + 跨机 X-API-Token，`index.js`） |
+| #13 policy 窗口鉴权 | ✅ 已修（v62：`GET /api/print/policy` 挂 `requireUser`，`index.js`） |
 | 其余 | 📋 本报告留档，按需开批次 |

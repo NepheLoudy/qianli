@@ -8,7 +8,7 @@
 
 ## 自动分发模式（v86+，DISPATCH_AUTO=true 开启）
 
-提交 → 硬冲突/程序初审照拦 → **自动通过入队**（审批人记「自动分发」）→ 机型学习选机（同型号优先 → 历史成功率择优 → 品牌族降级标低置信）→ 耗材槽位评分（匹配分级/颜色距离/槽位历史/余量）→ 自动切片开打。审批台降级为**复核干预面板**（三段视图：自动选机失败转人工/进行中改派取消/最近处理）。学习信号全部来自预约记录（零新存储）；失败归因报告（failCode × 参数分布）随模型卡透出。
+提交 → 硬冲突/程序初审照拦 → **自动通过入队**（审批人记「自动分发」）→ 机型学习选机（同型号优先：无闸机优先（v105）→ 历史成功率 → 最近使用；持闸机（等取件回执）在同型号内有空闲兄弟机时让位、仅有持闸机时照选入队排队（闸摘自动开打）；无同型号**不做跨型号降级**（2026-11-05 修复，v65 品牌族降级是逻辑死路已废），noSameModel 原因由提交链播报给申请人）→ 耗材槽位评分（匹配分级/颜色距离/槽位历史/余量）→ 自动切片开打。审批台降级为**复核干预面板**（三段视图：自动选机失败转人工/进行中改派取消/最近处理）。学习信号全部来自预约记录（零新存储）；失败归因报告（failCode × 参数分布）随模型卡透出。
 
 ## 单据总览（v91+，审批台全量管理）
 
@@ -34,10 +34,10 @@
 | --- | --- | --- | --- |
 | X1C / H2D | MQTT 8883 + SFTP 22（bblp + Access Code），AMS 完整 | ✅（3mf） | RTSP（代理待接） |
 | P1 / A1 | MQTT 8883 + FTPS 990（FTP 21 回退；2026-10-07 实测新固件 21 明文口已关） | ✅（3mf） | TCP 6000 H.264（WS 中继 + WebCodecs，v53） |
-| 闪铸 5M/5M Pro（AD5M 系） | HTTP REST 8898（LAN Only 模式；serialNumber+checkCode 认证，复用 PRINTER_SERIALS/PRINTER_ACCESS_CODES） | ✅（gcode/g/gx） | 8080 MJPEG 代理（v53） |
-| 闪铸 Creator 5 Pro（四喷头） | 按 5M 兼容实现，协议社区未覆盖——真机以 /debug rawState 校后修 | ✅（gcode，待真机验证） | 同上 |
+| 闪铸 5M/5M Pro（AD5M 系） | HTTP REST 8898（LAN Only 模式；serialNumber+checkCode 认证，复用 PRINTER_SERIALS/PRINTER_ACCESS_CODES） | ✅（.gcode.3mf，分发链提内嵌 gcode 直发；纯 .gcode/.gx/.g 已拒收，2026-11-06） | 8080 MJPEG 代理（v53） |
+| 闪铸 Creator 5 Pro（四喷头） | 按 5M 兼容实现，协议社区未覆盖——真机以 /debug rawState 校后修 | ✅（.gcode.3mf 同 5M 口径，待真机验证） | 同上 |
 
-- **文件格式↔品牌隔离（v53）**：拓竹吃 Bambu Studio 3mf、闪铸吃 FlashPrint/Orca（闪铸 profile）gcode——切片格式互不兼容，分发匹配按源文件扩展名隔离，跨品牌机不可见；提交时 gcode 与 3mf 同走审批直通。
+- **文件格式↔品牌隔离（v53）**：拓竹吃 Bambu Studio 3mf、闪铸吃 FlashPrint/Orca（闪铸 profile）切片产物——切片格式互不兼容，分发匹配按**内嵌机型指纹**隔离（切片文件内嵌 printer_model 优先，扩展名仅兜底），跨品牌机不可见；提交口径两品牌统一 .gcode.3mf（纯 .gcode/.gx/.g 一律 400 拒收，2026-11-06 曼波令终裁）。
 - **纯内网形态（2026-10-14，4A 拔线批）**：打印机区 192.168.2.x 经 4A 上行主网（wan 拔线=无云），机器人（31.57）经静态路由 192.168.2.0/24→192.168.31.98 直连打印机 LAN 端口；拓竹本地端口（8883/990/6000）云模式/LAN 模式均常开（10-07 实测），闪铸需在屏幕开「LAN Only 模式」。主网设备看画面/观察台走本服务代理（/status.html），无需自身加路由。
 - **状态观察台（v53）**：`/status.html`——机队卡片（状态/进度/温度/AMS 槽位盘）+ 画面（闪铸 MJPEG、拓竹 WebCodecs）+ 指令条（暂停/恢复/腔灯/停止，admin）。
 
@@ -50,18 +50,22 @@
 | `/print-ams` | 所有打印机装载耗材明细 |
 | `/print-list` | 全部预约记录 |
 | `/print-pending` | 待审批预约 |
+| `/print-bind` | 飞书自助绑定（2026-10-29）：网页生成 6 位绑定码 → 飞书发 `/print-bind 码`，绑定后打印完成/失败/取消/驳回等进程事件私信到本人 |
+| `/print-pickup` | 取件回执（2026-10-29）：打印完成私信带 6 位取件码，回 `/print-pickup 码` 即确认取件+清机端残留，等价网页「确认取件」按钮 |
 
 > 指令收窄（2026-10-05）：聊天通道仅保留**查看类**；提交/审批/人工指定分发请用打印预约页面（人工恢复 `POST /api/dispatch/manual`，reviewer+）。
 
-播报（webhook 群机器人）：新预约通知、入队、打印开始/完成/失败、缺料提醒（30 分钟节流）——路线 A 下播报仍走群机器人 webhook（`BOT_WEBHOOK_URL` 清空即静默）。**晚间静默**：上述播报落在 02:00–09:00（`QUIET_HOURS_START/END` 可配、`QUIET_HOURS_DISABLED=1` 关闭）内时积压到 09:00 原样补发（打印机控制/写表不延迟，只有消息延后；/print-* 指令回复不积压），详见 `src/utils/quietHours.js` 与顶层 AGENTS.md「晚间静默」。
+播报（webhook 群机器人）：新预约通知、入队、打印开始/完成/失败、缺料提醒（30 分钟节流）——路线 A 下播报仍走群机器人 webhook（`BOT_WEBHOOK_URL` 清空即静默）；打印进程事件（完成带取件码、失败/无法打印转人工、取消、审批结果）另走**申请人飞书私信（DM）回执**（v94 起；未绑定飞书账号静默跳过，页面状态可见，绑定走 `/print-bind`）。**晚间静默**：上述播报落在 02:00–09:00（`QUIET_HOURS_START/END` 可配、`QUIET_HOURS_DISABLED=1` 关闭）内时积压到 09:00 原样补发（打印机控制/写表不延迟，只有消息延后；/print-* 指令回复不积压），详见 `src/utils/quietHours.js` 与顶层 AGENTS.md「晚间静默」。
 
 ## 分发匹配规则（按序）
 
-1. 打印机空闲（gcodeState=IDLE/FINISH）且 Bambu 系
+1. 打印机空闲（状态归一：空闲/已完成；FAILED 残留放行——新任务开打自动顶掉残留，2026-10-16）且过品牌隔离（拓竹/闪铸各自参与，跨品牌不可见）、排除回执闸（上一单取件确认前本机不开新件，2026-10-28）
 2. 表单「指定打印机」优先
 3. AMS 精确材料匹配 + 颜色近似（ΔE 阈值可配）
 4. 家族匹配（PLA-CF ↔ PLA）
 5. 加急优先出队，队首缺料不阻塞后续任务
+
+> **排队池语义（v99/v105）**：同型号机都在等取件回执（挂闸）时，本单照常入队排队——取件确认或 TTL 超时（`DISPATCH_RECEIPT_TTL_HOURS` 默认 24h）自动放行后，下一轮匹配自动开打。
 
 ## 分发互斥（2026-09-13）
 
@@ -76,7 +80,7 @@
 
 ## 事件链路（qianli 架构）
 
-本服务不消费任何飞书事件——长连接只属于 feishu-gateway，审批实例/审批任务/表格事件转发链与 `POST /api/feishu/event` 端点已随路线 A 退役（遗留文件 v46 删除）；唯一指令入口 = hub 转发 `POST /api/chat/command`（查看类指令），群播报走 webhook。分发失败按 `DISPATCH_MAX_RETRIES` 次上限重试，每次间隔 `DISPATCH_RETRY_COOLDOWN_MS`，超限退出队列转人工。
+本服务不消费任何飞书事件——长连接只属于 feishu-gateway，审批实例/审批任务/表格事件转发链与 `POST /api/feishu/event` 端点已随路线 A 退役（遗留文件 v46 删除）；唯一指令入口 = hub 转发 `POST /api/chat/command`（查看类指令），群播报走 webhook。分发失败按 `DISPATCH_MAX_RETRIES` 次上限重试，每次间隔 `DISPATCH_RETRY_COOLDOWN_MS`，超限退出队列转人工；确定性失败（noRetry 标记，如工程 3mf 闸拦截，v100）跳过重试直接终局——重试也不可能成功。
 
 ## 定制窗口
 
@@ -94,6 +98,7 @@ npm run push
 
 - **分发中断自愈**：进程在下载/上传链中途重启，恢复时中断任务重回队列完整重发（不静默丢单；若打印机已被上次尝试开打，重发会覆盖——比丢单可感知）；
 - **printing 幽灵巡检**：每 10 分钟检查打印中任务——超过巡检阈值且打印机实况已空闲的任务补「已完成」收尾。阈值动态化（2026-10-08）：有打印机上报预估时长（start 时捕获 mc_remaining_time）按「预估×2 且 ≥1h」，无预估退回固定 12h；
+- **回执丢失对账（reconcileLostAck，2026-10-16 起；v102/v103 强化）**：队列任务 × 打印机实况周期对账——机端实际在打同文件而引擎当它失败回滚的，补记「打印中」防同一文件二次开打；v102 幽灵在册互换（在册任务与机端实况不符却匹配队列另一单时，摘除在册回排队尾、给真在打任务让路）；v103 修复「只写 DB 不回内存队列」的引擎失踪（幽灵重排推回队列才名副其实）；
 - **重启间隙完成补收尾（2026-10-08）**：finish 事件落在停机/重启窗口时，重启后首个 state 报文实况为 FINISH/IDLE 且引擎在册任务 → 立即补发 finish/idle 收尾（原实现要等 12h 巡检）；
 - **状态文件损坏隔离（2026-10-08）**：分发状态/预约存储/账号存储损坏时坏文件改名 `.corrupt-<ts>` 留档再按空启动——不再静默覆盖，可人工抢救；
 - **人工恢复通道**：自动重试耗尽的任务保留在 givenUp 列表（已随 v29 落盘持久化，重启不丢），页面黄条（reviewer+）一键「指定打印机恢复」（下拉选机，`POST /api/dispatch/manual`）；
@@ -130,6 +135,8 @@ npm run push
 
 `src/services/ruleSuggestions.js`（待审池）+ `src/services/slicerExtract.js`（3mf 提取）+ `src/services/modelFeatures.js`（STL 几何体检，2026-10-11）：
 
+> **退役注记（v84 起）**：修正建议待审池（`/api/print/rule-suggestions*` 端点，含修正回路/审核闸门/采纳转正链）与「memorizeFit 记忆为规则候选」按钮（v92 删）已退役——数值参数学习由**参数智能层**承担（2026-10-30 v60/v61，见文末节），待审池自 v62 清理后已无前端生产者（`ruleSuggestions.js` 文件保留，`ruleFitter.js` 的 `median/expertOf` 由 paramModel 消费）。下述历史描述保留备查。
+
 - **修正回路**：审批人/使用者在记录上点「建议修正」→ 编辑参数 + 填理由 → 自动携带该单勾选组合（`normalizeWhen` 归一化单据 selection 为规则 when 形态）入待审池；**相同 when+set 自动聚合计数**（高频修正浮顶，审核负担不随修正次数增长）；
 - **冷启动（专家作品导入）**：上传专家手工切片 3mf → `extractFrom3mf` 解包（zip：`project_settings.config` JSON 优先 / gcode 头部注释兜底）→ Bambu 参数名映射白名单内核心参数（`%/枚举`清洗）→ 与 baseline 的 diff 即候选草稿 → 以页面当前勾选为条件提交待审池。⚠️ 映射表按 Bambu Studio 常见导出字段编写，首次真机导入以 raw 键值人工核对并校准；
 - **几何体检（2026-10-11 模型特征自拟合）**：STL/3mf 提交前 `analyzeStl`/`analyze3mf` 分析裸网格（焊接索引 + 边表；3mf 解 `3D/Objects/*.model` XML，多零件逐件分析）——①通孔=拓扑亏格（genus，多体相加）+ 平面片边界环内环拟圆（Kåsa 最小二乘拿孔径，上下对合口去重）；②悬空=面法线与 -Z 夹角分带（贴底层不算悬空）+ 上半程悬端代理；③贴底接触面积/占地比；④曲面占比=总面积−显著平面片。映射为 taxonomy「几何体检」组 4 标签**预勾选建议**（只 true 不 false，用户可改），提交后照旧走规则引擎（几何数值不进规则 when，`validateRule` 池内校验不被打穿）；体检快照随单入档（`modelFeatures` 字段，学习回路将来吃「人工修正 vs 自动建议」差值）。能力边界：STL 二进制/ASCII + 3mf 工程文件（已切片 gcode.3mf 无对象网格只出参数）；>80MB 或单对象 >60 万三角面降级跳过；网格不闭合时孔数按圆口检出计并标注；壁厚/倒扣不做。规划中：STEP（B-rep 真特征：圆角/孔位精确）、几何预填与修正回路联动拟合；
@@ -163,6 +170,7 @@ npm run push
 | `POST /api/reservations/:id/approve`、`/reject`、`/review` | reviewer+ | 审批动作（仅待审批单可批/驳；通过即入队并回写排队中） |
 | `POST /api/reservations/:id/cancel`、`DELETE /api/reservations/:id` | 本人或 reviewer+ | 取消（排队/分发中/打印中均由 dequeue 兜住） |
 | `POST /api/reservations/:id/reprint` | 登录 | 复刻：已完成单一键带参重提（服务端复制源文件，需求链路重新定档） |
+| `POST /api/reservations/:id/receipt` | 登录 | 取件回执（v99 任意登录用户可确认）：清回执闸放行该机队列 + 单据落回执记录（回执人如实记录） |
 | `PUT /api/reservations/:id` | admin | 状态变更走本地状态机 |
 | `GET /api/print/colors` | 无 | 颜色字典窗口（可匹配色名全集+颜色距离阈值，提交页 datalist 数据源） |
 | `GET /api/printers/:id/debug` | admin | 真机联调核对面：raw state 报文全量 + 连接/新鲜度元信息 |
@@ -175,7 +183,7 @@ npm run push
 ## 测试
 
 ```
-npm test    # 全量自动发现 test/*-test.js（当前 40 套，与 push.js 闸门同源）
+npm test    # 全量自动发现 test/*-test.js（当前 43 套，与 push.js 闸门同源）
 ```
 
 覆盖：分发引擎（匹配/持久化/闸门竞态）、预约状态机、标签池与规则库、学习回路三件套（param-model 15 断言含 MLP 反向传播正弦证据/饱和曲线竞技场）、几何链路（体检/摆向/分层）、账号与运营、切片与打印机协议、分页查询（v91，27 项含数组参数防御）与复刻血缘（v91，5 项）。各套清单见 [ONBOARDING.md](ONBOARDING.md) 第 8 节。

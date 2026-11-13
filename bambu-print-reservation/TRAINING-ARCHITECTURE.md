@@ -122,8 +122,8 @@ applyRules（28 条种子规则，priority 升序叠加，大者赢）
 
 - 口径：只在**专家声明的键**上评估（专家没写 = 接受默认，不罚分）；值归一化比较（`15%≡15`、布尔、3 位小数）；
 - 拟合 100% = 规则库已完整解释此切法；拟合低 = 差异项即**「可被记忆的参数」**；
-- **记忆通路**：差异项一键 → 规则候选进待审池（`POST /api/print/rule-suggestions`）→ reviewer 采纳 → 规则库学会此 case。`src/services/paramFit.js` 的 `memorizable(fit)` 就是这条通路的数据形态；
-- 实现链条：`computeFit()`（勾选/材料/切片任一变化即重算）→ `POST /api/training/fit` → 拟合条 + 差异表 + 记忆按钮。
+- **记忆通路**（**v84 起待审池链路退役**：`POST /api/print/rule-suggestions` 路由已删、v92 memorizeFit 记忆按钮一并下线——数值参数学习改由参数智能层 v60+ 承担，下述历史链路仅存代码遗迹）：差异项一键 → 规则候选进待审池 → reviewer 采纳 → 规则库学会此 case。`src/services/paramFit.js` 的 `memorizable(fit)` 保留为这条通路的数据形态；
+- 实现链条：`computeFit()`（勾选/材料/切片任一变化即重算）→ `POST /api/training/fit` → 拟合条 + 差异表（记忆按钮已随 v92 退役）。
 
 ### 4.2 3D 工况标注工房（2026-10-12 曼波设计：「人修正几何链路盲区」的接口）
 

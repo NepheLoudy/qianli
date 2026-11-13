@@ -15,9 +15,9 @@
   │ 提交模型 + 勾选工况          │ 点通过                     │
   ▼                            ▼                           ▼
 规则引擎定档切片参数 ──► 入队 ──► 打印机空闲触发匹配 ──► AMS 装料匹配
-（taxonomy 勾选 → processRules 规则库 → 参数快照）      （材料+颜色+品牌）
+（taxonomy 勾选 → processRules 规则库 → 参数快照）      （材料+颜色；品牌按内嵌机型指纹）
                                                             │
-群播报 ◄── 打印完成/失败/开始 ◄── MQTT 监听 ◄── 上传 3mf/gcode ◄┘
+群播报 ◄── 打印完成/失败/开始 ◄── MQTT 监听 ◄── 上传 3mf / .gcode.3mf ◄┘
 ```
 
 四台机器混编：拓竹 X1C / P1S / A1 / H2D + 闪铸 A5P，全部**局域网直连**（不经厂商云）。
@@ -48,7 +48,7 @@ npm start          # 或 node src/index.js，默认 http://localhost:3001
 ### 2.3 跑测试
 
 ```bash
-npm test           # 全量自动发现 test/*-test.js（当前 40 套，断言数见各文件尾部）
+npm test           # 全量自动发现 test/*-test.js（当前 43 套，断言数见各文件尾部）
 node test/param-model-test.js   # 单跑一套
 ```
 
@@ -94,7 +94,7 @@ src/
     orientationExtract.js← 专家摆向标签提取（3mf matrix → 四元数）
     trainingStore.js     ← 训练样本库（模型特征×工况标注×专家参数 三方合成）
     ruleFitter.js        ← 阈值规则拟合（v84 已删 fitRules/lofoEvaluate——只余 median/expertOf 供 paramModel 消费）
-    ruleSuggestions.js   ← 规则建议待审池（人工修正→聚合计数→reviewer 采纳）
+    ruleSuggestions.js   ← 规则建议待审池（人工修正→聚合计数→reviewer 采纳）——v84 已退役（路由移除，无生产写入），文件保留
     paramFit.js          ← 拟合度（引擎参数 vs 专家参数，知识覆盖缺口度量）
     chatService.js       ← /print-* 聊天指令（唯一入口 = hub 转发 POST /api/chat/command）
     printerFleet.js      ← 机型登记（.printer-fleet.json）
@@ -121,8 +121,8 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 2. `featureDerive.deriveFeatures` 算 feat 字典 → `processRules.applyRules(selection, {material, feat})` 出参数快照（硬冲突 400）→ 参数智能层 `applyToParams`（有已采纳模型时按置信度修正数值参数，provenance 随单存档）；
 3. `reservationStore.create` 落库（状态机起点「待审批」）→ 群播审批提醒卡（过静默闸）；
 4. 审批人 `POST /api/reservations/:id/approve` → 校验通过 → **同步入队**（关键路径内禁 await，防审批取消竞态）→ 状态「排队中」；
-5. dispatcher 每 5s 扫队列：空闲拓竹机 + AMS 材料匹配 → 自动切片（需求单）/直接用文件（直通单）→ SFTP/FTPS 上传 → MQTT 下发 → 「打印中」；
-6. MQTT `gcodeState` 变迁：FINISH→「已完成」+完成播报 + 样本 outcome/sliceStats 回填；失败→取证（HMS 时效/人因码/镜像码三重校验）→ 自动重排（30 分钟二次失败熔断进放弃池）。
+5. dispatcher 扫队列（事件驱动 + 每分钟兜底）：空闲判定=状态归一 + FAILED 残留放行 + 品牌/文件格式隔离（拓竹、闪铸都参与自动分发）+ 取件回执闸排除 → AMS 材料匹配 → 自动切片（需求单）/直接用文件（直通单）→ SFTP/FTPS 上传 → MQTT 下发 → 「打印中」。同型号机都在挂取件闸时提交链入队排队（v99 排队池），闸摘或 TTL 超时自动放行后开打；
+6. MQTT `gcodeState` 变迁：FINISH→「已完成」+完成播报 + 样本 outcome/sliceStats 回填；失败→取证（HMS 时效/人因码/镜像码三重校验）→ 自动重排（确定性失败直接终局不重试；30 分钟二次失败熔断进放弃池）。
 
 ## 4. 核心概念（按依赖顺序）
 
@@ -130,7 +130,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 
 - **taxonomy** = 用户能勾什么的词汇表。铁律：每个标签必须能回答「映射到什么切片参数」（mapsHint）；维度正交；默认不勾=常规件。
 - **processRules** = 勾选怎么翻译成切片参数。参数白名单 22 个（`PARAM_NAMES`），规则 `when`（枚举/区间/`feat.*` 派生特征）→ `set`（白名单内参数），按 priority 升序叠加、大者赢；材料参数（materialExclude/Prefer）跨规则**并集**。**学习型工艺因果一律动态拟合、不手写**（曼波定则，手写已撤过一次）。
-- 规则改动全走待审池（ruleSuggestions）：使用中点「建议修正」→ 聚合计数 → reviewer 采纳 → upsertRule。规则文件 `.process-rules.json` 热改即写回、部署不丢（生产配项目外数据目录）。
+- 规则改动：现行走规则热改窗口 `POST /api/print/process-rules`（upsert/remove/reset，token；改动预览 `POST /api/print/process-rules/preview`）。~~待审池链路（ruleSuggestions：点「建议修正」→聚合计数→reviewer 采纳）~~ 已随 v84 退役（路由移除，train.html 旧注释残留勿信）。规则文件 `.process-rules.json` 热改即写回、部署不丢（生产配项目外数据目录）。
 
 ### 4.2 几何体检与 3D 标注
 
@@ -151,8 +151,10 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 ### 4.4 分发引擎 dispatcher（最复杂的一个文件）
 
 - 队列匹配五规则：拓竹空闲 + 指定优先 + AMS 精确材料 + 颜色 ΔE + 家族回退（PLA-CF↔PLA）；加急优先出队，队首缺料不阻塞。
+- **取件回执闸**：打完即挂闸等取件确认，闸挂期间本机对自动匹配不可见；挂闸超 `DISPATCH_RECEIPT_TTL_HOURS`（默认 24h）自动放行防单闸堵死机型队列（manual-\* 人工闸豁免 TTL）。
+- **同型号排队**（v99/v105）：同型号机都在挂闸时新单照常入队排队（不转人工散伙），闸摘或 TTL 放行后自动开打；同型号内无闸机优先。
 - **分发闸门**：上传/下发是分钟级 await 链，闸门在入口同步判定（分发中的机器对自动匹配不可见）；刻意不持久化（崩溃后清零重新评估）。
-- **重试**：失败自动重试 3 次（冷却 60s）→ 放弃池（页面一键人工恢复）；同单 30 分钟二次失败熔断（防误判复打）。
+- **重试**：失败自动重试 3 次（冷却 60s）→ 放弃池（页面一键人工恢复）；确定性失败（工程 3mf 闸等 noRetry 拦截）跳过重试直接终局（v100——重试也不可能成功）；同单 30 分钟二次失败熔断（防误判复打）。
 - **故障取证**（谁取消了打印）：HMS 时效（只认本次开打后的条目）、同值镜像码不算独立证据、人因终止四通道（控制台/拓竹 400C/闪铸 canceling/无证据 FAILED 反转）——**别再加取消码，接故障证据字段**。
 - 状态持久化：队列/打印中映射/放弃池落盘 `DISPATCH_STATE_FILE`，重启恢复；文件损坏隔离 `.corrupt-<ts>`。
 
@@ -164,7 +166,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 | P1S/A1 | MQTT 8883 | FTPS 990（21 已关） | TCP 6000 TLS JPEG 帧流（服务端重封装 MJPEG） |
 | 闪铸 A5P | HTTP 8898（LAN Only，serialNumber+checkCode） | HTTP | 8080 MJPEG（需 streamCtrl 开流） |
 
-品牌与文件格式强隔离：拓竹只吃 3mf、闪铸只吃 gcode/gx/g。机型怪癖详见记忆档案与 PRINTER-LAN-API.md。
+品牌与文件格式强隔离：品牌按**内嵌机型指纹**判定（gcode 头 printer_model / 3mf 内嵌机型，无指纹不按扩展名瞎猜）；两品牌切片产物统一 .gcode.3mf（纯 .gcode/.gx/.g 提交口封死）——拓竹直接吃 3mf，闪铸分发链从 3mf 提内嵌 gcode 直发。机型怪癖详见记忆档案与 PRINTER-LAN-API.md。
 
 ## 5. 存储与配置
 
@@ -188,7 +190,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 ## 6. 日常开发 SOP
 
 ### 加/改一条切片规则
-1. train.html 用「建议修正」或直接改库内规则（admin）→ 待审池 → 采纳。**不要直接改 processRules.js 的种子**（文件规则会按 id 合并，种子改动到不了已有文件的现网）。
+1. 直接改库内规则（admin，规则热改窗口 `POST /api/print/process-rules`）——待审池链路已随 v84 退役。**不要直接改 processRules.js 的种子**（文件规则会按 id 合并，种子改动到不了已有文件的现网）。
 2. 改 `taxonomy` 字段时：TAXONOMY_VERSION 必须递增；每字段 mapsHint 非空；跑 `node test/taxonomy-test.js`。
 
 ### 加一个可学习的切片参数
@@ -256,15 +258,18 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 | 测试文件 | 覆盖 |
 | --- | --- |
 | dispatcher-test / persist / manual-race | 队列匹配/持久化恢复/闸门竞态 |
+| dispatch-learning-test / machine-pick-test / stub-test-receipt-pool / stub-test-engineering-gate | 分发学习器 / 切片件自动选机（无同型号不降级）/ v99 排队池+取件 TTL / v100 工程 3mf 分发闸——stub-\* 两套链外手跑 |
 | local-reservation-test / precheck-test / receipt-gate-test | 预约状态机/程序初审/回执闸 |
+| reservation-dm-quiet-test | 打印进程 DM 晚间静默闸（静默积压 09:00 补发） |
 | taxonomy-test / process-rules-test / rules-seed-sync-test | 标签池/规则库/种子同步 |
-| param-model-test（15 断言）/ orientation-learn-test / learning-loop-test | 学习回路三件套（含 MLP 正弦/饱和曲线/竞技场闸门） |
-| model-features-test / model-orient-test / feature-derive-test / feature-labels-test / gcode-layers-test / golden-parts-test | 几何链路 |
+| param-model-test（15 断言）/ orientation-learn-test / learning-loop-test / training-store-test | 学习回路三件套（含 MLP 正弦/饱和曲线/竞技场闸门）+ 训练集样本库纯逻辑 |
+| model-features-test / model-orient-test / feature-derive-test / feature-labels-test / gcode-layers-test / golden-parts-test / geometry-dna-test / multi-model-match-test | 几何链路（含 v83 带孔 DNA 回归 / v75 多模型↔切片配对） |
 | auth-test / ops-test / bind-code-test / pickup-code-test / quiet-hours-test / bootstrap-test | 账号与运营 |
 | reservation-query-test / reprint-lineage-test | 分页查询（27 项含数组参数防御）/ 复刻血缘（5 项，v91） |
 | auto-slice-test / param-fit-test / slice-artifacts-test / printer-*-test / flashforge-client-test / rtsps-test / ams-filament-test / spatial-sanitize-test / source-pairing-test | 切片与打印机协议 |
+| engine3mf-test / printer-upload-channel-test / stub-test-gcode-meta / stub-test-model-lock / stub-test-nozzle-gate / stub-test-color-dispatch | 工程 3mf 自解析 / 上传通道分流（FTPS 优先）/ gcode 机型指纹 / 切片件机型锁 / 喷嘴闸（v97）/ 颜色分发降级（v98）——stub-\* 四套链外手跑 |
 
-写新测试照现有模子：`check(name, fn)` + assert + 末尾 `process.exit(failures ? 1 : 0)`，然后挂进 package.json 的 test 链。
+写新测试照现有模子：`check(name, fn)` + assert + 末尾 `process.exit(failures ? 1 : 0)`——`npm test` 经 `scripts/run-tests.js` 自动发现 `test/*-test.js`，无需挂链（2026-11-05 起）。
 
 ## 10. 遇到问题找谁/查什么
 

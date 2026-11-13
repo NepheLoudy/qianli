@@ -95,9 +95,9 @@ module.exports = {
       pm2Name: 'bambu-print-server',
       deployDir: '/c/qianli/opt/bambu-print-server',
       deploy: 'npm run push（纯 SFTP，无 git 步骤）',
-      role: '打印预约域（2026-10-05 路线 A）：自建前后端（页面注册/提交/审批/用户管理，双通道=stl/step 需求定档 + 3mf 审批直通）、账号体系（member/reviewer/admin，首位注册=admin）、需求标签池+工艺映射规则库+学习链路（待审池/3mf 参数提取+参数智能层：几何特征×工况→切片参数，kNN/岭回归/MLP 三族 LOFO 竞技场择优+置信门控）、份数续打与多色 AMS 匹配、一盘多件多源批量录入（几何指纹自动配对）；飞书仅剩群 webhook 播报与 /print-* 查看指令；打印机控制仅 HTTP（admin）。',
+      role: '打印预约域（2026-10-05 路线 A）：自建前后端（页面注册/提交/审批/用户管理，双通道=stl/step 需求定档 + 切片产物 .gcode.3mf 审批直通，纯 .gcode/.gx/.g 已封死 2026-11-06）、账号体系（member/reviewer/admin，首位注册=admin）、需求标签池+工艺映射规则库+学习链路（3mf 参数提取+参数智能层：几何特征×工况→切片参数，kNN/岭回归/MLP 三族 LOFO 竞技场择优+置信门控；规则待审池已随 v84 退役，规则热改走 process-rules 窗口）、份数续打与多色 AMS 匹配（v102 同耗材降级硬规矩：材料未知/不匹配不跨耗材瞎配）、一盘多件多源批量录入（几何指纹自动配对）、自动分发持闸排队池（v99/v105：同型号内无闸优先→成功率→最近使用，取件闸 TTL 24h 自动放行）、取件回执全民化（v99 任意登录用户可确认）；飞书仅剩群 webhook 播报与 /print-* 查看指令；打印机控制仅 HTTP（admin）。',
       listening: ['不消费消息事件（hub 转发 /api/chat/command，仅查看类指令）', '不消费飞书事件（路线 A 起已从网关 CONSUMERS 移除，2026-10-05）', 'GET /api/print/policy + GET /api/print/taxonomy + GET/POST /api/print/process-rules + POST /api/print/process-rules/preview（定制/规则窗口；rule-suggestions 待审池已随 v84 退役）', '训练/参数智能层端点（reviewer/admin 鉴权）：GET/POST /api/training/samples（model 多选≤12 自动配对）、POST /api/training/param-model/fit|adopt|mode|deactivate、GET audit|preview', '页面同源伺服 public/index.html（HTML no-cache）'],
-      commands: ['/print-help /print-status /print-list /print-pending /print-ams（仅查看类；/print-dispatch 已移除，人工恢复走页面黄条/运维台）'],
+      commands: ['/print-help /print-status /print-list /print-pending /print-ams（查看类）+ /print-bind 绑定码（飞书通知自助绑定，2026-10-29）+ /print-pickup 取件码（取件回执+清机端，2026-10-29；/print-dispatch 已移除，人工恢复走页面黄条/运维台）'],
       permissions: ['页面会话（bambu_session cookie，账号角色）或 X-API-Token（视作 admin）双通道鉴权', '审批/人工恢复=reviewer+，用户管理/打印机控制=admin'],
       localRun: { script: 'src/index.js', cwd: '', env: {} },
       quickActions: [
@@ -111,7 +111,7 @@ module.exports = {
         { m: 'POST', p: '/api/print/process-rules', d: '规则热改 upsert/remove/reset（token）' },
         { m: 'POST', p: '/api/print/process-rules/preview', d: '规则改动预览（requireUser，不入库）' },
       ],
-      notes: 'push 无 git 步骤；版本锚点取顶层归档提交；v37 路线 A 断飞书审批链转自建前后端（账号/标签池/规则库/学习链路）；v39 标尺类需求字段（when 范围条件）；v40 份数真实执行+多色 AMS 匹配+givenUp 恢复入口；v41 双通道（3mf 直通/stl-step 需求定档）；v42 审批拦未切片+3mf 内嵌参数上卡+每日数据快照备份（BACKUP_DIR，保留 14 天，uploads 不备份）+页面交互 usage 上报（local:<username> 命名空间）；v46 收缩量标尺（shrink_scale -3~+3→轮廓补偿三档）+复刻+队列 ETA+真机 debug 端点（GET /api/printers/:id/debug admin）+完成事件首报文补收尾+存储损坏隔离+颜色/打印机 datalist 校验+上传进度条+打印机卡控制按钮（admin）+审批链遗留文件清理；同批二次交付：页面展示优化（状态语义色+打印中脉冲/打印机失联标注 stateStale/队列条全员可见+明细/轨迹与参数折叠/已选摘要 chips/组折叠/移动端卡片化/表头 thead 语义修正）',
+      notes: 'push 无 git 步骤；版本锚点取顶层归档提交；v37 路线 A 断飞书审批链转自建前后端（账号/标签池/规则库/学习链路）；v39 标尺类需求字段（when 范围条件）；v40 份数真实执行+多色 AMS 匹配+givenUp 恢复入口；v41 双通道（3mf 直通/stl-step 需求定档）；v42 审批拦未切片+3mf 内嵌参数上卡+每日数据快照备份（BACKUP_DIR，保留 14 天，uploads 不备份）+页面交互 usage 上报（local:<username> 命名空间）；v46 收缩量标尺（shrink_scale -3~+3→轮廓补偿三档）+复刻+队列 ETA+真机 debug 端点（GET /api/printers/:id/debug admin）+完成事件首报文补收尾+存储损坏隔离+颜色/打印机 datalist 校验+上传进度条+打印机卡控制按钮（admin）+审批链遗留文件清理；同批二次交付：页面展示优化（状态语义色+打印中脉冲/打印机失联标注 stateStale/队列条全员可见+明细/轨迹与参数折叠/已选摘要 chips/组折叠/移动端卡片化/表头 thead 语义修正）；v84/v92 规则待审池与 memorizeFit 按钮退役（数值参数学习由参数智能层承担）；v94 选机死路修复（无同型号不降级，noSameModel fail-closed 播报转人工）+无法打印时申请人 DM 回执；v95 gcode 机型指纹提取；v96 切片件机型锁定全链+纯 gcode 全封（两品牌统一 .gcode.3mf）；v97 喷嘴直径三道硬闸+slice_info 告警红标；v98 切片栏锁死（材料随文件内嵌/份数固定 1）+颜色分发与色差自动降级；v99 排队池修复+取件闸 TTL 自动放行（DISPATCH_RECEIPT_TTL_HOURS 默认 24h）+确认取件全民化；v100 工程 3mf 分发闸+noRetry 确定性失败快速终局；v101 选机裸变量 P0 修复；v102 同耗材降级硬规矩+reconcileLostAck 幽灵互换；v103 幽灵补回队；v104 提交预约悬浮按钮常驻；v105 选机排队语义修正（同型号内无闸优先）；v106 时间显示时区修复',
     },
     {
       id: 'approval',
@@ -208,7 +208,7 @@ module.exports = {
       ],
       permissions: [
         '排班生成权限：名册 admin:true（或 DUTY_ADMIN_OPEN_IDS）',
-        '定时任务：D-7 20:05 值日预告（2026-09-24）/ D-1 20:00 / 当日 12:00 值日看板播报（今日+昨日战报）/ 18:30 询问 / 23:00 收口前临门提醒（私信未完结者）/ 24:00 收口（写表不延迟；2026-09-17 起 22:00→24:00）/ 00:30 对账 / 每小时整点快递未取播报（EXPRESS_BROADCAST_SCHEDULE，无未取不发）/ 打卡时长周报 ZKLINK_BROADCAST_CRON（默认周一 09:30 上海，播上一周）+ 每小时 5 分打卡补发对表（均过静默闸门）',
+        '定时任务：D-7/D-3 值日预告（双锚点×每天 10:05/15:05/20:05 三槽位，2026-10-07 v45 起；2026-10-08 起每人每天每域只发一条，后两槽位退化为失败兜底）/ D-1 20:00 / 当日 12:00 值日看板播报（今日+昨日战报）/ 12:05 午间提醒（v46：私信当日队员+提前开启监听会话）/ 18:30 询问 / 23:00 收口前临门提醒（文案告知验收延长至次日凌晨 4:00）/ D+1 04:00 收口（写表不延迟，仅回执过静默闸 09:00 补发；2026-10-22 曼波改 24:00→次日 04:00，00:00–04:00 打卡仍算当天）/ 04:30 对账 / 每小时整点快递未取播报（EXPRESS_BROADCAST_SCHEDULE，无未取不发）/ 打卡时长周报 ZKLINK_BROADCAST_CRON（默认周一 09:30 上海，播上一周）+ 每小时 5 分打卡补发对表（均过静默闸门）',
         '值日域管辖：DUTY_GROUP_CHAT_IDS 管辖群经 /api/duty/policy 下发，hub 群内闸门照此执行（含快递助手群内指令/取件词形/非@观察转发，2026-09-17）',
         '名册自动同步：启动/生成排班前/手动 refresh 读通讯录全员（open_id 直取），whitelist.json 为排除名单',
         '真实名册 config/members.json、whitelist.json 不进 git（push.js 显式 SFTP 上部署目标）',
@@ -217,11 +217,11 @@ module.exports = {
       localRun: { script: 'src/index.js', cwd: '', env: {} },
       quickActions: [
         { id: 'install', label: 'npm install', cmd: 'npm install', cwd: '' },
-        { id: 'test', label: '全量 stub 测试（22 套）', cmd: 'npm run test', cwd: '' },
+        { id: 'test', label: '全量 stub 测试（23 套）', cmd: 'npm run test', cwd: '' },
         { id: 'table-check', label: '表格字段校验', cmd: 'npm run table:check', cwd: '' },
         { id: 'plaza-tables', label: '动态广场建表（幂等）', cmd: 'node scripts/create-plaza-tables.js', cwd: '' },
       ],
-      notes: '表格已接线（机器人项目看板库·值日看板表，字段经 DUTY_FIELD_* 映射）；名册自动读通讯录（64 人全员入册，open_id 直取，whitelist.json 为排除名单——权威在部署目标侧，push 有备份+守卫，见顶层 AGENTS「运行时数据保护」）；值日完成/请假事件写入动态广场；接口 GET /api/duty/brief、GET /api/duty/policy、GET /api/duty/roster、GET|POST /api/duty/whitelist、POST /api/chat/command（转发载荷带 messageId，消息级幂等全路径生效；返回 {reply}）、/api/bot/test-*、POST /api/bot/rebalance（v37 排班重排：默认 dryRun 预览、confirm=true 执行，先自动全量备份到数据目录 backup/；X-API-Token）。v48（2026-10-07）ZKLink 打卡时长周报归并：独立仓 zklink-attendance-bot（v139 开仓，:3017）当日归并进 src/zklink/——复用应用身份（APP_ID/SECRET）做云文档留档、复用 DUTY_BOARD_WEBHOOK_URL 分发、复用 gateTask 触发体系；时长口径=按人按上海挂钟日两两配对求和（当日打卡按顺序 1→2、3→4…配对，段末减段首累加，落单卡/孤条不计）；数据源默认 import（ZKLink 网页端考勤组导出→POST /api/attendance/import），http 直拉待凭据校准（node scripts/zklink-probe.js）；打卡 state/exports/archive 在部署目标 duty-bot-data/zklink/（ZKLINK_STATE_FILE 等 .env 键）；wiki 留档 token=NFUSwCfififBDtkzGBDcFI0Bnih（曼波指定，.env 存放不进 git）',
+      notes: '表格已接线（机器人项目看板库·值日看板表，字段经 DUTY_FIELD_* 映射）；名册自动读通讯录（64 人全员入册，open_id 直取，whitelist.json 为排除名单——权威在部署目标侧，push 有备份+守卫，见顶层 AGENTS「运行时数据保护」）；值日完成/请假事件写入动态广场；接口 GET /api/duty/brief、GET /api/duty/policy、GET /api/duty/roster、GET|POST /api/duty/whitelist、POST /api/chat/command（转发载荷带 messageId，消息级幂等全路径生效；返回 {reply}）、/api/bot/test-*、POST /api/bot/rebalance（v37 排班重排：默认 dryRun 预览、confirm=true 执行，先自动全量备份到数据目录 backup/；X-API-Token）。v48（2026-10-07）ZKLink 打卡时长周报归并：独立仓 zklink-attendance-bot（v139 开仓，:3017）当日归并进 src/zklink/——复用应用身份（APP_ID/SECRET）做云文档留档、复用 DUTY_BOARD_WEBHOOK_URL 分发、复用 gateTask 触发体系；时长口径（2026-10-18 曼波定）=飞书考勤「打卡结果」平台上下班配对为主档（工作日边界 06:00 切天，跨天班次计起始日，单边卡标缺卡；import/http 兜底档仍用原始流水两两配对旧口径）；数据源 ZKLINK_DATA_SOURCE 现役=feishu 档（飞书考勤打卡结果 API 全自动，名单以飞书考勤组成员为准），import 兜底（ZKLink 网页端考勤组导出→POST /api/attendance/import），http 直拉待凭据校准（node scripts/zklink-probe.js）；v63 周报短卡（只发合计+留档链接）；v71 三档及格线自动勾选（核心45/正式35/梯队20，档位真源=27赛季花名册「三级认定」列）；打卡 state/exports/archive 在部署目标 duty-bot-data/zklink/（ZKLINK_STATE_FILE 等 .env 键）；wiki 留档 token=NFUSwCfififBDtkzGBDcFI0Bnih（曼波指定，.env 存放不进 git）',
     },
     {
       id: 'dashboard',
@@ -251,7 +251,7 @@ module.exports = {
       pm2Name: 'qianli-netlog',
       deployDir: '/c/qianli/opt/netlog',
       deploy: 'npm run push（SFTP 直传）',
-      role: '实验室网络日志探针 + 断网复活引擎（2026-09-27 v2）：持续探测主路由 superqianli（31.1）与公网出口并落盘；断网事件积压、wan 恢复后飞书汇总补发；出口 IP 变化告警。v2 复活引擎：wan 断自动按校园网账号池（31108753 首选项）经 Dr.COM eportal(10.10.8.162:801) 重认证，慢速判定（自适应基线×3）限速账号打「本月不再使用」并自动换号；POST /api/netlog/revive 手动触发（X-API-Token）。不是飞书机器人：不收事件、不进网关 CONSUMERS。v15/v16（2026-10-07）：wan DoH 阿里+腾讯双源 AND 三态判定（ok/restricted/down，restricted=认证半残指纹翻转即私聊）+ routerWatch 低频观测主路由（管理面失联/射频配置异常/ax 翻转/DHCP DISCOVER 主动探测/设备数骤降旁证）+ summary 输出 probeMatrix 逐目标探针矩阵；NETLOG_ROUTER_PASSWORD 未配置则 routerWatch 停用。v17（2026-10-07）：DHCP 探针勘误批——RD08 陌生 MAC 首查有 3~4s 检查路径（同 MAC 之后毫秒级），v16 随机 MAC+3000ms 超时的 dhcp_down/recover 振荡全是探针伪影；v17 改固定探针 MAC（NETLOG_DHCP_PROBE_MAC 可覆盖）+5000ms 超时，连续超时=服务真挂（真半死判据=已知 MAC 也慢/无应答）。v18（2026-10-07）：被抢持续垫底——复活成功 30min 内又掉线=账号被抢，持久垫底 24h（NETLOG_KICK_DEMOTE_HOURS 可调）跨轮跨重启避开（account-demotions.json 独立状态文件）、到期自动复位；「首选只是优先不是拉锯」（曼波 2026-10-07 定）。',
+      role: '实验室网络日志探针 + 断网复活引擎（2026-09-27 v2）：持续探测主路由 superqianli（31.1）与公网出口并落盘；断网事件积压、wan 恢复后飞书汇总补发；出口 IP 变化告警。v2 复活引擎：wan 断自动按校园网账号池（31108753 首选项）经 Dr.COM eportal(10.10.8.162:801) 重认证，慢速判定（自适应基线×3）限速账号打「本月不再使用」并自动换号；POST /api/netlog/revive 手动触发（X-API-Token）。不是飞书机器人：不收事件、不进网关 CONSUMERS。v15/v16（2026-10-07）：wan DoH 阿里+腾讯双源 AND 三态判定（ok/restricted/down，restricted=认证半残指纹翻转即私聊）+ routerWatch 低频观测主路由（管理面失联/射频配置异常/ax 翻转/DHCP DISCOVER 主动探测/设备数骤降旁证）+ summary 输出 probeMatrix 逐目标探针矩阵；NETLOG_ROUTER_PASSWORD 未配置则 routerWatch 停用。v17（2026-10-07）：DHCP 探针勘误批——RD08 陌生 MAC 首查有 3~4s 检查路径（同 MAC 之后毫秒级），v16 随机 MAC+3000ms 超时的 dhcp_down/recover 振荡全是探针伪影；v17 改固定探针 MAC（NETLOG_DHCP_PROBE_MAC 可覆盖）+5000ms 超时，连续超时=服务真挂（真半死判据=已知 MAC 也慢/无应答）。v18（2026-10-07）：被抢持续垫底——复活成功 30min 内又掉线=账号被抢，持久垫底 24h（NETLOG_KICK_DEMOTE_HOURS 可调）跨轮跨重启避开（account-demotions.json 独立状态文件）、到期自动复位；「首选只是优先不是拉锯」（曼波 2026-10-07 定）。v21（2026-11-11）：播报总开关 NETLOG_NOTIFY_ENABLED——曼波拍板断网播报全关（现网 .env=false）：即时私聊/积压补发全静默，事件流照落盘可回放，现场问询一律走 summary API；恢复=改 true 重启。',
       listening: ['出站 TCP 探测（lan 31.1:80 / wan 223.5.5.5,119.29.29.29:443）', '出站 DoH 数据面验证（223.5.5.5 / 120.53.53.53，v15 双源 AND）', '出站 204 流量探测（miui/vivo）+ 出站 webhook（NETLOG_WEBHOOK_URL）', 'miwifi 管理面低频观测（routerWatch，v15）+ DHCP DISCOVER 广播探测（v16/v17 固定探针 MAC）', 'GET :3016/api/health、/api/netlog/summary（只读）'],
       commands: [],
       permissions: [],
