@@ -1280,6 +1280,56 @@ function renderSourceFileBar() {
 }
 
 /**
+ * v111 名称对账（曼波令「切片名=本体_材料_时长，源文件往往只差后缀」）：
+ * 切片名剥「_材料_时长」尾得本体名，与源文件主体名对照——对上放行；对不上弹确认框
+ * （交错了重新选 / 确认就是对上）。多模型兼容：多源时任一源对上即整体放行（一盘多件
+ * 源文件名与切片命名（常以首件命名）不同是正常的，几何指纹配对才是主判定）。
+ * 材料段必须命中词表（防「Poop-Bucket-Plain-H-Series_5h30m」的本体大写尾巴被误剥）。
+ */
+const SLICE_MATERIAL_WORDS = ['PLA', 'PETG', 'ABS', 'ASA', 'PA', 'PC', 'TPU', 'PVA', 'HIPS', 'PHA', 'PP', 'PCTG', 'PEI', 'PET',
+  'PLA-CF', 'PLA-GF', 'PLA-Aero', 'PLA-HF', 'PLA-WF', 'PETG-CF', 'PETG-GF', 'PETG-HF', 'PETG-Armor', 'PA-CF', 'PA-GF', 'PAHT-CF', 'PPA-CF', 'PPA-GF'];
+function parseSliceBase(sliceName) {
+  let n = String(sliceName || '').trim();
+  n = n.replace(/\.(gcode\.3mf|3mf|gcode)$/i, ''); // 双扩展/单扩展
+  const tail = new RegExp(`[_\\- ](${SLICE_MATERIAL_WORDS.join('|')})[_\\- ](?:\\d+[hms])+$`, 'i').exec(n);
+  return tail ? n.slice(0, tail.index).trim() : null; // 无规范尾巴（不合命名）→ null=无从对照，放行
+}
+function nameMatchLevel(base, sourceFileName) {
+  if (!base) return 'unknown';
+  const sn = String(sourceFileName || '').replace(/\.[^.]+$/, '').trim().toLowerCase();
+  const bn = String(base || '').trim().toLowerCase();
+  if (!sn || !bn) return 'unknown';
+  if (sn === bn) return 'exact';
+  if (sn.includes(bn) || bn.includes(sn)) return 'loose'; // 版本号/括号等差异
+  return 'mismatch';
+}
+/** 多模型兼容：单源逐个对照；多源任一 match（exact/loose）即整体放行 */
+function verifySourceNames(sources, sliceName) {
+  const base = parseSliceBase(sliceName);
+  if (!base) return []; // 无从对照
+  const list = Array.isArray(sources) ? sources : [sources];
+  const levels = list.map((f) => nameMatchLevel(base, f.name));
+  if (list.length >= 2 && levels.some((l) => l === 'exact' || l === 'loose')) return []; // 多源任一对上=放行
+  return list.filter((f, i) => levels[i] === 'mismatch');
+}
+/** 对不上确认框：交错了重新选 / 确认就是对上继续 */
+function confirmSourceMismatch(mismatches, sliceName, onKeep, onRetry) {
+  const dlg = document.createElement('dialog');
+  const rows = mismatches.map((f) => `<li>${esc(f.name)}</li>`).join('');
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">⚠️ 源文件与切片名称对不上——是不是提交错了？</h3>
+    <div class="detail" style="margin-bottom:8px">切片文件：<b>${esc(sliceName)}</b><br>对不上的源文件：<ul style="margin:4px 0;padding-left:18px">${rows}</ul>
+    名称对照规则：切片名「本体_材料_时长」的本体段 vs 源文件名。如果你们内部命名不同但确认是同一个件，可以继续。</div>
+    <div class="actions" style="margin-top:10px">
+      <button class="ok" id="srcMismatchKeep">确认就是对上，继续提交</button>
+      <button class="mini" id="srcMismatchRetry">交错了，重新选择源文件</button>
+    </div>`;
+  document.body.appendChild(dlg);
+  dlg.querySelector('#srcMismatchKeep').onclick = () => { dlg.close(); onKeep(); };
+  dlg.querySelector('#srcMismatchRetry').onclick = () => { dlg.close(); onRetry(); };
+  dlg.showModal();
+}
+
+/**
  * 提交预约时的显式配对提醒（曼波 2026-10-28：点击提交后单独弹窗）——
  * 切片直通件且未配对源文件时拦截一次：配对 → 自动继续提交；跳过 → 原样提交。
  * 模型直投单（STEP/STL）或已配对则不弹。
@@ -1312,6 +1362,14 @@ function askSourceFileThenSubmit(file) {
       SOURCE_FILE = files.length === 1 ? files[0] : files; // v79 多源：数组形态（提交时逐个 append）
       renderSourceFileBar();
     }
+    // v111 名称对账（曼波令）：对不上询问是否提交错——确认对上放行 / 交错了重选
+    const mism = verifySourceNames(SOURCE_FILE, file.name);
+    if (mism.length) {
+      confirmSourceMismatch(mism, file.name,
+        () => doSubmit(), // 确认对上：放行提交
+        () => { clearSourceFile(); askSourceFileThenSubmit(file); }); // 交错了：清掉重走弹窗
+      return;
+    }
     doSubmit();
   });
   dlg.showModal();
@@ -1342,6 +1400,17 @@ function splitFileSelection() {
     for (const sf of sources) SOURCE_FILE.push(sf);
     renderSourceFileBar();
     toast(`📎 已配对 ${sources.length} 个 STEP/STL 源文件（随切片一起提交入库训练）`);
+    // v111 名称对账（主框多选路径）：对不上弹确认（确认对上保留 / 交错了移除重选）
+    const mism = verifySourceNames(sources, pick.name);
+    if (mism.length) {
+      confirmSourceMismatch(mism, pick.name,
+        () => { /* 确认对上：保留 */ },
+        () => {
+          const keep = (Array.isArray(SOURCE_FILE) ? SOURCE_FILE : [SOURCE_FILE]).filter((f) => !mism.includes(f));
+          SOURCE_FILE = keep.length ? keep : null;
+          renderSourceFileBar();
+        });
+    }
   }
   if (others.length) toast(`已忽略不支持的文件：${others.map((f) => f.name).join('、')}`);
 }
