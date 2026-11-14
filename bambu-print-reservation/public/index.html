@@ -1260,9 +1260,14 @@ function clearSourceFile() {
   if (bar) bar.remove();
 }
 
-/** 已配对源文件的提示条（提交区展示，可移除）——v79 多源：数组时逐件列出 */
+/** 已配对源文件的提示条（提交区展示，可移除）——v79 多源：数组时逐件列出。
+ *  v109 P0 修复（曼波实案断案）：原第一行调 clearSourceFile()——把刚选好的 SOURCE_FILE
+ *  连数据一起清空，随后 if (!SOURCE_FILE) return → 提示条永不渲染、提交永远不带源文件。
+ *  「选择源文件并提交」路径自 2026-10-27 上线起 100% 丢失（全库 0 单配对实锤）。
+ *  修正：本函数只管 DOM 提示条重绘，绝不清数据 */
 function renderSourceFileBar() {
-  clearSourceFile();
+  const old = $('sourceFileBar');
+  if (old) old.remove();
   if (!SOURCE_FILE) return;
   const bar = document.createElement('div');
   bar.id = 'sourceFileBar';
