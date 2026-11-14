@@ -1281,7 +1281,11 @@ function renderSourceFileBar() {
  */
 function askSourceFileThenSubmit(file) {
   const dlg = document.createElement('dialog');
-  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">📚 有这个件的 STEP/STL 源文件吗？</h3>
+  // v108 文案重排（曼波 2026-11-14「提交链路有大问题」实案复盘）：原问句弹窗的
+  // 「没有，直接提交」按钮被当成确认提交的继续按钮顺路点掉——上线以来 0 单配对成功
+  // （全库 sourceFile=null、uploads 零新 STEP）。主次颠倒修正：选源文件=主按钮（推荐），
+  // 跳过降级并把代价写明（特征降级为时长估计）
+  dlg.innerHTML = `<h3 style="font-size:14px;margin-bottom:8px">📚 交切片前，先补上 STEP/STL 源文件（推荐）</h3>
     <div class="detail" style="margin-bottom:8px">你交的是切片文件（<b>${esc(file.name)}</b>）——它本身没有模型网格，学习库只能拿粗特征。两份一起交的话：<br>
     ✅ <b>源文件</b> → 真几何特征（悬空/接触/曲率全自动分析）<br>
     ✅ <b>切片文件</b> → 专家切片参数、预估时长、用料清单<br>
@@ -1289,8 +1293,8 @@ function askSourceFileThenSubmit(file) {
     <b>一盘多件</b>：这份切片切了多个模型？源文件<b>可以多选</b>——系统按几何指纹自动配对「哪个源文件是盘里哪件」，逐件入库。<br>
     <span style="color:var(--warn)">⚠️ 源文件不会被打印，只进训练库——不影响本单分发。</span></div>
     <div class="actions" style="margin-top:10px">
-      <button class="ok" id="srcPick">有，选择源文件并提交</button>
-      <button class="mini" id="srcSkip">没有，直接提交</button>
+      <button class="ok" id="srcPick">📎 选择 STEP/STL 源文件（推荐）</button>
+      <button class="mini" id="srcSkip">跳过——本单特征降级为时长估计</button>
     </div>
     <input type="file" id="srcInput" accept=".step,.stp,.stl,.obj" multiple style="display:none">`;
   document.body.appendChild(dlg);
