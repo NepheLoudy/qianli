@@ -169,7 +169,7 @@
         <div id="assignedPrinterBox"><label>指定打印机（STEP/STL 模型直投可留空自动匹配；<b>切片文件锁定内嵌机型</b>，审批时须指定同型号机）</label><input type="text" id="assignedPrinter" list="printerNameList" placeholder="如 X1C-01，模型直投可留空"><datalist id="printerNameList"></datalist></div>
       </div>
       <div class="row">
-        <div><label>模型 / 切片文件 *（.stl/.step/.stp 走需求链路+<b>3D 工况标注</b>：载荷/支撑/受弯在 3D 视图点选，自动定档；.obj 手勾工况；<b>切片直通=.3mf（拓竹/闪铸皆可）</b>——机型按文件内嵌指纹锁定；2026-11-06 起不再接受纯 .gcode，请导出 .gcode.3mf）</label><input type="file" id="file" accept=".stl,.step,.stp,.3mf,.obj"></div>
+        <div><label>模型 / 切片文件 *（.stl/.step/.stp 走需求链路+<b>3D 工况标注</b>：载荷/支撑/受弯在 3D 视图点选，自动定档；.obj 手勾工况；<b>切片直通=.3mf（拓竹/闪铸皆可）</b>——机型按文件内嵌指纹锁定；2026-11-06 起不再接受纯 .gcode，请导出 .gcode.3mf。<b>✅ 可多选：切片 3mf + STEP/STL 源文件一起选，系统自动分流配对入库</b>）</label><input type="file" id="file" accept=".stl,.step,.stp,.3mf,.obj" multiple></div>
       </div>
       <div class="preview" id="slicedNotice" style="display:none">📦 <b>切片产物审批直通模式</b>——3mf（拓竹）/ gcode（闪铸）的切片参数已内嵌文件，无需工况定档；<b>下方工况勾选与 3D 标注为选填</b>（填了用于入库训练样本/后续拟合，不改变直通切片参数）。注意：3mf 只能去拓竹机、gcode 只能去闪铸机，选错品牌会被自动匹配忽略</div>
       <div class="preview" id="modelPanel" style="display:none"></div>
@@ -1312,6 +1312,35 @@ function askSourceFileThenSubmit(file) {
   dlg.showModal();
 }
 
+/**
+ * 主上传框多选分流（v109，曼波实案修复）：此前主框 accept 收 .step 但 submitReservation
+ * 只取 files[0]——多选「3mf+STEP」时第二个文件被静默丢弃（不上传不配对，0 痕迹）。
+ * 现按扩展名分流：.3mf → 主文件（多份只取一份并提示）；.step/.stp/.stl/.obj → 并入
+ * SOURCE_FILE 源文件配对（提交时随单上传）；其余提示忽略。
+ */
+function splitFileSelection() {
+  const input = $('file');
+  const files = Array.from(input.files || []);
+  if (files.length <= 1) return; // 单选/清空走原路径
+  const isSliced = (f) => /\.3mf$/i.test(f.name);
+  const isSource = (f) => /\.(step|stp|stl|obj)$/i.test(f.name);
+  const mains = files.filter(isSliced);
+  const sources = files.filter(isSource);
+  const others = files.filter((f) => !isSliced(f) && !isSource(f));
+  const pick = mains[0] || files[0];
+  const dt = new DataTransfer();
+  dt.items.add(pick);
+  input.files = dt.files; // 主框只留主文件——杜绝 files[1] 继续静默丢失
+  if (mains.length > 1) toast(`多份切片只取「${pick.name}」——一次只交一份切片件`);
+  if (sources.length) {
+    SOURCE_FILE = SOURCE_FILE ? (Array.isArray(SOURCE_FILE) ? SOURCE_FILE : [SOURCE_FILE]) : [];
+    for (const sf of sources) SOURCE_FILE.push(sf);
+    renderSourceFileBar();
+    toast(`📎 已配对 ${sources.length} 个 STEP/STL 源文件（随切片一起提交入库训练）`);
+  }
+  if (others.length) toast(`已忽略不支持的文件：${others.map((f) => f.name).join('、')}`);
+}
+
 function submitReservation() {
   const file = $('file').files[0];
   if (!file) return toast('请选择模型/切片文件');
@@ -1743,7 +1772,9 @@ async function printerCtl(id, action, confirmText) {
   // await 链改并行 Promise.all——每环网络抖动不再叠加；taxonomy 失败已有红条兜底
   await Promise.all([loadMe(), loadTaxonomy(), loadColors()]);
   restoreSelMemory();
-  $('file').addEventListener('change', () => { updateSlicedMode(); analyzeModel(); loadAnnotator(); }); // 双通道模式感知 + STL 几何体检 + 3D 标注装载
+  // v109 主框多选分流（曼波实案：3mf+STEP 一起多选时 files[1] 被静默丢弃——上线以来
+  // 0 单配对成功的真正根因）：.3mf → 主文件，.step/.stp/.stl/.obj → 源文件配对自动合并
+  $('file').addEventListener('change', () => { splitFileSelection(); updateSlicedMode(); analyzeModel(); loadAnnotator(); }); // 多选分流 + 双通道模式感知 + STL 几何体检 + 3D 标注装载
   preflight();
   loadAnnotator(); // 录入台常显：首屏即给出 3D 标注引导（v56 复查批）
   renderSelSummary();
