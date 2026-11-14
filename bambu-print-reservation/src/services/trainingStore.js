@@ -167,6 +167,9 @@ const trainingStore = {
       autoSuggestion: (input.model && input.model.features && input.model.features.suggestions) || null,
       // 几何特征来源（2026-10-16）：'auto'=3mf 直通单全自动提取（配合低权重 confidence 判读）；空=常规录入
       featureSource: String(input.featureSource || '').slice(0, 32),
+      // 质量档（v107 清洗批）：clean/quarantine/humanFactor/excluded——新样本默认 clean，
+      // 打标/降级走 setQuality（打标不删数据，训练消费端按档过滤）
+      quality: 'clean',
       // 人工可信度（0-100，训练加权用；与自动拟合度 fit 分离）——3mf 直通自动提取样本按低权重落 40
       confidence: Number.isFinite(Number(input.confidence)) ? Math.max(0, Math.min(100, Math.round(Number(input.confidence)))) : null,
       // 拟合度快照（2026-10-12 曼波纠正语义：引擎(工况)参数 vs 专家(切片)参数的贴合程度，
@@ -270,7 +273,9 @@ const trainingStore = {
   },
   get(id) { return load().find((s) => s.id === id) || null; },
 
-  /** 回填打印结果（学习信号的奖励通道：成功/失败/问题样本要分开对待） */
+  /** 回填打印结果（学习信号的奖励通道：成功/失败/问题样本要分开对待）。
+   *  v107 清洗批：issues 带「完成 @ 机器名」时自动回填 machine（审批入库时 assignedPrinter
+   *  常为空——自动分发单选机发生在入队后，machine 60/60 全空的根因），新样本不再空 */
   setOutcome(id, outcome) {
     const samples = load();
     const sample = samples.find((s) => s.id === id);
@@ -286,8 +291,38 @@ const trainingStore = {
       recordedAt: new Date().toISOString(),
       recordedBy: String(outcome && outcome.recordedBy || ''),
     };
+    if (!sample.machine) {
+      const m = /完成 @ (.+)$/.exec(sample.outcome.issues);
+      if (m && m[1]) sample.machine = m[1].trim(); // v107：机器名随 outcome 自动回填
+    }
     save(samples);
     return { ...sample };
+  },
+
+  /**
+   * 样本质量标记（v107 清洗批，曼波令「素材噪声整理」）：
+   *   clean      默认——训练管线正常消费
+   *   quarantine 隔离——无 outcome（提交后从未打印）/待复核，训练默认跳过
+   *   humanFactor 失败但无故障证据（热修49 类级反转=人因终止）——对参数学习是噪声，
+   *              单独保留供失败归因分析，训练默认跳过
+   *   excluded   剔除——工程件误入档等确定噪声，dumpJsonl 默认不输出
+   * 打标不删数据：原始 JSON/归档文件不动，质量体系是可回滚的标记层。
+   */
+  setQuality(id, quality, note) {
+    const VALID = ['clean', 'quarantine', 'humanFactor', 'excluded'];
+    if (!VALID.includes(quality)) throw new Error(`quality 必须是 ${VALID.join('/')} 之一`);
+    const samples = load();
+    const sample = samples.find((s) => s.id === id);
+    if (!sample) throw new Error(`样本不存在: ${id}`);
+    sample.quality = quality;
+    sample.qualityNote = String(note || '').slice(0, 300);
+    sample.qualityAt = new Date().toISOString();
+    save(samples);
+    return { ...sample };
+  },
+
+  qualityStats() {
+    return this.stats().quality;
   },
 
   remove(id) {
@@ -302,11 +337,14 @@ const trainingStore = {
 
   stats() {
     const samples = load();
+    const dist = {};
+    for (const s of samples) dist[s.quality || 'clean'] = (dist[s.quality || 'clean'] || 0) + 1;
     return {
       total: samples.length,
       withSlice: samples.filter((s) => s.slice).length,
       withFeatures: samples.filter((s) => s.model && s.model.features && s.model.features.ok).length,
       withOutcome: samples.filter((s) => s.outcome && s.outcome.status && s.outcome.status !== '未打印').length,
+      quality: dist,
       conditionCoverage: samples.reduce((acc, s) => {
         for (const k of Object.keys(s.selection || {})) acc[k] = (acc[k] || 0) + 1;
         return acc;
@@ -314,12 +352,17 @@ const trainingStore = {
     };
   },
 
-  /** 训练管线消费格式：一行一样本的 JSONL（含 outcome 奖励通道与机型隔离） */
-  dumpJsonl() {
-    return load().map((s) => JSON.stringify({
+  /** 训练管线消费格式：一行一样本的 JSONL（含 outcome 奖励通道与机型隔离）。
+   *  v107：默认过滤 quality=excluded（确定噪声），其余质量档带 quality 字段输出供下游加权 */
+  dumpJsonl(opts = {}) {
+    const includeExcluded = opts.includeExcluded === true;
+    return load()
+      .filter((s) => includeExcluded || s.quality !== 'excluded')
+      .map((s) => JSON.stringify({
       id: s.id,
       createdAt: s.createdAt,
       machine: s.machine || null,
+      quality: s.quality || 'clean',
       selection: s.selection,
       spatial: s.spatial || [],
       materialType: s.materialType,

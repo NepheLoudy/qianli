@@ -581,6 +581,16 @@ async function createSampleFromReservation(record, reviewer) {
   const fs = require('fs');
   if (!record) throw new Error('预约记录不存在');
   const is3mf = /\.3mf$/i.test(record.fileName || '');
+  // v107 训练库清洗批（曼波令「素材噪声整理」）：工程 3mf（未切片，特征=作者网格非打印件、
+  // 无切片参数）不入训练库——A面.3mf/下横梁 三条噪声实案（入库时勾选了样本但从未真正
+  // 打成/失败）。可操作去路：真实打印完成后以现场切片产物走重新入库
+  const isEngineering = record.embeddedParams && record.embeddedParams.source === 'engineering';
+  if (isEngineering && is3mf) {
+    throw new Error(
+      `「${record.fileName}」是未切片的工程 3mf——不入训练库（特征是作者模型非实际打印件，且无切片参数）。` +
+      `打印完成后系统会以现场切片产物自动补录样本`
+    );
+  }
   const buf = record.filePath ? fs.readFileSync(record.filePath) : null;
   if (!buf || buf.length === 0) throw new Error('源文件不可读（filePath 缺失或为空）');
   let features = record.modelFeatures || null;
