@@ -403,6 +403,11 @@ class Dispatcher {
     // 与 receiptHold 同步增删、同落盘；旧档无此键时恢复按「现在」起算（不误摘）
     this.receiptHoldAt = new Map();
     this.pickupCodes = new Map(); // 取件码 → {recordId, printerId, expiresAt}（内存态）
+    // v112 存储熔断（曼波令「553 自动熔断」）：553+sdcard=false=机端存储掉挂载（U 盘被拔/
+    // 卡掉挂，X1C 11-08 与 H2D 11-15 两案）——该机停派直至 sdcard 恢复（热插回/重启），
+    // 防后续单子排队陪葬重试。printerId → {at, recordId}。内存态：服务重启自然清零
+    // （重启后首轮上传探测就是恢复验收），sdcard 恢复也会被 sweepStorageHold 主动解除
+    this.storageHold = new Map();
     this.humanStops = new Map();  // printerId → {at, reason}：系统发起的停止意图（failed/idle 事件消费）
     this.inFlight = [];           // 分发进行中的任务（已出队未入 printing；落盘携带，重启重回队列）
     this.dispatching = new Set(); // 正在分发中的 printerId（人工指定 vs 自动匹配互斥闸门；
@@ -430,9 +435,11 @@ class Dispatcher {
       }, 10 * 60 * 1000);
     }
     // v99 取件闸 TTL 巡检（排队池修复）：闸挂置超时自动放行，防单闸堵死机型队列
+    // v112 存储熔断解除巡检同节奏：熔断机器 sdcard 恢复 → 自动解除+恢复队列
     if (!this.receiptTtlTimer) {
       this.receiptTtlTimer = setInterval(() => {
         try { this.sweepReceiptHoldTtl(); } catch (err) { console.error('[分发] 取件闸 TTL 巡检失败:', err.message); }
+        try { this.sweepStorageHold(); } catch (err) { console.error('[分发] 存储熔断解除巡检失败:', err.message); }
       }, 10 * 60 * 1000);
     }
     // 队列兜底推进（2026-10-16 曼波真单卡滞修复）：事件驱动的匹配在「状态恢复但事件缺失」
@@ -1040,6 +1047,7 @@ class Dispatcher {
         && (['空闲', '已完成'].includes(p.status) || printerManager.canDispatchResidueFailed(p))
         && brandForFileWithMeta(task.fileName, task.machineModel) === (printerManager.brandOf(p.model) || 'bambu')
         && !this.receiptHold.has(p.id) // 打完等回执闸：上一单取件确认前本机不开新件（2026-10-28 曼波令）
+        && !this.storageHold.has(p.id) // v112 存储熔断：sdcard 掉挂载的机器停派（sweep 检测恢复自动解除）
     );
 
     // 切片直通件不做自动分发（2026-10-28 曼波令「自动分发只对纯 step 有效」）：切片文件
@@ -1411,6 +1419,25 @@ class Dispatcher {
       if (task.cancelled) {
         console.log(`[分发] 任务 ${task.recordId} 已在分发窗口内被撤销——失败终局，不回滚不重排`);
         this.printing.delete(printer.id);
+        return;
+      }
+      // v112 存储熔断（曼波令）：553+sdcard=false（client 层 storageOffline 标记）=
+      // 机端存储掉挂载（U 盘被拔/卡掉挂，X1C 11-08 与 H2D 11-15 两案）——确定性失败，
+      // 重试必败。该机熔断停派（sweep 检测 sdcard 恢复自动解除）、任务回队列**不计数**、
+      // 申请人 DM 告知、广场动态记账。机器恢复后滞留任务自动继续（防单子陪葬重试）
+      if (err.storageOffline) {
+        this.storageHold.set(printer.id, { at: Date.now(), recordId: task.recordId });
+        this.printing.delete(printer.id);
+        console.warn(`[分发] ⚠️ 存储熔断：${printer.name} 机端存储离线（sdcard=false，疑似 U 盘/SD 卡被拔）——停派至恢复，任务 ${task.recordId} 回队列等待`);
+        plaza.append({ event: '存储熔断', title: `${printer.name} 机端存储离线（sdcard=false），已暂停派单——请检查 U 盘/SD 卡并重新插好（恢复后队列自动继续）` });
+        storeSafe(() => reservationStore.appendHistory(task.recordId,
+          `存储熔断：${printer.name} 机端存储离线（疑似 U 盘/SD 卡被拔）——本单暂停滞留队列，机器恢复后自动继续`), 'storage-hold');
+        if (fromLocal) {
+          storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `存储熔断滞留：${printer.name} 机端存储离线——恢复后自动继续`), 'storage-hold');
+          require('./reservation').notifyApplicantDm(task.recordId,
+            `⏸ 你的打印件暂缓：${printer.name} 的存储盘掉挂载了（疑似 U 盘/SD 卡被拔）。\n本单已安全排队，机器恢复后自动继续打印。`);
+        }
+        this.persistState();
         return;
       }
       // 回滚状态并重新排队（下一轮再试）；审批来源无表状态可回滚
@@ -1879,6 +1906,26 @@ class Dispatcher {
    * 台板防撞板）。人工置闸（manual-* recordId）是运维主动意图，不受 TTL 约束。
    * 由 receiptTtlTimer 周期（10 分钟）驱动。
    */
+  /**
+   * 存储熔断解除巡检（v112）：熔断机器的 sdcard 位恢复 true（U 盘插回/重启后固件重挂载）
+   * → 自动解除 + 播报 + 触发匹配，滞留任务随即继续。sdcard 位未恢复（含失联/缺报文）保持
+   * 熔断。10 分钟周期（与取件闸 TTL 巡检同一定时器节奏）。
+   */
+  sweepStorageHold() {
+    if (!this.storageHold.size) return;
+    for (const [pid, info] of [...this.storageHold.entries()]) {
+      const st = printerManager.getApiStates().find((p) => String(p.id) === String(pid));
+      let sdOK = false;
+      try { sdOK = st && st.raw?.print?.sdcard === true; } catch { /* 缺报文视为未恢复 */ }
+      if (!sdOK) continue;
+      this.storageHold.delete(pid);
+      this.trigger('queue-sweep'); // 解除即补一轮匹配——熔断期间滞留的任务自动继续
+      const name = (st && st.name) || `printer=${pid}`;
+      console.log(`[分发] 存储熔断解除：${name} sdcard 已恢复（熔断 ${Math.round((Date.now() - info.at) / 60000)} 分钟）——队列恢复`);
+      plaza.append({ event: '存储恢复', title: `${name} 存储已恢复，熔断解除——滞留队列自动继续` });
+    }
+  }
+
   sweepReceiptHoldTtl() {
     const ttlMs = (config.dispatch.receiptTtlHours || 0) * 3600 * 1000;
     if (!ttlMs || ttlMs <= 0) return;

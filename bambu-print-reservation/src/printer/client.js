@@ -1068,10 +1068,15 @@ class PrinterClient {
       // 审查修复（v62）：sdcard 位在原始报文 raw.print.sdcard——bambu-link 归一化状态
       // 没有该字段，原读法恒 undefined、掉卡人话提示从未出现过
       try { sdOffline = this.getState()?.raw?.print?.sdcard === false; } catch { /* 未连接不猜 */ }
-      throw new Error(
+      const e = new Error(
         `FTPS(990) 上传失败（${ftpsErr ? ftpsErr.message : '未知'}），FTP(21) 回退也失败（${err.message}）`
         + (sdOffline ? '；机端存储离线（sdcard=false）——请检查打印机 SD 卡/USB 盘是否在位' : '')
       );
+      // v112 存储熔断标记（曼波令）：553+sdcard=false=存储掉挂载（U 盘被拔/卡掉挂）——
+      // 确定性失败，重试必败。分发引擎 catch 识别此标记 → 熔断该机停派+播报，任务安全
+      // 回队列等重连（机器重启=恢复信号）自动恢复
+      if (sdOffline) e.storageOffline = true;
+      throw e;
     }
   }
 
