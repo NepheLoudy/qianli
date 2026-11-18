@@ -69,6 +69,9 @@ module.exports = {
   bot: {
     name: process.env.BOT_NAME || '爆米花机-对话型',
     webhookUrl: process.env.BOT_WEBHOOK_URL || '',
+    // v116 打印机报错群播（曼波令「任何打印机报错都往 3D 打印群发报告」）：3D 打印群
+    // 专用钩子，缺省回落机械组群钩子（若两群同一钩子则零配置）
+    alertWebhookUrl: process.env.PRINTER_ALERT_WEBHOOK_URL || process.env.BOT_WEBHOOK_URL || '',
     // 审批提醒专用 webhook（2026-10-16 曼波令：「有人预约需要审批」走话题群，其余播报留在机械组）；
     // 未配置时回落默认群，行为不变
     approvalWebhookUrl: process.env.APPROVAL_WEBHOOK_URL || '',

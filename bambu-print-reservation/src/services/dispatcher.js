@@ -385,6 +385,40 @@ function announce(name, card, onError, targetUrl) {
   return;
 }
 
+/**
+ * 打印机报错群播（2026-11-19 v116 曼波令「任何打印机报错都往 3D 打印群发一份报告」）：
+ * 真故障（人因终止不报——有人手动停的不用群里喊）发 3D 打印群报告卡。
+ * - 绕过 announce 的「群播全面关闭」空壳：报错报告是运维信号，直接发（不走静默积压）
+ * - 同机同因 30 分钟节流（HMS 报文高频、同一次失败多路触发不刷屏）
+ * - webhook 走 bot.alertWebhookUrl（PRINTER_ALERT_WEBHOOK_URL 优先，回落 BOT_WEBHOOK_URL）
+ */
+const failureReportThrottle = new Map(); // key → lastAt（内存态）
+function sendFailureReport(printerName, reason, detail, throttleKey) {
+  try {
+    const key = `${printerName}|${throttleKey || String(reason || '').slice(0, 40)}`;
+    const now = Date.now();
+    if (failureReportThrottle.get(key) && now - failureReportThrottle.get(key) < 30 * 60 * 1000) {
+      console.log(`[报错群播] 节流命中（${key}）——30 分钟内同机同因不重发`);
+      return;
+    }
+    failureReportThrottle.set(key, now);
+    const card = require('../feishu/bot').buildTextCard(
+      `🖨 ${printerName} 打印异常报告`,
+      [
+        `**${printerName}** 报错：${String(reason || '未知原因').slice(0, 120)}`,
+        detail ? String(detail).slice(0, 400) : '',
+        `⏱ ${new Date().toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' })}`,
+        `处置：观察台查看机况/画面，人工介入后正常派单不受影响`,
+      ].filter(Boolean).join('\n'),
+    );
+    require('../feishu/bot').sendMessage(card, config.bot.alertWebhookUrl)
+      .then(() => console.log(`[报错群播] 已发 3D 打印群：${printerName} ${String(reason || '').slice(0, 60)}`))
+      .catch((err) => console.error('[报错群播] 发送失败:', err.message));
+  } catch (err) {
+    console.error('[报错群播] 组装失败:', err.message);
+  }
+}
+
 class Dispatcher {
   constructor() {
     this.queue = [];              // 待分发任务（按优先级排序后）
@@ -1439,6 +1473,8 @@ class Dispatcher {
         this.storageHold.set(printer.id, { at: Date.now(), recordId: task.recordId });
         this.printing.delete(printer.id);
         console.warn(`[分发] ⚠️ 存储熔断：${printer.name} 机端存储离线（sdcard=false，疑似 U 盘/SD 卡被拔）——停派至恢复，任务 ${task.recordId} 回队列等待`);
+        sendFailureReport(printer.name, '机端存储离线（sdcard=false，疑似 U 盘/SD 卡被拔）——已自动停派，任务回队列等待恢复',
+          `单据：${task.applicationNo || task.recordId}`, 'storage-offline');
         plaza.append({ event: '存储熔断', title: `${printer.name} 机端存储离线（sdcard=false），已暂停派单——请检查 U 盘/SD 卡并重新插好（恢复后队列自动继续）` });
         storeSafe(() => reservationStore.appendHistory(task.recordId,
           `存储熔断：${printer.name} 机端存储离线（疑似 U 盘/SD 卡被拔）——本单暂停滞留队列，机器恢复后自动继续`), 'storage-hold');
@@ -1672,6 +1708,18 @@ class Dispatcher {
     if (this.printing.get(printer.id) !== task) return;
     this.printing.delete(printer.id);
     printerManager.updateState(printer.id, { activeTask: null });
+    // v116 报错群播（曼波令）：系统判定的打印失败（机端故障/幽灵失败/stale 异常）→
+    // 3D 打印群报告——人因终止走 humanTerminateTask 不经此，不会误报
+    sendFailureReport(
+      printer.name || `printer=${printer.id}`,
+      reason,
+      [
+        task ? `单据：${task.applicationNo || task.recordId}（${(task.fileName || '').slice(0, 50)}）` : '',
+        printer.failReason ? `fail_reason=${printer.failReason}` : '',
+        printer.printError ? `print_error=${printer.printError}` : '',
+        Array.isArray(printer.hms) && printer.hms.length ? `HMS：${String(printer.hms[printer.hms.length - 1]?.code || '').slice(0, 60)}` : '',
+      ].filter(Boolean).join('；') || undefined,
+    );
 
     if (isLocalTask(task)) {
       storeSafe(() => reservationStore.updateStatus(task.recordId, config.status.QUEUED, `打印失败重排：${reason}`), 'fail');
@@ -2178,6 +2226,7 @@ function rgbToHex(rgb) {
 const dispatcher = new Dispatcher();
 
 module.exports = dispatcher;
+module.exports.sendFailureReport = sendFailureReport; // v116 单测/人工触发口
 module.exports.colorDistance = colorDistance;
 module.exports.materialMatch = materialMatch;
 module.exports.buildLocalTask = buildLocalTask;
