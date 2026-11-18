@@ -83,6 +83,11 @@ function toggleTheme() {
       <div class="detail" id="autoDispatchNote" style="display:none;margin-bottom:8px">🤖 <b>自动分发模式已开启</b>——新单提交即自动入队，无需人工审批。本列表只出现「自动选机失败转人工」的单；下方进行中/已完成的单可随时干预（改派/取消/停机走观察台）。</div>
       <div id="pendingList"><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div><div class="card viz-skeleton" style="height:88px;margin-bottom:10px">　</div></div>
     </div>
+    <div class="card" id="queuePoolCard" style="display:none">
+      <h2>⏳ 排队池 <span class="sub" id="queuePoolCount"></span></h2>
+      <div class="detail" style="margin-bottom:8px">已入队等待的单据 + 各机占用释放点——机子空闲/取件放行/存储恢复后<b>自动开打，无需人工</b>（v113 忙机排队：同型号机忙时单子在这里排队而非转人工）。</div>
+      <div id="queuePoolList"></div>
+    </div>
     <div class="card">
       <h2>🖨 进行中 <span class="sub" id="activeCount"></span></h2>
       <div class="detail" style="margin-bottom:8px">排队与打印中的单据——异常时可在此改派或取消（停机/画面走观察台）。</div>
@@ -183,11 +188,13 @@ function enter() {
 window.__printers = [];
 async function loadAll() {
   try {
-    const [resList, resPrinters, resPolicy] = await Promise.all([fetch('/api/reservations'), fetch('/api/printers'), fetch('/api/print/policy')]);
+    const [resList, resPrinters, resPolicy, resQueue] = await Promise.all([fetch('/api/reservations'), fetch('/api/printers'), fetch('/api/print/policy'), fetch('/api/dispatch/queue')]);
     if (resList.status === 401) { ME = null; renderIdentity(); return; }
     const records = await resList.json();
     if (resPrinters.ok) window.__printers = await resPrinters.json();
     if (resPolicy.ok) { try { const pj = await resPolicy.json(); window.__autoDispatch = Boolean((pj.dispatch || {}).autoDispatch); } catch { window.__autoDispatch = false; } }
+    let queueData = null;
+    if (resQueue.ok) { try { queueData = await resQueue.json(); } catch { queueData = null; } }
     const pending = records.filter((r) => r.status === '待审批');
     // v87 复核面板：自动分发模式下三段视图——待审批（自动选机失败转人工）/进行中（可干预）/单据总览
     const autoMode = window.__autoDispatch === true;
@@ -196,9 +203,51 @@ async function loadAll() {
     $('activeCount').textContent = active.length ? `（${active.length} 单）` : '';
     renderPending(pending);
     renderActive(active);
+    renderQueuePool(queueData, records); // v114 排队池 UI（曼波令）：队列单 × 机队实况——等什么一目了然
   } catch (err) {
     $('pendingList').innerHTML = `<div class="empty">加载失败：${esc(err.message)}</div>`;
   }
+}
+
+/**
+ * 排队池（v114 曼波令「审批台显示排队池单」）：队列任务 × 机队实况 × 占用闸 join——
+ * 每单显示「等什么」：机子打印中（剩余时长）/等取件回执（谁都能点确认）/存储熔断
+ * （等插盘）/等待自动匹配。无排队单时整卡隐藏。打印中单不在此列（在「进行中」段）。
+ */
+function renderQueuePool(qd, records) {
+  const card = $('queuePoolCard');
+  const box = $('queuePoolList');
+  if (!card || !box) return;
+  const q = (qd && Array.isArray(qd.queue)) ? qd.queue : [];
+  const holds = new Map((qd && qd.receiptHold || []).map((h) => [String(h.printerId), h.recordId]));
+  const storages = new Map((qd && qd.storageHold || []).map((h) => [String(h.printerId), h]));
+  const printers = window.__printers || [];
+  const byName = new Map(printers.map((p) => [p.name, p]));
+  const recById = new Map(records.map((r) => [r.id, r]));
+  // 只看排队中任务（打印中的在「进行中」段）——queue 快照含未派任务
+  const rows = q.map((t) => {
+    const rec = recById.get(t.recordId) || {};
+    const target = t.assignedPrinter || null;
+    const pr = target ? byName.get(target) : null;
+    const prId = pr ? String(pr.id) : null;
+    let wait = '等待自动匹配';
+    let cls = '';
+    if (target && storages.has(prId)) { wait = `⛔ ${target} 存储熔断（U 盘/SD 卡掉挂载）——插回或重启后自动恢复`; cls = 'color:var(--bad)'; }
+    else if (target && holds.has(prId)) { wait = `🔐 ${target} 已打完等取件回执——<b>谁都可以在预约页点「确认取件」</b>，放行后本单自动开打`; cls = 'color:var(--warn)'; }
+    else if (target && pr && pr.status === '打印中') { wait = `🖨 ${target} 打印中${pr.remainingMinutes ? `（剩 ${pr.remainingMinutes} 分钟）` : ''}——打完+取件放行后自动开打`; cls = 'color:var(--warn)'; }
+    else if (target && pr && ['空闲', '已完成'].includes(pr.status)) { wait = `${target} 已就绪——下一轮匹配自动开打`; }
+    else if (target) { wait = `${target} 当前不可用（失联/忙）——恢复后自动开打`; cls = 'color:var(--warn)'; }
+    return `<div class="qitem"><div class="qhead">
+      <b>${esc(t.recordId)}</b><span class="detail">${esc(fmtLocalTime(rec.createdAt, true))}</span>
+      ${rec.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡</span>' : ''}
+    </div>
+    <div class="qline"><span class="lbl">排队于</span>${esc(target || '自动匹配')}<span class="lbl" style="margin-left:12px">发起人</span>${esc(rec.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc((rec.fileName || '').slice(0, 40))}</div>
+    <div class="qline"><span class="lbl">等待</span><span style="${cls}">${wait}</span></div></div>`;
+  });
+  if (!rows.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  $('queuePoolCount').textContent = `（${rows.length} 单排队 · 机子释放/取件放行/存储恢复后自动开打）`;
+  box.innerHTML = rows.join('');
 }
 
 /** 进行中单据卡（v87 复核面板）：排队/打印中，改派（模型直投）/取消 */

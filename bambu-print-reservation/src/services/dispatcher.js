@@ -1961,6 +1961,11 @@ class Dispatcher {
     return [...this.receiptHold.entries()].map(([printerId, recordId]) => ({ printerId, recordId }));
   }
 
+  /** 存储熔断清单（v112 审批台排队池 UI 消费）：printerId → {at, recordId} */
+  listStorageHold() {
+    return [...this.storageHold.entries()].map(([printerId, info]) => ({ printerId, recordId: info.recordId, at: info.at }));
+  }
+
   /**
    * 取件码发放（2026-10-29 曼波令「DM 提醒完成时问是否取件」）：6 位数字、24 小时有效、
    * 内存态（重启失效，页面按钮仍可回执兜底）。码 → {recordId, printerId}，一次性消费。

@@ -2455,6 +2455,7 @@ app.get('/api/dispatch/queue', requireUser(), (req, res) => {
     printing: dispatcher.getPrintingSnapshot(),
     givenUp: dispatcher.listGivenUp(), // 重试耗尽待人工恢复（页面黄条 + 恢复按钮消费）
     receiptHold: dispatcher.listReceiptHold(), // 打完等回执闸（2026-10-28：页面显示「等待取件回执」）
+    storageHold: dispatcher.listStorageHold(), // v112 存储熔断清单（审批台排队池 UI 消费）
   });
 });
 
