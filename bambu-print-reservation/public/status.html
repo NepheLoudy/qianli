@@ -267,8 +267,10 @@ function statusBadge(p) {
       : '<span class="staleTag">失联</span>';
     return `<span class="badge" style="background:#98a4b0">离线${snap}</span>`;
   }
-  const color = ({ '空闲': 'var(--ok)', '已完成': 'var(--ok)', '打印中': 'var(--print)', '暂停': 'var(--warn)', '故障': 'var(--bad)', '准备中': 'var(--warn)', '切片中': 'var(--warn)' }[p.status] || '#5b6ee1');
-  return `<span class="badge" style="background:${color}">${esc(p.status)}</span>`;
+  // v114 显示态：displayStatus（等取件=打完挂取件闸，黄标与「空闲/已完成可接单」区分）
+  const st = p.displayStatus || p.status;
+  const color = ({ '空闲': 'var(--ok)', '已完成': 'var(--ok)', '等取件': 'var(--warn)', '打印中': 'var(--print)', '暂停': 'var(--warn)', '故障': 'var(--bad)', '准备中': 'var(--warn)', '切片中': 'var(--warn)' }[st] || '#5b6ee1');
+  return `<span class="badge" style="background:${color}">${esc(st)}${st === '等取件' ? ' 📦' : ''}</span>`;
 }
 
 /** 毫秒时间戳 → 本地 HH:MM（离线快照时刻展示） */

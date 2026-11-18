@@ -1786,12 +1786,14 @@ async function loadPrinters() {
   if (SLICED_PROBE) renderColorSwatches(); // v97 机端料位刷新 → 色板随实况重渲染
   const box = $('printerList');
   if (!Array.isArray(printers) || !printers.length) { box.innerHTML = '<div class="empty">暂无登记的打印机（.env PRINTER_HOSTS）</div>'; return; }
-  const ST = { '空闲': 'var(--ok)', '打印中': '#d95f2b', '暂停': '#d9b32b', '已完成': 'var(--ok)', '故障': 'var(--bad)', '未连接': '#98a4b0', '准备中': 'var(--warn)', '切片中': 'var(--warn)' };
+  const ST = { '空闲': 'var(--ok)', '打印中': '#d95f2b', '暂停': '#d9b32b', '已完成': 'var(--ok)', '等取件': 'var(--warn)', '故障': 'var(--bad)', '未连接': '#98a4b0', '准备中': 'var(--warn)', '切片中': 'var(--warn)' };
   box.innerHTML = `<div class="printer-grid">` + printers.map(p => {
     // 失联标注（2026-10-08 展示优化）：报文过期（幽灵空闲）时明确警示，不再误信最后的空闲态
     const staleIdle = p.stateStale && ['空闲', '已完成'].includes(p.status);
-    const statusHtml = esc(p.status) + (p.stateStale ? '<span class="staleTag">失联</span>' : '');
-    const color = staleIdle ? '#98a4b0' : (ST[p.status] || '#5b6ee1');
+    // v114 显示态：等取件（打完挂闸，黄标）优先——与「空闲/已完成可接单」区分
+    const st = staleIdle ? '失联' : (p.displayStatus || p.status);
+    const statusHtml = esc(st) + (p.stateStale ? '<span class="staleTag">失联</span>' : '');
+    const color = staleIdle ? '#98a4b0' : (ST[st] || '#5b6ee1');
     // 料位摘要：有料名显料名+色块；闪铸 5M 系无机端料名，按克数余量展示（不冒充材料）
     const ams = (p.ams || []).map(t => {
       if (t.type) return `${esc(t.type)}${t.colorHex ? '<span style="display:inline-block;width:9px;height:9px;border-radius:2px;background:' + esc(t.colorHex) + ';vertical-align:middle"></span>' : ''}`;

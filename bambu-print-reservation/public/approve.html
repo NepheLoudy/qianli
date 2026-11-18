@@ -555,7 +555,7 @@ async function openReprintDialog(id) {
     <div class="detail" style="margin-bottom:8px">以你的名义带原参数重提新单（免重传、${autoMode ? '提交后<b>自动入队打印</b>' : '重新走审批流'}）；以下留空则沿用原单值。</div>
     <label>颜色</label><input type="text" id="rpColor" placeholder="留空沿用原单颜色">
     <label>份数</label><input type="number" id="rpQty" min="1" placeholder="留空沿用原单份数" style="width:120px">
-    <label>目标打印机</label><select id="rpPrinter"><option value="">留空沿用原单机位</option>${printers.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.status)}）</option>`).join('')}</select>
+    <label>目标打印机</label><select id="rpPrinter"><option value="">留空沿用原单机位</option>${printers.map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.displayStatus || p.status)}）</option>`).join('')}</select>
     <div class="actions" style="margin-top:10px">
       <button class="ok" id="rpGo">复刻</button>
       <button class="mini" id="rpCancel">取消</button>
@@ -935,7 +935,7 @@ async function openApproveDialog(id) {
   const brandHint = usable.length && usable.length < printers.length
     ? `<div class="detail" style="margin-bottom:6px;color:var(--warn)">🔒 该文件目标品牌为${fileIsFf ? '闪铸' : '拓竹'}，只列同品牌机型（跨品牌切片格式互不兼容）</div>`
     : '';
-  const opts = (usable.length ? usable : printers).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.status)}${p.stateStale ? '/失联' : ''}）</option>`).join('');
+  const opts = (usable.length ? usable : printers).map((p) => `<option value="${esc(p.name)}">${esc(p.name)}（${esc(p.displayStatus || p.status)}${p.stateStale ? '/失联' : ''}）</option>`).join('');
   const fil = (rec && rec.embeddedParams && Array.isArray(rec.embeddedParams.filaments)) ? rec.embeddedParams.filaments : [];
   const filRows = fil.length
     ? fil.map((f, i) => {

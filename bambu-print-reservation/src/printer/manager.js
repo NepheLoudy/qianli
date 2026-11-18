@@ -349,8 +349,20 @@ class PrinterManager {
   getApiStates() {
     return Object.values(this.printerStates).map((p) => {
       const client = this.clients[p.id];
+      // v114 派生显示态（曼波令「已完成等取件和空闲区分开」）：打完挂取件闸的机器
+      // displayStatus='等取件'（黄标）——与「空闲/已完成（可接单）」在 UI 上区分。
+      // 状态机本体（p.status）不动：逻辑消费点（候选过滤 ['空闲','已完成']）语义正确。
+      // receiptHold 惰性 require 防循环依赖（同下方 receiptHold 字段的既有模式）
+      const displayStatus = (() => {
+        try {
+          const hold = require('./dispatcher').receiptHold;
+          if ((p.status === '已完成' || p.status === '空闲') && hold && hold.has(p.id)) return '等取件';
+        } catch { /* 循环依赖防御 */ }
+        return p.status;
+      })();
       return {
         ...p,
+        displayStatus,
         stateStale: client ? client.isStateStale() : true,
         // 最后一条 state 报文的毫秒时间戳（0=从未收到）——观察台离线标注展示
         // 「最后 HH:MM」快照时间用（2026-10-17 X1C 掉网案）
