@@ -1078,6 +1078,16 @@ class Dispatcher {
         }
         return null;
       }
+      // v113 忙机排队语义：指定机「打印中」= 本单排队等待释放（非故障滞留）——打完
+      // +取件闸放行后下一轮匹配自动开打。日志节流同滞留口径
+      if (!named && (printerManager.getPrinterState(task.assignedPrinter && (printerManager.getApiStates().find((p) => p.name === task.assignedPrinter) || {}).id) || {}).status === '打印中') {
+        const now = Date.now();
+        if (!task._busyWaitLoggedAt || now - task._busyWaitLoggedAt > 10 * 60 * 1000) {
+          task._busyWaitLoggedAt = now;
+          console.log(`[分发] ${task.applicationNo || task.recordId} 指定机「${task.assignedPrinter}」打印中——本单排队等待释放后自动开打`);
+        }
+        return null;
+      }
       if (!named) {
         // 日志节流（2026-10-16）：滞留单每 60s 兜底扫描都会走到这里，逐轮刷屏淹没真错误——
         // 同一任务 10 分钟内只记一次

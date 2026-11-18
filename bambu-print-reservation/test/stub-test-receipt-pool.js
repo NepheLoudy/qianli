@@ -95,8 +95,10 @@ check('acknowledgeReceipt 幂等 + 摘闸清计时源', () => {
 
 check('静态锚：选机排队语义 + TTL 接线 + 回执全民化', () => {
   const resv = fs.readFileSync(path.join(__dirname, '../src/services/reservation.js'), 'utf8');
-  assert.ok(resv.includes('cand.map((p) => ({'), '选机候选必须全量传递（不再全局取舍挤掉持闸机）');
+  assert.ok(resv.includes('[...cand, ...busySame].map((p) => ({'), 'v113：选机候选必须含忙机（打印中排队语义）');
   assert.ok(resv.includes('held: holdHas(p.id)'), '候选必须带持闸标记（选机内部同型号内排序）');
+  assert.ok(resv.includes('candStateOf'), 'v113：候选必须带就绪度标记（ready/held/busy）');
+  assert.ok(resv.includes("storageHold.has(Number(id))"), 'v113：忙机候选必须排除存储熔断机');
   assert.ok(!resv.includes('candFree'), 'v105：全局「有空闲优先」取舍必须移除（异型号空机不得挤掉持闸同型号机）');
   assert.ok(resv.includes('本单排队待放行后自动开打'), '选中持闸机的选机依据必须注明排队');
   const disp = fs.readFileSync(path.join(__dirname, '../src/services/dispatcher.js'), 'utf8');
@@ -135,6 +137,33 @@ check('v105 回归（陈同学实案）：持闸同型号机不被异型号空�
     [],
   );
   assert.strictEqual(dual.name, 'H2D-A', '同型号内无闸机优先');
+});
+
+check('v113 回归（陈夏菲实案）：同型号打印中 → 选它入队排队，绝不转人工', () => {
+  const busy = chooseMachineForSliced(
+    'Bambu Lab P1S',
+    [
+      { name: 'H2D', model: 'H2D', state: 'ready' },
+      { name: 'X1C', model: 'X1C', state: 'ready' },
+      { name: 'P1S', model: 'P1S', state: 'busy' },
+    ],
+    [],
+  );
+  assert.strictEqual(busy.name, 'P1S', '同型号打印中必须入选排队');
+  assert.ok(/排队待释放/.test(busy.basis), 'basis 必须注明排队: ' + busy.basis);
+  assert.strictEqual(busy.lowConfidence, false, '排队是明确语义不是低置信');
+  const three = chooseMachineForSliced(
+    'P1S',
+    [
+      { name: 'P1S-busy', model: 'P1S', state: 'busy' },
+      { name: 'P1S-held', model: 'P1S', state: 'held' },
+      { name: 'P1S-ready', model: 'P1S', state: 'ready' },
+    ],
+    [],
+  );
+  assert.strictEqual(three.name, 'P1S-ready', 'ready 优先于 held/busy');
+  const legacy = chooseMachineForSliced('P1S', [{ name: 'P1S', model: 'P1S' }], []);
+  assert.strictEqual(legacy.name, 'P1S', '旧调用无 state 字段不炸');
 });
 
 process.exit(failures > 0 ? 1 : 0);

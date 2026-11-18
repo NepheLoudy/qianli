@@ -90,20 +90,23 @@ function chooseMachineForSliced(machineModel, candidates, records, fileNozzles) 
     same = known;
   }
   if (same.length) {
-    // 同型号多台：**无闸优先（v105）→ 历史成功率 → 最近使用**——持闸机（等取件回执）
-    // 在同型号内有空闲兄弟机时让位；只有持闸机时照选它（入队排队，闸摘自动开打）。
-    // v105 修正陈同学实案：原「有空闲机优先空机」做成了全局取舍，同型号持闸机被异型号
-    // 空闲机挤出局 →「无同型号机」误报转人工（R20261109-002，白等 4h45m）
+    // 同型号多台：**就绪度优先（v113）→ 历史成功率 → 最近使用**。
+    // 就绪度：ready（空闲无闸）> held（空闲持闸等取件）> busy（打印中）——同型号全生命周期
+    // 可选，选中忙机=入队排队（指定即权威→滞留等待→释放自动开打），绝不转人工。
+    // v105 修正陈同学持闸实案；v113 修正陈夏菲打印中实案（R20261119-003：P1S 在打
+    // 她自己的 001，同型号唯一但候选空 →「无同型号机」误报转人工）
+    const STATE_ORDER = { ready: 0, held: 1, busy: 2 };
     const ranked = same.map((p) => ({ p, st: machineStats(records, p.name) }))
-      .sort((a, b) => ((a.p.held ? 1 : 0) - (b.p.held ? 1 : 0))
+      .sort((a, b) => ((STATE_ORDER[a.p.state || 'ready'] ?? 0) - (STATE_ORDER[b.p.state || 'ready'] ?? 0))
+        || ((a.p.held ? 1 : 0) - (b.p.held ? 1 : 0))
         || (b.st.successRate ?? 0.5) - (a.st.successRate ?? 0.5)
         || b.st.lastAt - a.st.lastAt);
     const top = ranked[0];
+    const waitNote = top.p.state === 'busy' ? '该机打印中，本单排队待释放后自动开打'
+      : (top.p.state === 'held' || top.p.held) ? '该机在等取件回执，本单排队待放行后自动开打' : '';
     const basis = ranked.length === 1
-      ? (top.p.held
-        ? `同型号机（${machineModel}）唯一（该机在等取件回执，本单排队待放行后自动开打）`
-        : `同型号机（${machineModel}）唯一`)
-      : `同型号 ${ranked.length} 台中按历史成功率${top.st.successRate != null ? `（${Math.round(top.st.successRate * 100)}%）` : ''}择优${top.p.held ? '（选中机在等取件回执，本单排队待放行）' : ''}`;
+      ? `同型号机（${machineModel}）唯一${waitNote ? `（${waitNote}）` : ''}`
+      : `同型号 ${ranked.length} 台中按历史成功率${top.st.successRate != null ? `（${Math.round(top.st.successRate * 100)}%）` : ''}择优${waitNote ? `（${waitNote}）` : ''}`;
     return { name: top.p.name, basis, lowConfidence: false };
   }
   // ② 无同型号：不做跨型号降级（2026-11-05 修复，H2D 失联实案）——返回原因给调用方播报。

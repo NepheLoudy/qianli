@@ -155,6 +155,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 - **同型号排队**（v99/v105）：同型号机都在挂闸时新单照常入队排队（不转人工散伙），闸摘或 TTL 放行后自动开打；同型号内无闸机优先。
 - **分发闸门**：上传/下发是分钟级 await 链，闸门在入口同步判定（分发中的机器对自动匹配不可见）；刻意不持久化（崩溃后清零重新评估）。
 - **重试**：失败自动重试 3 次（冷却 60s）→ 放弃池（页面一键人工恢复）；确定性失败（工程 3mf 闸等 noRetry 拦截）跳过重试直接终局（v100——重试也不可能成功）；同单 30 分钟二次失败熔断（防误判复打）。
+- **存储熔断**（v112）：上传双通道全败且机端 `sdcard=false`（U 盘/SD 卡被拔）→ 熔断该机停派（storageHold，内存态不持久化、重启即清），任务回队列不计失败 + 私信「暂缓」；10 分钟巡检 sdcard 恢复自动解除续打（与取件闸 TTL 同一定时器节奏）。
 - **故障取证**（谁取消了打印）：HMS 时效（只认本次开打后的条目）、同值镜像码不算独立证据、人因终止四通道（控制台/拓竹 400C/闪铸 canceling/无证据 FAILED 反转）——**别再加取消码，接故障证据字段**。
 - 状态持久化：队列/打印中映射/放弃池落盘 `DISPATCH_STATE_FILE`，重启恢复；文件损坏隔离 `.corrupt-<ts>`。
 
@@ -268,6 +269,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 | reservation-query-test / reprint-lineage-test | 分页查询（27 项含数组参数防御）/ 复刻血缘（5 项，v91） |
 | auto-slice-test / param-fit-test / slice-artifacts-test / printer-*-test / flashforge-client-test / rtsps-test / ams-filament-test / spatial-sanitize-test / source-pairing-test | 切片与打印机协议 |
 | engine3mf-test / printer-upload-channel-test / stub-test-gcode-meta / stub-test-model-lock / stub-test-nozzle-gate / stub-test-color-dispatch | 工程 3mf 自解析 / 上传通道分流（FTPS 优先）/ gcode 机型指纹 / 切片件机型锁 / 喷嘴闸（v97）/ 颜色分发降级（v98）——stub-\* 四套链外手跑 |
+| stub-test-storage-hold / stub-test-name-audit / stub-test-training-quality | v112 存储熔断停派+恢复巡检 / v111 源文件名称对账（切片名剥尾对照+多模型兼容）/ v107 训练库质量四档+工程 3mf 入库拒收——stub-\* 三套链外手跑 |
 
 写新测试照现有模子：`check(name, fn)` + assert + 末尾 `process.exit(failures ? 1 : 0)`——`npm test` 经 `scripts/run-tests.js` 自动发现 `test/*-test.js`，无需挂链（2026-11-05 起）。
 

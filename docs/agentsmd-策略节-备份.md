@@ -47,7 +47,7 @@
 ### 机器级禁区（v4.5.3，曼波定：告知其他工作区不要编辑的区域）
 ### 监听与边界（如实）
 - 实时水位仅 magpie 内平台（deepseek/bigmodel 直连不可查）；运营商限速优化=网关内置（无开关）；表现数据 magpie usage --csv（**按 session id 归因**）、quota history/wait。
-- **核心锁死**：本机 bigmodel 与 start-plan 永不参与切换；主会话 BigModel 直连实锤（session 聚合）；account 池吃核心，magpie 池吃外围。
+- **核心锁死**：本机 bigmodel 与 start-plan 永不参与切换（account 池吃核心，magpie 池吃外围）；主会话模型由曼波手动全权选择（频繁各路切换），任何调度规则、advice、文档不得假设或记录主会话当前模型。
 
 
 ### 并行生命周期 + 并行派发通道规则（v3.5-v3.9 规则索引）
@@ -60,3 +60,6 @@
 - **v4.2 免费顺位制度**→**v4.3 优先跨平台**（--avoid/--group+平台相撞拦截，--cross-platform-ok 放行）→**v4.4 大扩容适配**（平台 5→9、catalog 30、勤务兵团 group/aux 8 成员、质量链扩容 codearts/autoclaw/zed 异源重炮）——细节见 qianli docs 全量审查报告。
 ### v4.x 修正档案
 - v4.2 免费顺位→v4.3 优先跨平台（--avoid/--group+相撞拦截）→v4.4 大扩容+免费定位纠偏（免费=外围打杂勤务兵团，质量链零免费）→v4.4.1 P0（dev 链混入 hy3 已摘）→v4.5 智能化分发（并发嗅探灌限额 workbuddy6/raccoon4/trae-cn3、限速灵敏度 4h 窗+ttft2×/立即换组员、跨对话让路）→v4.5.1 嗅探数据收编→**v4.5.2 本次恢复**。
+
+- **v5.0 大扩容适配（2026-11-18，曼波：模型池与供应商再扩充）**：平台 9→12（新 kiro/marvis，zcode 通道开启；catalog 36 模型）；**hy3 下架**——勤务七岗 model 全部改挂 magpie/group/aux（组路由成员失效自动跳；**aux 组档位空集，model 不能带 $ 后缀**）；general-purpose=magpie/group/dev-swarm；**dev-swarm 升七平台 GLM 同家族轮转**（workbuddy/trae-cn/codearts/autoclaw/raccoon/zcode）；dev 组纳入 codearts/glm-5.3（xhigh 攻坚新主力）+zcode/GLM-5.3；review 组纳入 marvis deepseek；**主会话不在策略管辖内**（曼波手动领地，频繁各路切换；策略只管子代理派发路由）；**Workflow 工具下线**——复杂 DAG 改走 ZCode 原生多会话工具（CreateSession/SendToSession/WaitSessions）；池态势 STOPPED 池（zcode 12%/workbuddy 5%）自动停派。
+- **组路由语法速查**：model=组 id 原样（magpie/group/aux）；带档位需组内全员支持（dev-swarm ✓，aux 任何后缀 ✗）；岗位定义改动会话内不热载，改完新会话验证。

@@ -100,6 +100,7 @@ applyRules（28 条种子规则，priority 升序叠加，大者赢）
 {
   "id": "T20261011-001",
   "machine": "Bambu Lab X1C",                                                        // 机型隔离（多品牌机队）
+  "quality": "clean",                                                                // 质量档（v107 起）：clean/quarantine/humanFactor/excluded，打标不删数据
   "selection": { "fit_class": "interference", "fastener": ["machine_screw"], ... },  // 人工标注（金标准，≥1 项硬性要求）
   "spatial": [ { "tool": "bending_zone", "pos": [x,y,z], "face": 1234 }, ... ],      // 空间工况标注（3D 标注工房）
   "model":  { "features": { 几何特征全集 }, "storedPath": "bambu-data/training/files/..." },  // 自动
@@ -113,7 +114,10 @@ applyRules（28 条种子规则，priority 升序叠加，大者赢）
 - 入口：`/train.html` 训练集录入工坊（无审批——录入人即标注权威）；
 - 机型隔离（2026-10-12 曼波：多品牌机队、寿命各异）：样本带 `machine` 字段按机型归档；机队档案 `.printer-fleet.json`（品牌/构建体积/可信度，人工维护）；**几何链路全机通用，工况与参数按机型隔离**；
 - 存储：索引 `.training-samples.json`，文件本体归档 `bambu-data/training/files/`（项目外，push 不丢）；
-- 导出：样本库页「导出 JSONL」或 `GET /api/training/export`（reviewer+），训练管线直接消费；
+- 导出：样本库页「导出 JSONL」或 `GET /api/training/export`（reviewer+），训练管线直接消费——v107 起默认剔除 quality=excluded，行内带 `quality` 档供下游加权（全量要 `includeExcluded`）；
+- **质量四档（2026-11-14，v107 清洗批）**：样本带 `quality` 档——clean（默认）/ quarantine（无 outcome 待复核，训练默认跳过）/ humanFactor（失败但无故障证据——人因终止，对参数学习是噪声，保留供失败归因）/ excluded（工程件误入档等确定噪声）——**打标不删数据**，原始 JSON 与归档文件不动，标记层可回滚；
+- **工程 3mf 入库拒收（v107）**：未切片工程 3mf（特征=作者网格非实际打印件、无切片参数）在审批入库口直接拒收（A面.3mf/下横梁噪声实案），真实打印完成后再以现场切片产物入库；
+- **machine 自动回填（v107）**：outcome 回填时 issues 含「完成 @ 机器名」自动补 `machine`（打印完成由系统自动记录且带打印机名；此前自动分发单 machine 60/60 全空——选机发生在入队后，审批入库时补不上）；
 - ⚠️ 纪律（2026-10-11 曼波纠偏）：**没有人工工况标注的数据不是训练样本**——store 层强制勾选 ≥1 项。
 
 ### 4.1 拟合度条（2026-10-12 曼波纠正语义，替换「打印机可信度」初版）
