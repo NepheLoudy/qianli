@@ -532,7 +532,8 @@ app.post('/api/training/param-model/fit', requireUser('reviewer', 'admin'), (req
       .filter((r) => r.processParams && r.modelFeatures
         && r.status !== '已驳回' && r.status !== '已取消')
       .slice(-800);
-    const result = require('./services/paramModel').train(require('./services/trainingStore').list(), {
+    // v121 抓手①（曼波令「推进并完成」）：quality 滤波入训——仅 clean 进参数拟合
+    const result = require('./services/paramModel').train(require('./services/trainingStore').listForTraining(), {
       ...(req.body || {}),
       reservations,
     });
@@ -580,6 +581,17 @@ app.post('/api/training/param-model/mode', requireUser('admin'), (req, res) => {
 app.post('/api/training/param-model/deactivate', requireUser('admin'), (req, res) => {
   try {
     res.json(require('./services/paramModelStore').deactivate());
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// v121 抓手①（曼波令）：样本质量打标 API——quarantine/humanFactor/excluded/clean 四档，
+// reviewer+ 可操作（打标不删数据；clean 档样本才进参数拟合，见 listForTraining）
+app.post('/api/training/samples/:id/quality', requireUser('reviewer', 'admin'), (req, res) => {
+  try {
+    const { quality, note } = req.body || {};
+    res.json(require('./services/trainingStore').setQuality(req.params.id, quality, note));
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -2456,6 +2468,8 @@ app.get('/api/dispatch/queue', requireUser(), (req, res) => {
     givenUp: dispatcher.listGivenUp(), // 重试耗尽待人工恢复（页面黄条 + 恢复按钮消费）
     receiptHold: dispatcher.listReceiptHold(), // 打完等回执闸（2026-10-28：页面显示「等待取件回执」）
     storageHold: dispatcher.listStorageHold(), // v112 存储熔断清单（审批台排队池 UI 消费）
+    // v121 抓手③（曼波令）：机×料时长校准系数随队列透出——排队池 ETA 用机校准值
+    durationBias: (() => { try { return require('./services/dispatchLearning').durationBias(require('./services/reservationStore').list()); } catch { return null; } })(),
   });
 });
 

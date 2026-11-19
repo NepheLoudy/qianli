@@ -113,12 +113,13 @@
 </div>
 <div class="toast" id="toast"></div>
 
+<script src="/common.js?v=20261120"></script>
 <script src="/vendor/jmuxer.min.js"></script>
 <script src="/viz.js?v=1"></script>
 <script>
 function toggleTheme() { const c = document.documentElement.getAttribute('data-theme') === 'light' ? 'dark' : 'light'; document.documentElement.setAttribute('data-theme', c); try { localStorage.setItem('qli-theme', c); } catch (e) {} const i = document.getElementById('themeIcon'); if (i) i.textContent = c === 'light' ? '☀' : '◐'; }
 const $ = (id) => document.getElementById(id);
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+// esc 已抽至 /common.js（v121 P3），此处不再内联定义
 // 内联事件处理器里的字符串参数：JSON 编码后再 HTML 转义——单引号/双引号/反斜杠都
 // 不会逃出 JS 字符串（esc 单独用会把 &#39; 解码回 ' 导致注入，2026-10-18 审查）
 const jsq = (v) => esc(JSON.stringify(String(v ?? '')));
@@ -240,16 +241,7 @@ function enter() {
   startPolling(() => { loadFleet(); loadQuickOps(); }, 5000);
   loadQuickOps();
 }
-// 页面隐藏时暂停轮询（审查修复 v62，四页同款口径）
-let __pollTimer = null;
-function startPolling(fn, ms) {
-  if (__pollTimer) clearInterval(__pollTimer);
-  __pollTimer = setInterval(fn, ms);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
-    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
-  });
-}
+// 页面隐藏时暂停轮询（审查修复 v62，四页同款口径）：startPolling 已抽至 /common.js（v121 P3）
 
 // ---------- 机队渲染 ----------
 

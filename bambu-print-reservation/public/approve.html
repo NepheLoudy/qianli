@@ -105,24 +105,15 @@ function toggleTheme() {
   </div>
 </div>
 <div id="toast"></div>
+<script src="/common.js?v=20261120"></script>
 <script src="/annotator.js?v=25"></script>
 <script src="/printer-model-key.js?v=1"></script>
 <script>
 // 打印审批台（2026-10-18 曼波令：admin/reviewer 独立审批界面；预约中心列表回归纯状态展示）
 const $ = (id) => document.getElementById(id);
-function esc(s) { return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c])); }
+// esc / fmtLocalTime / startPolling 已抽至 /common.js（v121 P3），此处不再内联定义
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
 function fmtMins(mins) { const m = Number(mins); if (!Number.isFinite(m) || m <= 0) return ''; return m >= 60 ? Math.floor(m / 60) + 'h' + (m % 60 ? (m % 60) + 'm' : '') : m + 'm'; }
-// v106 时区修复（曼波令「时间完全对不上」）：数据库时间戳是 UTC ISO，此前 slice 裸串
-// 直显慢 8 小时——统一转本地时区。withYear=true 输出 "2026-11-09 21:52"，默认 "11-09 21:52"
-function fmtLocalTime(iso, withYear) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return String(iso);
-  const p = (n) => String(n).padStart(2, '0');
-  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  return withYear ? `${d.getFullYear()}-${md}` : md;
-}
 const PARAM_LABELS = { layerHeight: '层高', wallLoops: '墙数', topShellLayers: '顶面层', bottomShellLayers: '底面层', infillDensity: '填充%', infillPattern: '填充图案', speedProfile: '速度档', supportType: '支撑', supportThresholdAngle: '支撑阈值°', supportDensity: '支撑密度%', seamPosition: '接缝', directionStrategy: '朝向策略', ironing: '熨烫', brim: '裙边', brimWidth: '裙边mm', xyHoleComp: '孔补偿', xyContourComp: '轮廓补偿', temperatureDelta: '热床Δ°', nozzleTempDelta: '喷嘴Δ°' };
 
 let ME = null;
@@ -154,17 +145,8 @@ function renderIdentity() {
   if (!isReviewer()) { $('noPerm').style.display = 'block'; $('appBody').style.display = 'none'; return; }
   $('noPerm').style.display = 'none'; $('appBody').style.display = 'block';
 }
-// 轮询守卫（审查修复 v62）：interval 防叠加（页内重登会重复 enter）+ 页面隐藏暂停、
-// 恢复时立即拉一轮——后台标签页不再持续打服务端
-let __pollTimer = null;
-function startPolling(fn, ms) {
-  if (__pollTimer) clearInterval(__pollTimer);
-  __pollTimer = setInterval(fn, ms);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
-    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
-  });
-}
+// 轮询守卫（审查修复 v62）：startPolling 已抽至 /common.js（v121 P3）——interval 防叠加
+// （页内重登会重复 enter）+ 页面隐藏暂停、恢复时立即拉一轮，后台标签页不再持续打服务端
 async function amsSync(btn) {
   btn.disabled = true; const old = btn.textContent; btn.textContent = '⏳ 同步中…';
   try {
@@ -221,6 +203,12 @@ function renderQueuePool(qd, records) {
   const q = (qd && Array.isArray(qd.queue)) ? qd.queue : [];
   const holds = new Map((qd && qd.receiptHold || []).map((h) => [String(h.printerId), h.recordId]));
   const storages = new Map((qd && qd.storageHold || []).map((h) => [String(h.printerId), h]));
+  // v121 抓手③（曼波令）：机×料时长校准系数（dispatchLearning.durationBias）——
+  // ETA 从切片裸估变按机校准：校准后分钟 = 剩余分钟 × bias（该机有真值样本时）
+  const biasByPrinter = {};
+  for (const [machine, v] of Object.entries((qd && qd.durationBias) || {})) {
+    if (v && Number.isFinite(v.bias) && v.bias > 0 && !v.actualOnly) biasByPrinter[machine] = v.bias;
+  }
   const printers = window.__printers || [];
   const byName = new Map(printers.map((p) => [p.name, p]));
   const recById = new Map(records.map((r) => [r.id, r]));
@@ -234,7 +222,11 @@ function renderQueuePool(qd, records) {
     let cls = '';
     if (target && storages.has(prId)) { wait = `⛔ ${target} 存储熔断（U 盘/SD 卡掉挂载）——插回或重启后自动恢复`; cls = 'color:var(--bad)'; }
     else if (target && holds.has(prId)) { wait = `🔐 ${target} 已打完等取件回执——<b>谁都可以在预约页点「确认取件」</b>，放行后本单自动开打`; cls = 'color:var(--warn)'; }
-    else if (target && pr && pr.status === '打印中') { wait = `🖨 ${target} 打印中${pr.remainingMinutes ? `（剩 ${pr.remainingMinutes} 分钟）` : ''}——打完+取件放行后自动开打`; cls = 'color:var(--warn)'; }
+    else if (target && pr && pr.status === '打印中') {
+      const eta = calibratedEta(target, pr.remainingMinutes);
+      wait = `🖨 ${target} 打印中（剩 ${pr.remainingMinutes} 分钟${eta ? `，按机校准 ~${eta} 分钟` : ''}）——打完+取件放行后自动开打`;
+      cls = 'color:var(--warn)';
+    }
     else if (target && pr && ['空闲', '已完成'].includes(pr.status)) { wait = `${target} 已就绪——下一轮匹配自动开打`; }
     else if (target) { wait = `${target} 当前不可用（失联/忙）——恢复后自动开打`; cls = 'color:var(--warn)'; }
     return `<div class="qitem"><div class="qhead">

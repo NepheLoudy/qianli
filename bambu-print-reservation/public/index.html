@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>千里战队3D打印预约中心</title>
 <link rel="stylesheet" href="/styles.css?v=20261029">
+<script src="/common.js?v=20261120"></script>
 <script>
   /* 主题（亮/暗）持久化——UI 层，与业务逻辑无关 */
   (function () {
@@ -331,10 +332,7 @@ let PRINTER_NAMES = []; // 已登记打印机名（/api/printers，指定打印�
 let GIVEN_UP_IDS = new Set(); // 放弃池单号集合（列表行显形用，loadGivenUp 刷新）
 const $ = (id) => document.getElementById(id);
 
-/** HTML 转义：displayName/文件名/理由等用户可控字段一律过这里再进 innerHTML（防存储型 XSS） */
-function esc(s) {
-  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
+// esc / fmtLocalTime / startPolling 已抽至 /common.js（v121 P3），此处不再内联定义
 
 function toast(msg) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; setTimeout(() => t.style.display = 'none', 4000); }
 const isReviewer = () => ME && ['reviewer', 'admin'].includes(ME.role);
@@ -1605,16 +1603,7 @@ async function cancelReservation(id) {
 }
 
 /** 分钟 → 「Xh Ym」（ETA 展示） */
-// v106 时区修复（曼波令「时间完全对不上」）：数据库时间戳是 UTC ISO，此前 slice 裸串
-// 直显慢 8 小时——统一转本地时区。withYear=true 输出 "2026-11-09 21:52"，默认 "11-09 21:52"
-function fmtLocalTime(iso, withYear) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return String(iso);
-  const p = (n) => String(n).padStart(2, '0');
-  const md = `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  return withYear ? `${d.getFullYear()}-${md}` : md;
-}
+// v106 时区修复（曼波令「时间完全对不上」）：fmtLocalTime 已抽至 /common.js（v121 P3）
 
 function fmtMins(mins) {
   const m = Number(mins);
@@ -1860,16 +1849,7 @@ async function printerCtl(id, action, confirmText) {
   // 审查修复（v62）：页面隐藏暂停、恢复立即拉一轮——后台标签页不再持续打服务端
   startPolling(() => { if (ME) { loadList(); loadPrinters(); } }, 5000);
 })();
-// 轮询守卫（审查修复 v62，四页同款口径）
-let __pollTimer = null;
-function startPolling(fn, ms) {
-  if (__pollTimer) clearInterval(__pollTimer);
-  __pollTimer = setInterval(fn, ms);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearInterval(__pollTimer); __pollTimer = null; }
-    else if (!__pollTimer) { fn(); __pollTimer = setInterval(fn, ms); }
-  });
-}
+// 轮询守卫（审查修复 v62，四页同款口径）：startPolling 已抽至 /common.js（v121 P3）
 </script>
 <footer class="site-footer" style="margin-top:60px;padding:26px 0;border-top:1px solid var(--line);text-align:center">
   <p style="font-size:13px;color:var(--subtle)">千里战队 3D 打印预约中心 · CQU QIANLI ROBOTICS · <a href="/status.html" style="color:var(--accent)">设备观察台</a> · <a href="https://team.cquqianli.cn" target="_blank" rel="noopener" style="color:var(--accent)">战队官网</a></p>

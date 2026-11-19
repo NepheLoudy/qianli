@@ -49,8 +49,8 @@ module.exports = {
 
   plaza: {
     // 动态广场事件流（机器人项目看板「动态广场」表，供多维表格仪表盘展示）
-    appToken: process.env.PLAZA_BITABLE_APP_TOKEN || 'ZlVZbXDkRayUzSsFRiycznmZn5b',
-    tableId: process.env.PLAZA_BITABLE_TABLE_ID || 'tbld1zHXkTzko20p',
+    appToken: process.env.PLAZA_BITABLE_APP_TOKEN || '', // v121 P3：默认密钥形态出代码——真值只在 .env
+    tableId: process.env.PLAZA_BITABLE_TABLE_ID || '',
   },
   bitable: {
     appToken: process.env.BITABLE_APP_TOKEN || '',

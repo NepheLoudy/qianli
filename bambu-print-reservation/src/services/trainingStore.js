@@ -273,6 +273,16 @@ const trainingStore = {
   },
   get(id) { return load().find((s) => s.id === id) || null; },
 
+  /**
+   * 训练消费清单（v121 抓手①，曼波令「推进并完成」）：quality 滤波入训——
+   * 仅 clean（含无 quality 老样本）进参数拟合；quarantine/humanFactor/excluded 一律
+   * 摘出（v107 体检实案：18 条隔离样本此前混在 LOFO 里污染择优信号）。
+   * dumpJsonl 同口径（excluded 过滤）——两处消费共用一个真源。
+   */
+  listForTraining() {
+    return load().filter((s) => !s.quality || s.quality === 'clean');
+  },
+
   /** 回填打印结果（学习信号的奖励通道：成功/失败/问题样本要分开对待）。
    *  v107 清洗批：issues 带「完成 @ 机器名」时自动回填 machine（审批入库时 assignedPrinter
    *  常为空——自动分发单选机发生在入队后，machine 60/60 全空的根因），新样本不再空 */
