@@ -1175,6 +1175,13 @@ class Dispatcher {
           console.warn(`[分发] ${task.applicationNo} 审批指定槽位「${pt.slot}」在 ${named.name} 已不可用——滞留等待人工处理`);
           return null;
         }
+        // v124 特种槽豁免（本条先于料型核对）：槽被标特种隔离=AMS 未录入特种料、显示
+        // 料型是机端占位（假料型）——提单「特种耗材开关」手动指到隔离槽=申请人明确
+        // 声明要用这卷料，料型核对跳过（否则 R20261120-001 实案：PLA 件指特种槽被判
+        // 「PETG≠PLA」永久滞留）。审批人指定普通槽照旧核对
+        let _isSpecialSlot = false;
+        try { _isSpecialSlot = require('./specialSlotsStore').isSpecial(named.name, pt.slot); } catch { /* 无清单 */ }
+        if (_isSpecialSlot) continue;
         // 槽内料型核对（2026-10-27 曼波令「按实际填充材料改判」）：审批后人把槽里的
         // PLA 换成 PETG 也能打下去的历史缺口——文件逐条用料优先、提单声明材料兜底，
         // 类型对不上（exact/family 均不匹配）即滞留播报，不打废件；旧文件/模型直投
