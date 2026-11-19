@@ -2,7 +2,7 @@
  * 源文件名称对账单测（2026-11-15 v111 曼波令「名称架构对账：对上放行，对不上询问」）
  * 从 public/index.html 抽取 parseSliceBase/nameMatchLevel/verifySourceNames 真身，
  * 用历史真单文件名跑行为断言（含曼波截图实件 HVB_depart1_PETG_1h34m）。
- * 用法：node test/stub-test-name-audit.js
+ * 用法：node test/name-audit-test.js
  */
 const assert = require('assert');
 const fs = require('fs');

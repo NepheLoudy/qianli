@@ -277,7 +277,8 @@ const trainingStore = {
    * 训练消费清单（v121 抓手①，曼波令「推进并完成」）：quality 滤波入训——
    * 仅 clean（含无 quality 老样本）进参数拟合；quarantine/humanFactor/excluded 一律
    * 摘出（v107 体检实案：18 条隔离样本此前混在 LOFO 里污染择优信号）。
-   * dumpJsonl 同口径（excluded 过滤）——两处消费共用一个真源。
+   * 注意口径差异：dumpJsonl 仅滤 excluded（其余档带 quality 字段供下游加权），
+   * 本方法更严（仅 clean）——参数拟合用这里，导出分析用 dumpJsonl。
    */
   listForTraining() {
     return load().filter((s) => !s.quality || s.quality === 'clean');

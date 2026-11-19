@@ -48,7 +48,7 @@ npm start          # 或 node src/index.js，默认 http://localhost:3001
 ### 2.3 跑测试
 
 ```bash
-npm test           # 全量自动发现 test/*-test.js（当前 43 套，断言数见各文件尾部）
+npm test           # 全量自动发现 test/*-test.js（当前 53 套，断言数见各文件尾部）
 node test/param-model-test.js   # 单跑一套
 ```
 
@@ -106,7 +106,7 @@ src/
   utils/               ← stepMesh(CAD解析)/gcodeLayers(刀轨分层)/fileTypes 等
 public/                ← 四页前端（无框架原生 JS + styles.css 共享设计系统）
   index.html  预约中心（提交/列表/取消）
-  approve.html 审批台（审批/预览/回读校验/模型 provenance）
+  approve.html 审批台（审批/预览/回读校验/模型 provenance/排队池段——等待原因+机×料校准 ETA，v114/v121）
   train.html  训练录入台（样本录入/3D标注/规则治理/参数智能层面板）
   status.html 观察台（机队状态/画面/控制指令）
   annotator.js  3D 标注工房（canvas 网格 + spatial 标注）
@@ -121,7 +121,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 2. `featureDerive.deriveFeatures` 算 feat 字典 → `processRules.applyRules(selection, {material, feat})` 出参数快照（硬冲突 400）→ 参数智能层 `applyToParams`（有已采纳模型时按置信度修正数值参数，provenance 随单存档）；
 3. `reservationStore.create` 落库（状态机起点「待审批」）→ 群播审批提醒卡（过静默闸）；
 4. 审批人 `POST /api/reservations/:id/approve` → 校验通过 → **同步入队**（关键路径内禁 await，防审批取消竞态）→ 状态「排队中」；
-5. dispatcher 扫队列（事件驱动 + 每分钟兜底）：空闲判定=状态归一 + FAILED 残留放行 + 品牌/文件格式隔离（拓竹、闪铸都参与自动分发）+ 取件回执闸排除 → AMS 材料匹配 → 自动切片（需求单）/直接用文件（直通单）→ SFTP/FTPS 上传 → MQTT 下发 → 「打印中」。同型号机都在挂取件闸时提交链入队排队（v99 排队池），闸摘或 TTL 超时自动放行后开打；
+5. dispatcher 扫队列（事件驱动 + 每分钟兜底）：空闲判定=状态归一 + FAILED 残留放行 + 品牌/文件格式隔离（拓竹、闪铸都参与自动分发）+ 取件回执闸排除 → AMS 材料匹配 → 自动切片（需求单）/直接用文件（直通单）→ SFTP/FTPS 上传 → MQTT 下发 → 「打印中」。同型号机在忙（挂闸/打印中/FAILED 挂态，v113/v119）时提交链入队排队（v99 排队池），机子释放后自动开打；
 6. MQTT `gcodeState` 变迁：FINISH→「已完成」+完成播报 + 样本 outcome/sliceStats 回填；失败→取证（HMS 时效/人因码/镜像码三重校验）→ 自动重排（确定性失败直接终局不重试；30 分钟二次失败熔断进放弃池）。
 
 ## 4. 核心概念（按依赖顺序）
@@ -141,7 +141,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 
 **分层分工哲学：规则管因果、模型管数值、置信度管敢不敢、LOFO 竞技场管谁上岗。**
 
-- **样本库**（trainingStore）：一条样本 = 几何特征 × 工况标注（人工金标准）× 专家切片参数。录入即入库无审批（录入人=标注权威）；打印完成/失败经 sourceRecordId 自动回填 outcome。
+- **样本库**（trainingStore）：一条样本 = 几何特征 × 工况标注（人工金标准）× 专家切片参数。录入即入库无审批（录入人=标注权威）；打印完成/失败经 sourceRecordId 自动回填 outcome；质量打标四档 clean/quarantine/humanFactor/excluded（v107 起，v121 接入拟合滤波）——仅 clean 进参数拟合，人因失败等脏样本隔离不污染学习数据。
 - **特征向量**（featureVector）：几何体检原值 + feat 派生 + 工况 one-hot + 挠度标尺 + 6 组物理交互列 → 统一数值向量。**spec 随模型冻结**（impute/标准化参数存档）——taxonomy 演进后旧模型按填补值降级，不崩。
 - **三族竞技**（paramModel）：kNN 案例推理（几何标准化欧氏+工况 Jaccard 取 top-5 专家案例加权融合）/ 岭回归（多变量闭式解）/ MLP（多任务共享底座 24→12 双隐层 + 5 网络集成，mlp.js 手写）。每参数按 **LOFO（留一家族出）MAE** 与「全局中位数基线」比，严格优于基线 ≥5% 才上岗，学不会的诚实回退规则值。
 - **消费与门控**：审批时基线参数 → 模型逐参数修正（只碰 12 个数值参数，clamp 白名单域内；材料/朝向等安全参数模型永远不碰）；置信度 <0.55 逐参数回退。provenance（模型值/规则值/来源/置信度/参考案例）随单存档、审批台可见。
@@ -152,10 +152,11 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 
 - 队列匹配五规则：拓竹空闲 + 指定优先 + AMS 精确材料 + 颜色 ΔE + 家族回退（PLA-CF↔PLA）；加急优先出队，队首缺料不阻塞。
 - **取件回执闸**：打完即挂闸等取件确认，闸挂期间本机对自动匹配不可见；挂闸超 `DISPATCH_RECEIPT_TTL_HOURS`（默认 24h）自动放行防单闸堵死机型队列（manual-\* 人工闸豁免 TTL）。
-- **同型号排队**（v99/v105）：同型号机都在挂闸时新单照常入队排队（不转人工散伙），闸摘或 TTL 放行后自动开打；同型号内无闸机优先。
+- **同型号排队**（v99/v105/v113/v119）：同型号机在忙（挂闸/打印中/FAILED 挂态——有故障记录但非失联/熔断）时新单照常入队排队（不转人工散伙），机子释放（取件确认/TTL 放行/故障恢复）后自动开打；同型号内空闲机优先。仅「机队无此型号/全部失联」才转人工。
 - **分发闸门**：上传/下发是分钟级 await 链，闸门在入口同步判定（分发中的机器对自动匹配不可见）；刻意不持久化（崩溃后清零重新评估）。
 - **重试**：失败自动重试 3 次（冷却 60s）→ 放弃池（页面一键人工恢复）；确定性失败（工程 3mf 闸等 noRetry 拦截）跳过重试直接终局（v100——重试也不可能成功）；同单 30 分钟二次失败熔断（防误判复打）。
 - **存储熔断**（v112）：上传双通道全败且机端 `sdcard=false`（U 盘/SD 卡被拔）→ 熔断该机停派（storageHold，内存态不持久化、重启即清），任务回队列不计失败 + 私信「暂缓」；10 分钟巡检 sdcard 恢复自动解除续打（与取件闸 TTL 同一定时器节奏）。
+- **报错群播**（v116/v117）：failTask 统一出口（机端故障/幽灵失败/stale 异常三源 + v112 熔断分支）向 3D 打印群发报告卡（机器/原因/HMS 尾条/单据/处置指引）——走独立 `PRINTER_ALERT_WEBHOOK_URL`（缺省回落 `BOT_WEBHOOK_URL`）、绕过晚间静默积压；人因终止不发、同机同因 30 分钟节流。
 - **故障取证**（谁取消了打印）：HMS 时效（只认本次开打后的条目）、同值镜像码不算独立证据、人因终止四通道（控制台/拓竹 400C/闪铸 canceling/无证据 FAILED 反转）——**别再加取消码，接故障证据字段**。
 - 状态持久化：队列/打印中映射/放弃池落盘 `DISPATCH_STATE_FILE`，重启恢复；文件损坏隔离 `.corrupt-<ts>`。
 
@@ -261,6 +262,7 @@ test/                  ← 测试全部独立可跑（npm test 自动发现，�
 | dispatcher-test / persist / manual-race | 队列匹配/持久化恢复/闸门竞态 |
 | dispatch-learning-test / machine-pick-test / stub-test-receipt-pool / stub-test-engineering-gate | 分发学习器 / 切片件自动选机（无同型号不降级）/ v99 排队池+取件 TTL / v100 工程 3mf 分发闸——stub-\* 两套链外手跑 |
 | local-reservation-test / precheck-test / receipt-gate-test | 预约状态机/程序初审/回执闸 |
+| receipt-pool-test / failure-report-test / training-quality-test | v99+v113+v119 排队池（忙机排队/取件 TTL）/ v116 报错群播（节流+人因不发）/ v107+v121 样本质量打标 |
 | reservation-dm-quiet-test | 打印进程 DM 晚间静默闸（静默积压 09:00 补发） |
 | taxonomy-test / process-rules-test / rules-seed-sync-test | 标签池/规则库/种子同步 |
 | param-model-test（15 断言）/ orientation-learn-test / learning-loop-test / training-store-test | 学习回路三件套（含 MLP 正弦/饱和曲线/竞技场闸门）+ 训练集样本库纯逻辑 |

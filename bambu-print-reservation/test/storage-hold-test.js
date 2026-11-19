@@ -3,7 +3,7 @@
  * 实案：X1C 11-08 与 H2D 11-15 先后存储掉挂载（U 盘被拔），各烧 3 次重试才被发现，
  * 后续单子排队陪葬。机制：553+sdcard=false → 该机熔断停派+任务回队列不计数+DM 申请人；
  * sdcard 恢复（热插回/重启后固件重挂载）→ sweep 自动解除+恢复队列。
- * 用法：node test/stub-test-storage-hold.js（环境隔离不连生产）
+ * 用法：node test/storage-hold-test.js（环境隔离不连生产）
  */
 const assert = require('assert');
 const fs = require('fs');

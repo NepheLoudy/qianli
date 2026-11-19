@@ -2,7 +2,7 @@
  * 训练库清洗批单测（2026-11-14 v107 曼波令「素材噪声整理+学习链路迭代」）
  * 覆盖：quality 体系（setQuality 校验/统计）、setOutcome machine 回填、dumpJsonl excluded 过滤、
  *       工程 3mf 入库拒收（reservation.createSampleFromReservation 闸门静态锚）。
- * 用法：node test/stub-test-training-quality.js（环境隔离不连生产）
+ * 用法：node test/training-quality-test.js（环境隔离不连生产）
  */
 const assert = require('assert');
 const fs = require('fs');

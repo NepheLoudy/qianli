@@ -3,7 +3,7 @@
  * 背景：拓竹系切片（Orca/Bambu Studio）导出的 .gcode 头部带 `; printer_model`——
  * 此前不提取导致提交链 embeddedParams=null，学习选机按「.gcode=闪铸」扩展名瞎兜底，
  * 把 H2D 切片派给闪铸 A5P 打出废件（R20261106-001 实案）。
- * 用法：node test/stub-test-gcode-meta.js
+ * 用法：node test/gcode-meta-test.js
  */
 const assert = require('assert');
 const { extractGcodeMeta } = require('../src/services/slicerExtract');

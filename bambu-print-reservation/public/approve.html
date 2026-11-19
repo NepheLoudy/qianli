@@ -209,6 +209,14 @@ function renderQueuePool(qd, records) {
   for (const [machine, v] of Object.entries((qd && qd.durationBias) || {})) {
     if (v && Number.isFinite(v.bias) && v.bias > 0 && !v.actualOnly) biasByPrinter[machine] = v.bias;
   }
+  // v123 补（审查 P0：v121 遗漏函数定义致排队池 ReferenceError，审批台三段渲染失败）：
+  // 校准后 ETA = 剩余分钟 × 该机 bias；bias 缺失/actualOnly/结果非正 → 返回 null 不展示
+  const calibratedEta = (printerName, mins) => {
+    const b = biasByPrinter[printerName];
+    if (!b) return null;
+    const m = Math.round((Number(mins) || 0) * b);
+    return m > 0 ? m : null;
+  };
   const printers = window.__printers || [];
   const byName = new Map(printers.map((p) => [p.name, p]));
   const recById = new Map(records.map((r) => [r.id, r]));

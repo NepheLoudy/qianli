@@ -2,7 +2,7 @@
  * 打印机报错群播单测（2026-11-19 v116 曼波令「任何打印机报错都往 3D 打印群发报告」）
  * 覆盖：报告卡发送（3D 打印群钩子）、同机同因 30 分钟节流、不同因不节流、
  * config.alertWebhookUrl 回落链。
- * 用法：node test/stub-test-failure-report.js（mock sendMessage 不真发）
+ * 用法：node test/failure-report-test.js（mock sendMessage 不真发）
  */
 const assert = require('assert');
 const fs = require('fs');

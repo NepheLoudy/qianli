@@ -3,7 +3,7 @@
  * 实案：R-011 取件闸挂 H2D → 同型号新单提交即「无可用机」转人工散伙（R20261107-001/002）。
  * 修复：①选机排队语义（持闸机不隐身，有空机优先空机）②取件闸 TTL 自动放行
  * ③确认取件全民化（登录即可）。
- * 用法：node test/stub-test-receipt-pool.js（PRINTER_HOSTS='' 隔离，不连生产打印机）
+ * 用法：node test/receipt-pool-test.js（PRINTER_HOSTS='' 隔离，不连生产打印机）
  */
 const assert = require('assert');
 const fs = require('fs');
@@ -177,6 +177,15 @@ check('v119 回归（H2D 007 实案）：FAILED 挂态同型号机 → 排队等
     [],
   );
   assert.strictEqual(stuck.name, 'H2D', 'FAILED 挂态同型号机必须入选排队');
+});
+
+check('v123 回归锚（审查 P0）：calibratedEta 必须有定义——排队池 ETA 不再 ReferenceError', () => {
+  const approve = fs.readFileSync(path.join(__dirname, '../public/approve.html'), 'utf8');
+  assert.ok(/const calibratedEta = \(printerName, mins\)/.test(approve), 'calibratedEta 函数定义必须存在（v121 遗漏实案）');
+  assert.ok(approve.includes('calibratedEta(target, pr.remainingMinutes)'), '调用点必须接函数');
+  // durationBias 透出锚
+  const idx = fs.readFileSync(path.join(__dirname, '../src/index.js'), 'utf8');
+  assert.ok(idx.includes("require('./services/dispatchLearning').durationBias"), 'queue 端点必须透出校准系数');
 });
 
 process.exit(failures > 0 ? 1 : 0);

@@ -5,7 +5,7 @@
  * 口径（曼波裁决）：喷嘴直径 vs 机队实装=硬拦（提交初审/选机/审批三道）；
  * slice_info <warning>（热床 1000C001/喷嘴硬度 1000C002 等）=建议级红标不拦
  * （昨晚成功件同样携带照打成功的实证）。
- * 用法：node test/stub-test-nozzle-gate.js
+ * 用法：node test/nozzle-gate-test.js
  */
 const assert = require('assert');
 const fs = require('fs');

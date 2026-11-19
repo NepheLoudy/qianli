@@ -2,7 +2,7 @@
  * 切片件机型锁定单测（2026-11-06 曼波令「交切片文件锁死机型选择」）
  * 覆盖：modelCompatible 三态（同型号/互打组内/组外拒）、config.machineCompatGroups 默认空、
  *       probe-model 端点与提交/审批链 fail-closed 的静态契约锚。
- * 用法：node test/stub-test-model-lock.js
+ * 用法：node test/model-lock-test.js
  */
 const assert = require('assert');
 const fs = require('fs');

@@ -1,4 +1,4 @@
-// common.js · 三页公共 helper（v121 P3 抽取：index.html / approve.html / status.html 原内联定义收编于此）
+// common.js · 三页公共 helper（例外：train.html 保留自己的 esc——独立工具页，勿误收编）（v121 P3 抽取：index.html / approve.html / status.html 原内联定义收编于此）
 // 页面通过 <script src="/common.js?v=20261120"> 最先加载；注意 __pollTimer 是本文件
 // 的全局 let 绑定——页面内不要再声明（会撞 Identifier redeclaration），也不要直接引用。
 

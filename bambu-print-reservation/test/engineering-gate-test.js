@@ -4,7 +4,7 @@
  * stl/step 后缀，34KB 无刀轨原件直通上传 → H2D 秒 FAILED / X1C 553 重试耗尽。
  * 修复：①分发触发条件补工程 3mf（autoSlice 的 prepareModelPath 3mf 分支 v64 就绪）
  * ②直通上传前 hasSlicedGcode fail-closed（noRetry 确定性失败直接退出队列）。
- * 用法：node test/stub-test-engineering-gate.js（PRINTER_HOSTS='' 隔离）
+ * 用法：node test/engineering-gate-test.js（PRINTER_HOSTS='' 隔离）
  */
 const assert = require('assert');
 const fs = require('fs');

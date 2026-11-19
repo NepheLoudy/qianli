@@ -3,7 +3,7 @@
  * v97 条目仅喷嘴闸；「切片栏锁死+颜色分发/降级」在 DEVLOG 记 v98）
  * 口径：用户指定色（仅 hex 通道）优先作为匹配目标——色差≤阈值命中；超阈值=颜色降级
  * （材料匹配里取最近色槽，colorNotes 供播报+单据轨迹）；未指定用户色维持内嵌色最近。
- * 用法：node test/stub-test-color-dispatch.js
+ * 用法：node test/color-dispatch-test.js
  */
 const assert = require('assert');
 const fs = require('fs');
