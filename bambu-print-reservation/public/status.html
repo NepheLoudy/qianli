@@ -281,13 +281,16 @@ function staleNoteHtml(p) {
   return `<div class="meta" style="color:var(--bad)">⚠️ 离线：${tail}——以下为过期快照</div>`;
 }
 
-function trayHtml(t) {
+function trayHtml(t, p) {
   const sw = t.colorHex ? `<span class="swatch" style="background:#${esc(t.colorHex)}"></span>` : '';
   // 余量环（v64 生命体征）：机端上报百分比才有环，闪铸克数口径不出环（单位不同不硬画）
   const donut = t.remain != null && t.remain > 0
     ? `<span style="float:right">${Viz.donut(Math.round(t.remain), { title: esc(t.slot) + ' ' })}</span>` : '';
   const remain = t.remain != null && t.remain > 0 ? ` · 余 ${Math.round(t.remain)}%` : '';
-  return `<div class="tray${t.active ? ' active' : ''}" title="${t.active ? '当前供料槽' : ''}">${donut}${sw}<b>${esc(t.slot)}</b>${remain}<br>${esc(t.type || '—')}</div>`;
+  // v124 特种槽隔离（曼波令）：隔离槽加 🧪 前缀一眼识别；admin 可点击 toggle 隔离清单
+  const isSpecial = !!(p && Array.isArray(p.specialSlots) && p.specialSlots.includes(t.slot));
+  const spBtn = IS_ADMIN ? `<button class="mini" style="padding:0 6px;font-size:11px;margin-left:4px;${isSpecial ? 'border-color:var(--warn);color:var(--warn);background:var(--warn-soft)' : ''}" title="${isSpecial ? '已隔离——自动分发不会使用此槽，点击解除' : '标记为特种耗材隔离槽——自动分发将永远跳过此槽（U 盘未录入特种料用）'}" onclick="toggleSpecialSlot(${p.id},${jsq(t.slot)})">🧪</button>` : '';
+  return `<div class="tray${t.active ? ' active' : ''}${isSpecial ? ' special' : ''}" title="${t.active ? '当前供料槽' : ''}">${donut}${sw}<b>${isSpecial ? '🧪 ' : ''}${esc(t.slot)}</b>${spBtn}${remain}<br>${esc(t.type || '—')}</div>`;
 }
 
 function amsSection(p) {
@@ -297,7 +300,34 @@ function amsSection(p) {
     return `<div class="amsGrid"><div class="tray">无料站信息${p.brand === 'flashforge' ? '（直进料机型）' : '（未上报/未连接）'}</div></div>`;
   }
   const label = p.brand === 'flashforge' ? '供料' : 'AMS';
-  return `<div class="detail" style="margin-top:6px">${label}：</div><div class="amsGrid">${trays.map(trayHtml).join('')}</div>`;
+  return `<div class="detail" style="margin-top:6px">${label}：</div><div class="amsGrid">${trays.map((t) => trayHtml(t, p)).join('')}</div>`;
+}
+
+/**
+ * AMS 特种槽隔离 toggle（admin，2026-11-20 v124 曼波令）：机队某些 AMS 槽装着「AMS 未
+ * 录入的特种耗材」（机端料型只能从预设列表随便选占位）——自动分发按显示料型映射到此槽
+ * 会打出废料，故隔离槽从自动选槽排除；特种料打印走预约台「特种耗材开关」手动指定槽位。
+ * 点击=增/删该机的隔离清单（POST 全量覆盖），成功后立即重绘机队卡。
+ */
+async function toggleSpecialSlot(id, slot) {
+  if (!IS_ADMIN) return toast('仅管理员可修改特种槽隔离');
+  const p = (FLEET || []).find((x) => x.id === id);
+  if (!p) return toast('找不到该打印机当前状态');
+  const cur = Array.isArray(p.specialSlots) ? p.specialSlots : [];
+  const removing = cur.includes(slot);
+  const next = removing ? cur.filter((s) => s !== slot) : cur.concat(slot);
+  try {
+    const res = await fetch(`/api/printers/${id}/special-slots`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slots: next }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { location.reload(); return; }
+    if (!res.ok) throw new Error(data.error || '保存失败');
+    toast(removing ? `✅ 已解除隔离：${slot}（${p.name}）——恢复自动分发` : `🧪 已隔离：${slot}（${p.name}）——自动分发不再使用此槽`);
+    loadFleet(true); // 强制重绘（隔离态由下轮 /api/printers 的 specialSlots 驱动）
+  } catch (err) { toast('❌ ' + err.message); }
 }
 
 /**
@@ -528,10 +558,13 @@ function controlPanelHtml(p) {
       : { amsId: 0, trayId: m ? Number(m[1]) : 0 };
     const remain = t.remain != null && t.remain > 0 ? Math.round(t.remain) : null;
     const remainG = remain != null && t.remainUnit === 'g'; // 闪铸 5M 系：克数余量（无机端料名）
-    return `<div class="tray${t.active ? ' active' : ''}" style="min-width:124px">
+    // v124 特种槽隔离（曼波令）：与机队卡摘要同口径——🧪 前缀 + admin toggle 按钮
+    const isSpecial = Array.isArray(p.specialSlots) && p.specialSlots.includes(t.slot);
+    const spBtn = IS_ADMIN ? `<button class="mini" style="padding:0 6px;font-size:11px;margin-left:4px;${isSpecial ? 'border-color:var(--warn);color:var(--warn);background:var(--warn-soft)' : ''}" title="${isSpecial ? '已隔离——自动分发不会使用此槽，点击解除' : '标记为特种耗材隔离槽——自动分发将永远跳过此槽（U 盘未录入特种料用）'}" onclick="toggleSpecialSlot(${p.id},${jsq(t.slot)})">🧪</button>` : '';
+    return `<div class="tray${t.active ? ' active' : ''}${isSpecial ? ' special' : ''}" style="min-width:124px">
       <div style="display:flex;align-items:center;gap:6px">
         <span class="swatch" style="width:18px;height:18px;background:#${esc(t.colorHex || '333')}"></span>
-        <b>${esc(t.slot)}</b>${t.active ? ' <span style="color:var(--ok)">◀</span>' : ''}
+        <b>${isSpecial ? '🧪 ' : ''}${esc(t.slot)}</b>${spBtn}${t.active ? ' <span style="color:var(--ok)">◀</span>' : ''}
       </div>
       <div class="detail" style="margin-top:2px">${esc(t.type || (remainG ? '未知料' : '空'))}</div>
       ${remain != null ? (remainG

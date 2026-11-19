@@ -138,6 +138,9 @@ const reservationStore = {
       // 切片文件提单时补交的 CAD 源，训练入库时提取真网格特征（gcode 估计的升级）
       sourceFile: input.sourceFile || null,
       sourceRecordId: input.sourceRecordId || null, // 复刻血缘（2026-11-04）：新单指向源单，关联视图数据源
+      // v124 特种槽手动指定（提单侧）：申请人开「特种耗材开关」随单指定的 AMS 槽——
+      // {slot: 'AMS 0·槽N'} 形态（approvet 链 resolveTray 校验存在性；审批显式指定可覆盖）
+      prefTray: input.prefTray || null,
       materialType: String(input.materialType || '').trim(),
       color: String(input.color || '').trim(),
       assignedPrinter: String(input.assignedPrinter || '').trim(),

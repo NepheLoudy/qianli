@@ -363,6 +363,10 @@ class PrinterManager {
       return {
         ...p,
         displayStatus,
+        // v124 特种隔离：该机的隔离槽位名清单（机队坞/观察台 🧪 标记 + 提单侧槽选器标注）
+        specialSlots: (() => {
+          try { return require('../services/specialSlotsStore').get(p.name); } catch { return []; }
+        })(),
         stateStale: client ? client.isStateStale() : true,
         // 最后一条 state 报文的毫秒时间戳（0=从未收到）——观察台离线标注展示
         // 「最后 HH:MM」快照时间用（2026-10-17 X1C 掉网案）

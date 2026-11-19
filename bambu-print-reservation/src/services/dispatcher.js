@@ -155,6 +155,8 @@ function buildLocalTask(reservation) {
     isUrgent: reservation.isUrgent,
     materialExclude: reservation.processParams?.materialExclude || [],
     materialPrefer: reservation.processParams?.materialPrefer || [],
+    // v124 特种槽手动指定（提单侧预存透传）：申请人开关开时随单指定——映射指定即权威
+    prefTray: reservation.prefTray || null,
     quantity: reservation.quantity || 1,
     remaining: Math.max(0, (reservation.quantity || 1) - 1), // 份数续打:首件外剩余件数
     estMinutes: Number(reservation.estMinutes) > 0 ? Number(reservation.estMinutes) : null, // 3mf 内嵌预估时长（队列 ETA 用）
@@ -251,7 +253,13 @@ function buildAmsMapping(task, printer, fileMeta) {
   const filaments = fileMeta && Array.isArray(fileMeta.filaments) && fileMeta.filaments.length
     ? fileMeta.filaments
     : null;
-  const trays = (printer.ams || []).filter((t) => t.type && trayAllowed(t, task.materialExclude));
+  // v124 特种隔离（曼波令）：AMS 未录入特种料的槽从自动映射排除——显示料型是机端
+  // 占位（随便选的），按它映射=打出废料。特种槽只能走提单「特种耗材开关」手动指定
+  let specialSlots = [];
+  try { specialSlots = require('./specialSlotsStore').get(printer.name); } catch { /* 无清单不隔离 */ }
+  const trays = (printer.ams || []).filter((t) => t.type
+    && trayAllowed(t, task.materialExclude)
+    && !specialSlots.includes(t.slot));
   // v97 用户指定色（仅 hex 通道；色名不参与直通映射）——对首条用料生效，多色件其余随文件
   const userHex = parseHexColor(task && task.color);
   const colorNotes = [];
@@ -1050,7 +1058,10 @@ class Dispatcher {
    */
   amsCoversColors(printer, colors, needMaterial, trayOpts = {}) {
     const m = String(needMaterial || '').trim().toUpperCase();
-    const trays = (printer.ams || []).filter((t) => t.type && trayAllowed(t, trayOpts.exclude));
+    // v124 特种隔离：多色覆盖判定同样排除特种槽（显示料型是占位不可信）
+    let _special = [];
+    try { _special = require('./specialSlotsStore').get(printer.name); } catch { /* 无清单不隔离 */ }
+    const trays = (printer.ams || []).filter((t) => t.type && trayAllowed(t, trayOpts.exclude) && !_special.includes(t.slot));
     for (const level of ['exact', 'family']) {
       const used = new Set();
       let ok = true;

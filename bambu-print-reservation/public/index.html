@@ -169,6 +169,18 @@
         <div><label>份数</label><input type="number" id="quantity" value="1" min="1" max="99"><div class="hint" id="quantityHint"></div></div>
         <div id="assignedPrinterBox"><label>指定打印机（STEP/STL 模型直投可留空自动匹配；<b>切片文件锁定内嵌机型</b>，审批时须指定同型号机）</label><input type="text" id="assignedPrinter" list="printerNameList" placeholder="如 X1C-01，模型直投可留空"><datalist id="printerNameList"></datalist></div>
       </div>
+      <!-- v124 特种耗材面板（曼波令）：AMS 未录入的特种料——机端料型只能占位，自动分发
+           已把这些槽隔离（观察台 🧪 标记）；提单侧手动指定槽位是唯一入口 -->
+      <div class="preview" id="specialTrayPanel" style="display:none">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:0">
+          <input type="checkbox" id="specialTrayToggle" onchange="onSpecialTrayToggle()" style="width:auto">🧪 特种耗材（AMS 未录入的料）——手动指定 AMS 槽位
+        </label>
+        <div id="specialTrayBox" style="display:none;margin-top:10px">
+          <label>指定 AMS 槽位（锁定机型机队的当前装料——🧪特种 即观察台已隔离的槽）</label>
+          <select id="specialTraySelect"></select>
+          <div class="hint" style="margin-top:6px">指定的槽将按你选的槽供料（材料校验跳过）——确认机端该槽装的就是你要的特种料</div>
+        </div>
+      </div>
       <div class="row">
         <div><label>模型 / 切片文件 *（.stl/.step/.stp 走需求链路+<b>3D 工况标注</b>：载荷/支撑/受弯在 3D 视图点选，自动定档；.obj 手勾工况；<b>切片直通=.3mf（拓竹/闪铸皆可）</b>——机型按文件内嵌指纹锁定；2026-11-06 起不再接受纯 .gcode，请导出 .gcode.3mf。<b>✅ 可多选：切片 3mf + STEP/STL 源文件一起选，系统自动分流配对入库</b>）</label><input type="file" id="file" accept=".stl,.step,.stp,.3mf,.obj" multiple></div>
       </div>
@@ -926,6 +938,8 @@ function updateSlicedMode() {
   const sliced = isSlicedFile();
   $('taxonomy').style.display = 'block';
   $('slicedNotice').style.display = sliced ? 'block' : 'none';
+  // v124 特种耗材面板：仅切片件显示（模型直投走自动分发无特种槽概念）；切回模型直投时隐藏并清选择
+  updateSpecialTrayPanel();
   // 指定打印机栏常显（2026-11-06 曼波令「交切片文件锁死机型选择」）：切片件按服务端
   // 探测名单锁定（同型号+互打白名单），模型直投给拓竹机（分发时现场切片）。旧版整栏
   // 隐藏（2026-10-28）被探测锁定替代——用户在锁死范围内明确选机，比「交了等审批」直观
@@ -951,7 +965,7 @@ async function probeSlicedModel() {
   try {
     const r = await fetch('/api/print/probe-model', { method: 'POST', body: fd });
     const j = await r.json();
-    if (r.ok && j.ok) { SLICED_PROBE = j; applySlicedLocks(); }
+    if (r.ok && j.ok) { SLICED_PROBE = j; applySlicedLocks(); renderSpecialTraySelect(); } // 探测回名单后补渲染特种槽选器（v124）
     else { releaseSlicedLocks(); console.warn('[机型探测]', j.error || ('HTTP ' + r.status)); }
   } catch (err) { releaseSlicedLocks(); console.warn('[机型探测] 失败:', err.message); }
   refreshPrinterDatalist();
@@ -1157,6 +1171,69 @@ function releaseSlicedLocks() {
   $('quantityHint').textContent = '';
   $('colorSwatchBox').style.display = 'none';
   $('color').readOnly = false;
+}
+
+// ---------- v124 特种耗材开关 + 槽选器（曼波令 2026-11-20） ----------
+// 机端某些 AMS 槽装着「AMS 未录入的特种耗材」（机端料型只能从预设列表随便选占位——
+// 显示 PETG 实际是特种料），观察台已把它们隔离（🧪），自动分发永不使用。提单侧手动
+// 指定槽位是唯一入口：勾选开关 → 从锁定机型机队的 AMS 槽里挑一个 → 随单 prefTray 走
+// 「指定即权威」通道（审批未显式指定时沿用申请人指定的槽，材料校验跳过）。
+
+/** 特种面板显示条件：切片件（模型直投走自动分发，无手动指定概念）——切回时隐藏并清选择 */
+function updateSpecialTrayPanel() {
+  const panel = $('specialTrayPanel');
+  if (!panel) return;
+  const show = isSlicedFile();
+  panel.style.display = show ? 'block' : 'none';
+  if (!show) specialTrayReset();
+  else renderSpecialTraySelect();
+}
+
+/** 特种槽选器渲染：锁定机型机队（SLICED_PROBE.allowedPrinters ∩ window.__printers）的
+ *  AMS 槽逐项列出；观察台已隔离的特种槽排前面并标 🧪特种。机队 5s 轮询刷新后重渲染
+ *  （保留当前选择）。探测结果未回/机队未到时面板常显但选择器给占位行。 */
+function renderSpecialTraySelect() {
+  const sel = $('specialTraySelect');
+  if (!sel) return;
+  const allowed = new Set(((SLICED_PROBE && SLICED_PROBE.allowedPrinters) || []).map((p) => p.name));
+  const keep = sel.value;
+  const opts = [];
+  for (const p of (window.__printers || [])) {
+    if (!allowed.has(p.name) || !Array.isArray(p.ams)) continue;
+    const sp = Array.isArray(p.specialSlots) ? p.specialSlots : [];
+    for (const t of p.ams) {
+      if (!t.slot) continue;
+      opts.push({
+        slot: t.slot,
+        type: t.type || '空',
+        hex: t.colorHex ? '#' + String(t.colorHex).replace('#', '').toUpperCase() : '',
+        special: sp.includes(t.slot),
+        printer: p.name,
+      });
+    }
+  }
+  opts.sort((a, b) => (b.special - a.special) || a.slot.localeCompare(b.slot, 'zh-CN'));
+  sel.innerHTML = opts.length
+    ? opts.map((o) => `<option value="${esc(o.slot)}"${o.slot === keep ? ' selected' : ''}>${esc(o.slot)}（${esc(o.type)}${o.hex ? ' ' + esc(o.hex) : ''}｜${esc(o.printer)}）${o.special ? ' 🧪特种' : ''}</option>`).join('')
+    : '<option value="">（锁定机型机队暂无料站信息——等机队刷新或检查探测结果）</option>';
+}
+
+/** 开关切换：勾选展开选择器并渲染最新机队；取消收起并清选择 */
+function onSpecialTrayToggle() {
+  const on = $('specialTrayToggle').checked;
+  $('specialTrayBox').style.display = on ? 'block' : 'none';
+  if (on) renderSpecialTraySelect();
+  else specialTrayReset();
+}
+
+/** 重置开关与选择（提交成功清空文件 / 换文件 / 切回模型直投时调用） */
+function specialTrayReset() {
+  const t = $('specialTrayToggle');
+  const box = $('specialTrayBox');
+  const sel = $('specialTraySelect');
+  if (t) t.checked = false;
+  if (box) box.style.display = 'none';
+  if (sel) sel.value = '';
 }
 
 /** 机端实时色板（只显示锁定机型机队当前 AMS/外挂装料；料位不可得回退自由输入 fail-open） */
@@ -1442,6 +1519,15 @@ function doSubmit() {
   fd.append('color', $('color').value.trim());
   fd.append('assignedPrinter', $('assignedPrinter').value.trim());
   fd.append('quantity', $('quantity').value || 1);
+  // v124 特种槽手动指定（曼波令）：开关勾选且已选槽时随单下发——后端轻校验（机队存在性）
+  // 后存单 prefTray={slot}，审批/分发链「指定即权威」沿用（材料校验跳过）。
+  // 注意：/api/reservations 是 multipart 路由（multer 文本字段=纯字符串），后端
+  // String(body.prefTray.slot || body.prefTray) 对 JSON 串不解包（'{"slot":"AMS 2"}'.slot
+  // = undefined → 整串被当槽名匹配 → 400）——这里直接给纯槽名，走后端 || body.prefTray
+  // 兜底分支（实测该形态才能通过机队存在性校验；后端将来补 JSON.parse 亦兼容）
+  if ($('specialTrayToggle').checked && $('specialTraySelect').value) {
+    fd.append('prefTray', $('specialTraySelect').value);
+  }
   // 3mf 直通不提交勾选（切片参数内嵌）；需求链路提交标签
   // 工况勾选与 3D 标注**切片直通单同样提交**（2026-10-16 曼波定：切片参数由工况×几何共同
   // 决定，纯 3mf 无标注入库无意义——直通单的勾选不作定档、仅作样本底料）
@@ -1472,6 +1558,7 @@ function doSubmit() {
       toast(`✅ 已提交 ${data.id}，等待审批${(data.precheckWarnings || []).length ? '；⚠️ ' + data.precheckWarnings.join('；') : ''}`);
       $('file').value = ''; $('submitHint').textContent = '';
       clearSourceFile();
+      specialTrayReset(); // v124 特种开关与选择一并重置（updateSlicedMode 内 isSlicedFile 已为 false 也会兜底）
       updateSlicedMode();
       analyzeModel(); // 文件已清空：收起体检面板、清掉快照（value 置空不触发 change，手动补）
       loadAnnotator(); // 收起 3D 标注区、清标注态
@@ -1773,6 +1860,7 @@ async function loadPrinters() {
   PRINTER_NAMES = printers.map(p => p.name); // 指定打印机 datalist + givenUp 恢复下拉共用
   refreshPrinterDatalist();
   if (SLICED_PROBE) renderColorSwatches(); // v97 机端料位刷新 → 色板随实况重渲染
+  renderSpecialTraySelect(); // v124 机队刷新 → 特种槽选器随实况重渲染（保留当前选择）
   const box = $('printerList');
   if (!Array.isArray(printers) || !printers.length) { box.innerHTML = '<div class="empty">暂无登记的打印机（.env PRINTER_HOSTS）</div>'; return; }
   const ST = { '空闲': 'var(--ok)', '打印中': '#d95f2b', '暂停': '#d9b32b', '已完成': 'var(--ok)', '等取件': 'var(--warn)', '故障': 'var(--bad)', '未连接': '#98a4b0', '准备中': 'var(--warn)', '切片中': 'var(--warn)' };

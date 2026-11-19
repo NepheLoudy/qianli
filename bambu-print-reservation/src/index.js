@@ -482,6 +482,30 @@ app.get('/api/training/fleet', requireUser(), (req, res) => {
 });
 
 // 温度历史（v64 生命体征面板数据源）：全机队一次拉走（内存环形缓冲 ≈30 分钟 @5s 采样）
+// v124 AMS 特种槽位隔离（曼波令）：观察台设置某机的隔离槽清单——自动分发永不碰，
+// 仅提单「特种耗材开关」手动指定可入。GET=机队坞/观察台渲染，POST=admin 全量覆盖
+app.get('/api/printers/:id/special-slots', requireUser(), (req, res) => {
+  try {
+    const pr = (printerManager.getApiStates().find((p) => String(p.id) === String(req.params.id))
+      || config.printers.find((p) => String(p.id) === String(req.params.id)));
+    if (!pr) return res.status(404).json({ error: '打印机不存在' });
+    res.json({ printer: pr.name, specialSlots: require('./services/specialSlotsStore').get(pr.name) });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+app.post('/api/printers/:id/special-slots', requireUser('admin'), (req, res) => {
+  try {
+    const pr = (printerManager.getApiStates().find((p) => String(p.id) === String(req.params.id))
+      || config.printers.find((p) => String(p.id) === String(req.params.id)));
+    if (!pr) return res.status(404).json({ error: '打印机不存在' });
+    const slots = (req.body || {}).slots;
+    res.json(require('./services/specialSlotsStore').set(pr.name, slots));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.get('/api/printers/history', requireUser(), (req, res) => {
   res.json(printerManager.getTempHistory());
 });
@@ -1632,6 +1656,21 @@ app.post('/api/reservations', requireUser(), upload.fields([
       ? [...new Set(embeddedParams.filaments.map((f) => String(f.type || '').trim()).filter(Boolean))].join('+')
       : null;
 
+    // v124 特种槽手动指定（曼波令）：开关开时 body.prefTray={slot}——轻校验（格式+机队
+    // 存在性宽检），严格校验在审批/分发链 resolveTray 兜底
+    let prefTrayField = null;
+    if (body.prefTray) {
+      const slot = String(body.prefTray.slot || body.prefTray || '').trim();
+      if (slot) {
+        const exists = printerManager.getApiStates().some((p) => (p.ams || []).some((t) => t.slot === slot));
+        if (!exists) {
+          try { removeUploads(file, ...srcFiles); } catch { /* 已不存在 */ }
+          return res.status(400).json({ error: `指定的 AMS 槽位「${slot}」在机队中不存在——请重新在特种耗材面板选择` });
+        }
+        prefTrayField = { slot };
+      }
+    }
+
     const reservation = await reservationService.createReservation({
       applicant: req.user.displayName, // 发起人 = 登录身份（防冒名），body.applicant 忽略
       submittedBy: req.user.id,        // 归属判定键（本人取消等）
@@ -1650,6 +1689,9 @@ app.post('/api/reservations', requireUser(), upload.fields([
       placement,      // 放置平面四元数（2026-10-16：Place on Face 累计旋转；未放置为 null）
       processParams: applied ? applied.params : null,
       appliedRules: applied ? applied.applied : [],
+      // v124 特种槽手动指定（曼波令「特种耗材可由打印人指定选哪个槽」）：开关开时随单
+      // 传 {slot}——轻校验（格式+机队存在性宽检），严格校验在审批/分发链 resolveTray
+      ...(prefTrayField ? { prefTray: prefTrayField } : {}),
       modelProvenance, // 参数智能层 provenance（v60；无已采纳模型为 null）
       embeddedParams, // 3mf 内嵌参数摘要（审批透明化；需求链路单为 null）
       estMinutes,     // 3mf 内嵌预估时长（队列 ETA；需求链路单为 null）

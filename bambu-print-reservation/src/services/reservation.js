@@ -282,10 +282,19 @@ class ReservationService {
       };
       // 多耗材（2026-10-16 曼波令「文件里有几个耗材审批界面就有几个栏位」）：trays 与文件用料
       // 逐条对齐——该条留空的（null）分发时按该条用料类型/颜色自动匹配，逐条可混用
+      // v124 特种槽手动指定（提单侧预存）：申请人交单时开「特种耗材开关」指定了槽位——
+      // 审批人未显式指定时以单据预存为准（申请人意图即权威）；审批人显式指定则覆盖
+      let traySource = dispatch.tray;
+      const approvalTrayGiven = (dispatch.tray && String(dispatch.tray.slot || '').trim())
+        || (Array.isArray(dispatch.trays) && dispatch.trays.some((t) => t && String(t.slot || '').trim()));
+      if (!approvalTrayGiven && reservation.prefTray && String(reservation.prefTray.slot || '').trim()) {
+        traySource = reservation.prefTray;
+        console.log(`[审批] ${id} 沿用申请人指定的特种槽位：${reservation.prefTray.slot}`);
+      }
       if (Array.isArray(dispatch.trays) && dispatch.trays.some((t) => t && String(t.slot || '').trim())) {
         pref.trays = dispatch.trays.map((t, i) => resolveTray(t && t.slot, `用料 ${i + 1} 的`));
-      } else if (dispatch.tray && String(dispatch.tray.slot || '').trim()) {
-        pref.tray = resolveTray(dispatch.tray.slot, '');
+      } else if (traySource && String(traySource.slot || '').trim()) {
+        pref.tray = resolveTray(traySource.slot, '');
       }
       if (dispatch.nozzleId !== undefined && dispatch.nozzleId !== null && dispatch.nozzleId !== '') {
         const apiState = printerManager.getApiStates().find((p) => p.id === pr.id);
@@ -812,7 +821,13 @@ function precheckSlicedSubmission(input = {}) {
     const verdicts = targets.map((p) => {
       const st = states.find((s) => String(s.id) === String(p.id));
       if (!st || st.stateStale || !Array.isArray(st.ams) || !st.ams.some((t) => t.type)) return { p, ok: null };
-      const ok = lists.every((f) => st.ams.some((t) => materialMatch(String(f.type).toUpperCase(), t.type)));
+      // v124 特种隔离：初审料位覆盖检查排除特种槽（显示料型是占位不可信——按它判定
+      // 「有料」会放行单子去打特种废料）；特种槽只服务提单「特种耗材开关」手动指定
+      let _special = [];
+      try { _special = require('./specialSlotsStore').get(p.name); } catch { /* 无清单 */ }
+      const usable = st.ams.filter((t) => t.type && !_special.includes(t.slot));
+      if (!usable.length) return { p, ok: null }; // 全特种槽=无可信料位，不参与判定
+      const ok = lists.every((f) => usable.some((t) => materialMatch(String(f.type).toUpperCase(), t.type)));
       return { p, ok };
     });
     const anyTrusted = verdicts.some((v) => v.ok !== null);
