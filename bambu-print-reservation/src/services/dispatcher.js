@@ -1112,13 +1112,16 @@ class Dispatcher {
         }
         return null;
       }
-      // v113 忙机排队语义：指定机「打印中」= 本单排队等待释放（非故障滞留）——打完
-      // +取件闸放行后下一轮匹配自动开打。日志节流同滞留口径
-      if (!named && (printerManager.getPrinterState(task.assignedPrinter && (printerManager.getApiStates().find((p) => p.name === task.assignedPrinter) || {}).id) || {}).status === '打印中') {
+      // v113/v119 忙机排队语义：指定机「打印中」或「FAILED 挂态（待重启）」= 本单排队
+      // 等待恢复（非故障滞留）——释放/重启后下一轮匹配自动开打。日志节流同滞留口径
+      const namedState = printerManager.getApiStates().find((p) => p.name === task.assignedPrinter) || {};
+      const busyWaiting = namedState.status === '打印中'
+        || (namedState.status === '故障' && String(namedState.gcodeState || '').toUpperCase() === 'FAILED');
+      if (!named && busyWaiting) {
         const now = Date.now();
         if (!task._busyWaitLoggedAt || now - task._busyWaitLoggedAt > 10 * 60 * 1000) {
           task._busyWaitLoggedAt = now;
-          console.log(`[分发] ${task.applicationNo || task.recordId} 指定机「${task.assignedPrinter}」打印中——本单排队等待释放后自动开打`);
+          console.log(`[分发] ${task.applicationNo || task.recordId} 指定机「${task.assignedPrinter}」${namedState.status === '打印中' ? '打印中——本单排队等待释放后自动开打' : 'FAILED 挂态——本单排队等待重启恢复后自动开打'}`);
         }
         return null;
       }

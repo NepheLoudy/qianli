@@ -141,10 +141,12 @@ class ReservationService {
       // 同型号机在忙（打印中/持闸）→ 选它入队排队（指定即权威→滞留等待→释放自动开打），
       // 绝不再「无同型号机」转人工。排除项：失联（v88 防幽灵写死）、存储熔断（v112，
       // 存储坏着排队没意义）。candidateState：ready=空闲无闸 / held=空闲持闸 / busy=打印中
+      // v119 补口子（曼波令「口子补上」，H2D R20261119-007 实案）：FAILED 挂态机（指令
+      // 免疫需断电重启）同型号唯一时转人工了——并入忙机排队，重启恢复后滞留匹配自动开打
       const storageHoldHas = (id) => require('./dispatcher').storageHold.has(Number(id));
       const busySame = apiStates.filter((p) => p.autoDispatch
-        && p.status === '打印中'
-        && !p.stateStale
+        && (p.status === '打印中'
+          || (p.status === '故障' && String(p.gcodeState || '').toUpperCase() === 'FAILED' && !p.stateStale))
         && !storageHoldHas(p.id));
       const candStateOf = (p) => {
         if (holdHas(p.id)) return 'held';

@@ -166,4 +166,17 @@ check('v113 回归（陈夏菲实案）：同型号打印中 → 选它入队排
   assert.strictEqual(legacy.name, 'P1S', '旧调用无 state 字段不炸');
 });
 
+check('v119 回归（H2D 007 实案）：FAILED 挂态同型号机 → 排队等待重启恢复，不转人工', () => {
+  const stuck = chooseMachineForSliced(
+    'Bambu Lab H2D',
+    [
+      { name: 'P1S', model: 'P1S', state: 'ready' },
+      { name: 'X1C', model: 'X1C', state: 'ready' },
+      { name: 'H2D', model: 'H2D', state: 'busy' }, // FAILED 挂态（候选并入 busySame）
+    ],
+    [],
+  );
+  assert.strictEqual(stuck.name, 'H2D', 'FAILED 挂态同型号机必须入选排队');
+});
+
 process.exit(failures > 0 ? 1 : 0);
