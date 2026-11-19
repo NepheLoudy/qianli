@@ -42,7 +42,7 @@ check('分发触发条件补工程 3mf（modelFeatures.engineering / embeddedPar
 
 check('fail-closed 双保险：无刀轨 3mf 绝不直通上机 + noRetry 快速终局', () => {
   const disp = fs.readFileSync(path.join(__dirname, '../src/services/dispatcher.js'), 'utf8');
-  assert.ok(disp.includes('!slicerExtract.hasSlicedGcode(buffer)'), '上传前必须验刀轨数据');
+  assert.ok(disp.includes('looksSlicedGate === false'), '上传前必须验刀轨数据（v110 三态口径：false 才拦/null 放行）');
   assert.ok(disp.includes('gateErr.noRetry = true'), '确定性拦截必须带 noRetry');
   assert.ok(disp.includes('err.noRetry ? config.dispatch.maxRetries'), '重试计数必须识别 noRetry 直接终局');
 });
