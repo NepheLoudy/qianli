@@ -10,6 +10,8 @@
 const fs = require('fs');
 const path = require('path');
 
+// v124b 修正：默认路径曾在部署目录内——push 同步会冲掉（实案：H2D 标记后 v124b 部署即丢）。
+// 生产经 .env 指到 bambu-data 数据区（与 reservations.json 同区）
 const FILE = process.env.PRINTER_SPECIAL_SLOTS_FILE || path.join(__dirname, '..', '..', '.printer-special-slots.json');
 
 function load() {
