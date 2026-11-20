@@ -840,8 +840,14 @@ class Dispatcher {
         const printer = printerManager.getPrinterState(printerId);
         this.stopWithRetry(printerId, task, printer, 1);
         this.printing.delete(printerId);
+        printerManager.updateState(printerId, { activeTask: null }); // v125c：取消即清在册任务（残留堵方案B）
       }
     }
+    // v125c（曼波实案 H2D）：取消单的 activeTask 残留清理——printing 池清了但
+    // manager.printerStates.activeTask 无人清（停机后机端 IDLE 的 ghost 分支只在
+    // 「池里有任务」时收尾），残留让 canDispatchResidueFailed 判「有在打痕迹」
+    // 永久拒绝方案 B 放行 → 后续同型号单被 v119 排队分支接管无限等待重启。
+    // （停机成功与否都清——activeTask 语义=「该机在册任务」，取消即无）
     this.persistState();
   }
 
@@ -1268,6 +1274,23 @@ class Dispatcher {
       }
     }
     return null;
+  }
+
+  /**
+   * 排队池手动操作（v125 曼波令「排队池手动操作功能」）：置顶/取消加急——
+   * urgent=true 加急置顶（isUrgent 驱动 sortQueue 排队首），false 恢复先来先服务。
+   * reviewer+ 端点消费（审批台排队池按钮）。
+   */
+  setQueueUrgent(recordId, urgent) {
+    const task = this.queue.find((t) => t.recordId === recordId);
+    if (!task) throw new Error(`任务不在排队池中: ${recordId}`);
+    task.isUrgent = Boolean(urgent);
+    this.sortQueue();
+    this.persistState();
+    console.log(`[分发] 排队池置顶调整：${recordId} → ${urgent ? '加急置顶' : '常规序'}`);
+    this.trigger('queue-sweep');
+    const pos = this.queue.findIndex((t) => t.recordId === recordId);
+    return { recordId, urgent, position: pos + 1, queueLength: this.queue.length };
   }
 
   /** 遍历整个队列找任何一个能匹配的组合（避免队首缺料阻塞整条队列；冷却中的任务跳过） */
@@ -2267,6 +2290,7 @@ const dispatcher = new Dispatcher();
 
 module.exports = dispatcher;
 module.exports.sendFailureReport = sendFailureReport; // v116 单测/人工触发口
+module.exports.setQueueUrgent = dispatcher.setQueueUrgent.bind(dispatcher); // v125 排队池置顶
 module.exports.colorDistance = colorDistance;
 module.exports.materialMatch = materialMatch;
 module.exports.buildLocalTask = buildLocalTask;

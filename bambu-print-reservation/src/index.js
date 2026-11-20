@@ -2515,6 +2515,16 @@ app.get('/api/dispatch/queue', requireUser(), (req, res) => {
   });
 });
 
+// v125 排队池手动操作（曼波令）：置顶/取消加急——reviewer+ 可调整排队顺序
+app.post('/api/dispatch/queue/:id/urgent', requireUser('reviewer', 'admin'), (req, res) => {
+  try {
+    const urgent = (req.body || {}).urgent !== false;
+    res.json(dispatcher.setQueueUrgent(req.params.id, urgent));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // 取件回执（2026-10-28 曼波令；v99 权限放宽）：任何登录用户可确认已取走打完的件——
 // 实验室公共空间，谁看到件被拿走都可以帮点（原本人/reviewer 限制解除）。清回执闸，
 // 该机队列下一件才开打；预约单落回执记录（回执人如实记录）。DM 取件码回复链路仍走

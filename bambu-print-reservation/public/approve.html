@@ -242,12 +242,32 @@ function renderQueuePool(qd, records) {
       ${rec.isUrgent ? '<span class="badge" style="background:var(--hot)">⚡</span>' : ''}
     </div>
     <div class="qline"><span class="lbl">排队于</span>${esc(target || '自动匹配')}<span class="lbl" style="margin-left:12px">发起人</span>${esc(rec.applicant || '?')}<span class="lbl" style="margin-left:12px">文件</span>${esc((rec.fileName || '').slice(0, 40))}</div>
-    <div class="qline"><span class="lbl">等待</span><span style="${cls}">${wait}</span></div></div>`;
+    <div class="qline"><span class="lbl">等待</span><span style="${cls}">${wait}</span></div>
+    <div class="actions">
+      ${t.isUrgent
+        ? `<button class="mini ghost" onclick="setQueueUrgent('${esc(t.recordId)}', false)">取消置顶</button>`
+        : `<button class="mini" onclick="setQueueUrgent('${esc(t.recordId)}', true)" title="插队到队首（加急）">⬆ 置顶</button>`}
+      <button class="mini ghost" onclick="cancelActive('${esc(t.recordId)}')">取消排队</button>
+    </div></div>`;
   });
   if (!rows.length) { card.style.display = 'none'; return; }
   card.style.display = 'block';
   $('queuePoolCount').textContent = `（${rows.length} 单排队 · 机子释放/取件放行/存储恢复后自动开打）`;
   box.innerHTML = rows.join('');
+}
+
+/** v125 排队池手动操作：置顶（加急插队）/取消排队——reviewer+ 按钮消费 */
+async function setQueueUrgent(recordId, urgent) {
+  try {
+    const r = await fetch(`/api/dispatch/queue/${encodeURIComponent(recordId)}/urgent`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ urgent }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+    toast(urgent ? `⬆ ${recordId} 已置顶（当前第 ${j.position} 位）` : `${recordId} 已恢复常规排队序`);
+    loadAll(); // 刷新排队池与等待原因
+  } catch (err) { toast('❌ ' + err.message); }
 }
 
 /** 进行中单据卡（v87 复核面板）：排队/打印中，改派（模型直投）/取消 */
