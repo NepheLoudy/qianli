@@ -47,6 +47,10 @@ function resolveJobEvent(prevState, to, hasActiveTask) {
   // 注意 FINISH → finish 分支在前，idle 分支不再判 FINISH（否则永不可达）
   if (to === 'FINISH') return 'finish';
   if (to === 'FAILED') return 'failed';
+  // v125（曼波令「报错私信和群内通知没有触发」实案 R20261120-001）：机端 HMS 警告触发
+  // 自动 PAUSE——此前 PAUSE 不产生任何事件，机端报错暂停对通知链完全不可见（申请人/
+  // 群里全无动静，人到了机器旁才知道）。进 PAUSE 瞬间发 'paused' 事件（PAUSE→PAUSE 抑制）
+  if (to === 'PAUSE' && prevState !== 'PAUSE') return 'paused';
   // 任何非空闲态 → 空闲 = 「机器恢复可用」信号（2026-10-16 曼波真单卡滞修复）：
   // 此前仅认 PRINTING→IDLE，打印机 FAILED（失败/取消后驻留故障态）→ 屏幕消除 → IDLE
   // 的恢复路径不触发匹配，等待中的队列静默卡死。匹配侧有队列/空闲/槽位多重门控，多余触发幂等无害。

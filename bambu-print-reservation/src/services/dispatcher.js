@@ -524,6 +524,25 @@ class Dispatcher {
         } else if (task) {
           this.completeTask(task, printer);
         }
+      } else if (event === 'paused') {
+        // v125 机端自动暂停群播（曼波令实案 R20261120-001：HMS 警告触发 PAUSE，通知链
+        // 全哑——「暂停」不是 failed 事件）。机端报错自动停机=运维信号 → 3D 打印群报告
+        // （sendFailureReport 自带 30 分钟同机同因节流）。任务保持在打印池（暂停可恢复），
+        // 人到机器旁处理即可，恢复继续打不打断队列
+        const hmsTail = Array.isArray(printer.hms) && printer.hms.length
+          ? printer.hms[printer.hms.length - 1] : null;
+        const hmsCode = hmsTail ? String(hmsTail.code || hmsTail.attr || '') : '';
+        const progress = Number(printer.progress) || 0;
+        sendFailureReport(
+          printer.name,
+          `机端自动暂停（HMS ${hmsCode || printer.failReason || printer.printError || '未知'}${progress ? `，进度 ${progress}%` : ''}）——打印已挂起等人工处理，恢复后继续`,
+          task ? `单据：${task.applicationNo || task.recordId}（${(task.fileName || '').slice(0, 50)}）` : '',
+          'paused',
+        );
+        if (task) {
+          storeSafe(() => reservationStore.appendHistory(task.recordId,
+            `机端自动暂停（HMS ${hmsCode}）——打印挂起等人工处理，恢复后继续`), 'paused-report');
+        }
       } else if (event === 'failed') {
         const humanStop = this.consumeHumanStop(printer.id);
         if (task) {
