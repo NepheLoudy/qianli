@@ -980,7 +980,7 @@ async function quotaLoad() {
   if (!wrap) return;
   wrap.innerHTML = '<div class="empty">加载中…</div>';
   try {
-    const data = await deployApi(QUOTA_PORT, 'GET', '/api/quota/overview');
+    const data = await deployApi(QUOTA_PORT, 'POST', '/api/quota/overview');
     if (data.error) throw new Error(data.error);
     const items = data.items || [];
     if (!items.length) { wrap.innerHTML = '<div class="empty">尚未配置任何项目额度——下方表单设置第一笔</div>'; return; }
