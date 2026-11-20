@@ -635,6 +635,7 @@ function renderActivationCard() {
   rows.push(actRow('催发票私聊', ap && ap.invoiceUrge ? `${cronDescribe(ap.invoiceUrge.schedule)} · 宽限${ap.invoiceUrge.graceDays}天` : ap ? '未配置' : '<span class="deploy">不可达</span>'));
   rows.push(actRow('每日待审批提醒', ap ? cronDescribe(ap.reminder && ap.reminder.schedule) : '<span class="deploy">不可达</span>'));
   rows.push(actRow('财务催办周报', ap ? cronDescribe(ap.cron && ap.cron.schedule) : '<span class="deploy">不可达</span>'));
+  rows.push(actRow('💰 项目额度', ap ? '<button class="primary" onclick="openQuotaPanel()">查看/设置</button>' : '<span class="deploy">不可达</span>'));
   rows.push('<div class="act-head">bambu · 打印</div>');
   const pp = ACT.printPolicy;
   rows.push(actRow('打印机登记', pp ? `${pp.printers?.configured ?? 0} 台（可用 ${pp.printers?.available ?? '?'}）` : '<span class="deploy">不可达</span>'));
@@ -945,6 +946,100 @@ async function saveDutyGroups(port) {
   const data = await deployApi(port, 'POST', '/api/duty/policy', { groupChatIds: raw });
   if (data.ok) { toast(`管辖策略已保存（${raw.length} 群，即时生效）✓`); loadDutyGroups(port); }
   else toast(data.error || '失败');
+}
+
+// —— 项目额度面板（approval 💰 → 总览+设置/重置；占用口径=批次表锁定+提交+到账，2026-11-21 曼波定） ——
+const QUOTA_PORT = 3002;
+
+async function openQuotaPanel() {
+  openDrawer('💰 项目额度 · approval-bot');
+  document.getElementById('drawerLog').style.display = 'none';
+  const body = document.getElementById('drawerBody');
+  body.style.display = 'block';
+  body.innerHTML = `
+    <div class="att-bar">
+      <button class="primary" onclick="quotaLoad()">刷新总览</button>
+      <span class="deploy">占用=已锁定+已提交+已到账（承诺即占用）；已退回释放；「初始已用」=建账前历史消耗预扣</span>
+    </div>
+    <div id="quotaTable"><div class="empty">加载中…</div></div>
+    <div class="act-head">设置 / 重置（写额度真值，经 X-API-Token 走本机端点）</div>
+    <div class="att-bar" style="flex-wrap:wrap;gap:6px">
+      <input id="quotaProject" placeholder="项目名（=批次表「项目」，如 对抗赛）" style="flex:1;min-width:160px">
+      <input id="quotaAmount" placeholder="总额度（元）" type="number" min="0" step="0.01" style="width:110px">
+      <input id="quotaInitial" placeholder="初始已用（可选）" type="number" min="0" step="0.01" style="width:120px">
+      <input id="quotaNote" placeholder="备注（可选）" style="width:120px">
+      <button class="primary" onclick="quotaSubmit()">保存</button>
+    </div>
+    <div class="deploy" style="margin-top:4px">撤销管理：总览行内「撤销」按钮（批次流转不受影响，仅退出额度统计）。同名项目保存=更新（幂等）。</div>
+    <div id="quotaMsg" class="deploy"></div>`;
+  quotaLoad();
+}
+
+async function quotaLoad() {
+  const wrap = document.getElementById('quotaTable');
+  if (!wrap) return;
+  wrap.innerHTML = '<div class="empty">加载中…</div>';
+  try {
+    const data = await deployApi(QUOTA_PORT, 'GET', '/api/quota/overview');
+    if (data.error) throw new Error(data.error);
+    const items = data.items || [];
+    if (!items.length) { wrap.innerHTML = '<div class="empty">尚未配置任何项目额度——下方表单设置第一笔</div>'; return; }
+    const rowsHtml = items.map((i) => `
+      <div class="act-row" style="${i.overspend ? 'background:rgba(255,80,80,.08)' : ''}">
+        <b>${i.overspend ? '🚨' : (i.remaining < i.quota * 0.2 ? '⚠️' : '✅')} ${esc(i.project)}</b>
+        <span style="flex:1"></span>
+        <span>剩余 <b style="${i.remaining < 0 ? 'color:#e5534b' : ''}">¥${i.remaining.toFixed(2)}</b> / ¥${i.quota.toFixed(2)}</span>
+        <span class="deploy">占用 ¥${i.spent.toFixed(2)}（锁${i.locked.toFixed(0)}/提${i.submitted.toFixed(0)}/账${i.paid.toFixed(0)}）${i.initialSpent ? ` 初始已用 ¥${i.initialSpent.toFixed(2)}` : ''}</span>
+        <button onclick="quotaEdit('${esc(i.project)}', ${i.quota}, ${i.initialSpent})">改</button>
+        <button onclick="quotaUnset('${esc(i.project)}')">撤销</button>
+      </div>`);
+    const unm = (data.unmanaged || []).map(u => `<div class="act-row"><b>${esc(u.project)}</b><span style="flex:1"></span><span class="deploy">消耗 ¥${u.spent.toFixed(2)}（未设额度）</span></div>`).join('');
+    wrap.innerHTML = rowsHtml.join('') + (unm ? `<div class="act-head">有消耗但未设额度</div>${unm}` : '');
+  } catch (err) {
+    wrap.innerHTML = `<div class="empty">加载失败：${esc(String(err.message || err))}</div>`;
+  }
+}
+
+function quotaEdit(project, quota, initialSpent) {
+  const p = document.getElementById('quotaProject'), a = document.getElementById('quotaAmount'), i = document.getElementById('quotaInitial');
+  if (p) p.value = project;
+  if (a) a.value = quota;
+  if (i) i.value = initialSpent || '';
+  if (p) p.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+async function quotaSubmit() {
+  const project = (document.getElementById('quotaProject') || {}).value || '';
+  const amount = (document.getElementById('quotaAmount') || {}).value;
+  const initialSpent = (document.getElementById('quotaInitial') || {}).value;
+  const note = (document.getElementById('quotaNote') || {}).value || '';
+  const msg = document.getElementById('quotaMsg');
+  if (!project.trim() || amount === '' || Number(amount) < 0) { if (msg) msg.textContent = '⚠️ 项目名与总额度必填（额度 ≥0）'; return; }
+  if (msg) msg.textContent = '保存中…';
+  try {
+    const data = await deployApi(QUOTA_PORT, 'POST', '/api/quota/set', {
+      project: project.trim(), amount: Number(amount),
+      initialSpent: initialSpent === '' ? 0 : Number(initialSpent), note,
+    }, 'API_TOKEN');
+    if (data.error) throw new Error(data.error);
+    if (msg) msg.textContent = `✅ 已${data.action === 'created' ? '设置' : '更新'}：${data.project} 额度 ¥${data.quota.toFixed(2)}${data.initialSpent ? `（初始已用 ¥${data.initialSpent.toFixed(2)}）` : ''}`;
+    quotaLoad();
+  } catch (err) {
+    if (msg) msg.textContent = '❌ ' + esc(String(err.message || err));
+  }
+}
+
+async function quotaUnset(project) {
+  if (!confirm(`撤销「${project}」的额度管理？（批次流转不受影响，仅退出额度统计与周报）`)) return;
+  const msg = document.getElementById('quotaMsg');
+  try {
+    const data = await deployApi(QUOTA_PORT, 'POST', '/api/quota/unset', { project }, 'API_TOKEN');
+    if (data.error) throw new Error(data.error);
+    if (msg) msg.textContent = `✅ 已撤销「${data.project}」`;
+    quotaLoad();
+  } catch (err) {
+    if (msg) msg.textContent = '❌ ' + esc(String(err.message || err));
+  }
 }
 
 // —— 打卡时长统计视图（duty 🧰 → 打开即自动统计一次：duty-bot 现场拉飞书考勤+聚合，约 3~15 秒） ——
