@@ -206,7 +206,7 @@
 - **push.js tearingDown 守卫**：收尾 ECONNRESET 误报固化为代码（全量审查 P2）。
 - **部署注意**：修复后首次真实生效——若小电脑重启距上次心跳>15min，boot_after_offline 卡会首次真正发出（此前该场景 100% crash loop），是预期行为非新噪声。
 - **测试**：三套 157 断言全绿（netlog 67/routerwatch 33/wanguard 57）。
-## v21 · 2026-11-11 · 随本提交落地 · feat
+## v21 · 2026-11-11 · 1b83fdb · feat
 
 **NETLOG_NOTIFY_ENABLED 播报总开关——曼波拍板「断网播报全关」（2026-11-11 深夜）**
 

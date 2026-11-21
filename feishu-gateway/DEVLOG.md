@@ -306,7 +306,7 @@
 - **P3 清扫**：bitable-sync 签名保留注释 35→30 天勘误；.env.example 补 WS_CONNECTING_GIVE_UP_MS / GATEWAY_DATA_DIR 两键；usage flush interval 补 .unref()（与 bitable-sync 一致）。
 - 审查遗留待确认（未修）：巡检早退致「建立后」阶段失明的行为面（SDK 无限重试下是否真实存在停摆待运行时证据）；subscribeDocs 启动一次性执行失败不重试（新配置窗口期静默缺事件）。
 - 三桩 stub 全绿。
-## v41 · 2026-11-05 · 随本提交落地 · fix
+## v41 · 2026-11-05 · bcb6cce · fix
 
 **全量审查 P2/P3 收口批（2026-11-04 深夜全量审查 gateway 域清单）**
 
