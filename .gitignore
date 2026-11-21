@@ -32,3 +32,7 @@ memory/
 WLAN-*.xml
 .dashboard-run.log
 *.local.json.bak*
+
+# 调试会话产物（TRAE-debugger，2026-11-22 git 体检批）：会话目录 + 会话报告属在途会话状态，不入 git；结案后报告按需挪 docs/ 或 archive/
+.dbg/
+debug-*.md
