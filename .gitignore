@@ -37,5 +37,5 @@ WLAN-*.xml
 .dbg/
 debug-*.md
 
-# 飞书 wiki 迁移临时目录的 OAuth 凭据（2026-11-22 体检批 P0 收口：2026-11-06 取得、2h 即过期的死 token，历史 c1ef78f 留痕按「视为已泄露」口径；目录整体去留待曼波裁决）
-tmp-feishu-wiki/user-token.json
+# 飞书 wiki 迁移临时目录（2026-11-22 体检批裁决：整目录退出跟踪——一次性迁移脚本箱+wiki 文本快照，源真身在飞书 wiki；其中 user-token.json 为 2026-11-06 取得、2h 即过期的死 OAuth token，历史 c1ef78f 留痕按「视为已泄露」口径）。目录本体全量留本地。
+tmp-feishu-wiki/
