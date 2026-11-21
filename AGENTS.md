@@ -60,10 +60,12 @@
 - vN 只增不复用；revert/回滚也是一次 push，照常记 vN 并注明回退对象；merge 提交不单独占版本号（并入相邻条目说明）；
 - 「随本提交落地」的占位哈希由**下一次** push 顺手回填实际哈希（各仓惯例）；纯哈希回填的 docs 提交本身不另占版本号（既成惯例，2026-09-12 复核确认）；
 - 历史上个别版本号曾复用（duty-bot v8、hub v62、ticket-bot v50 各出现两次；2026-11-22 git 体检批新登记：bambu v50/v84、顶层 v77/v103/v154 亦各两次）：以提交哈希为准区分，**不追溯改号**（改号会破坏哈希锚点与外部引用）；
+- **提交消息规范（2026-11-22 体检批成文）**：subject 保持单行可读（建议 ≤72 字符），细节要点放 body（多行 commit message），**禁「update: 代码更新」类占位消息**（gateway v41 教训：该占位提交恰是 v41 本尊，版本号靠 DEVLOG 反查才找回）——版本号、实案、断言数照旧进 subject/body；
 - 多项目同批联动改动：各项目 DEVLOG 各记一条，顶层 `DEVLOG.md` 另记一条联动摘要；
 - 新条目一律追加在文件末尾（最新在最下），历史条目不改写；
 - bambu-print-reservation 的 push 无 git 步骤（纯 SFTP），版本锚点取顶层仓库中该路径的归档提交；
 - 历史起点：各仓库 v1~vN 已于 2026-09-04 按提交历史回溯编号完毕，后续从当前最新版本续增。
+- **版本节点 git tag（2026-11-22 起）**：每次 push 完成后在本仓 HEAD 打 annotated tag `vN`（说明=版本+日期+一句话）并随 origin 推送（`git push origin vN`）；直挂项目（gateway/bambu/netlog）无独立 git 不打 tag，锚点仍取顶层归档提交；首批回填：approval v105 / duty v103 / ticket v98 / pm v139。
 
 # 全局工程规则（2026-09-13 深度审查批成文）
 
@@ -73,6 +75,7 @@
 - **队员/功能统计上报规则**：新增面向成员的交互能力（指令/关键词/确认/卡片响应）时，必须在服务命中点向网关 `POST /api/usage/report`（X-API-Token）上报 `{openId, feature}`，让队员活跃/功能统计自动覆盖新功能——网关路由层只看得见 @/私聊/显式路由，hub 内部命中的功能（关键词回答、DDL 确认等）靠上报归因（hub `usageReport.js` 为范例）。
 - **队员活跃口径=正经使用，娱乐功能不计入（2026-09-22）**：抽奖、关键词回答等娱乐类功能**不算队员活跃**（运维台「队员活跃」看板与总览「近24h活跃」KPI 均按正经口径展示），只进「功能使用分布」；网关日活跃多维表格口径不变（机器人交互全量）。实现：①上报娱乐命中必须带 `fun: true`；②抽奖（动态 `/触发词`，路由层会记成正经指令）另带 `learn: 触发词数组`，网关归一化为 `/触发词` 学进娱乐清单，连同静态清单（`feishu-gateway/src/usage.js` 的 `STATIC_FUN_FEATURES`：抽奖/关键词回答//lottery）持久化；③新增娱乐类功能时上报带 fun 标记 + 静态清单补一行；按人功能归因（日桶 `users[id].f`）是剔除依据，旧数据（无 f）按全量正经处理不回溯剔除。stub 断言：gateway `stub-test-usage-serious.js`、hub `stub-test-duty-branch.js` 统计上报三断言。
 - **会话遗留改动回库与文档补链**：agent 会话产生的改动若未随当次 `npm push` 入库（运维台/脚本类纯本地工具、调试插桩、会话被打断等，如 2026-09-13 dashboard 开机自启 bat+README），**下一个** agent 开发会话在 `npm push`（或任何 git 提交）前必须先 `git status` 盘点工作区遗留：①合理的遗留改动并入本批提交、照常记 DEVLOG，不许长期漂在未提交状态；②纯调试残留先向用户说明再清理；③逐项核对这批改动牵出的文档义务——本仓 DEVLOG（文末条目+头部指针）、AGENTS.md 规则成文、README/LOGIC-MAP、`dashboard/registry.js` 登记、用户侧《机器人总成使用指南.html》——欠哪些同批补齐，禁止「代码入库、文档跨批悬空」。
+- **收工自查（2026-11-22 体检批落地）**：批收尾跑 `bash tools/qianli-sync-check.sh`（qianli 根目录执行）一键体检——各仓 origin 欠账 / gitlink 锚点漂移 / DEVLOG 指针 vs 末条目一致性；npm push 五连收尾 = 补推 origin → 父仓锚点收编 → DEVLOG 占位回填 → 直挂项目归档提交 → 本脚本全绿。
 
 # 项目职能划分总表（防需求发错会话）
 
