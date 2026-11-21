@@ -36,3 +36,6 @@ WLAN-*.xml
 # 调试会话产物（TRAE-debugger，2026-11-22 git 体检批）：会话目录 + 会话报告属在途会话状态，不入 git；结案后报告按需挪 docs/ 或 archive/
 .dbg/
 debug-*.md
+
+# 飞书 wiki 迁移临时目录的 OAuth 凭据（2026-11-22 体检批 P0 收口：2026-11-06 取得、2h 即过期的死 token，历史 c1ef78f 留痕按「视为已泄露」口径；目录整体去留待曼波裁决）
+tmp-feishu-wiki/user-token.json
